@@ -1,0 +1,670 @@
+// ============================================================================
+//  KEKA — Payroll: pay groups, components, structures, runs
+// ============================================================================
+//  The pay group — not the legal entity — is the unit that carries payroll and
+//  statutory configuration (Teardown Part 07). Moving an employee between
+//  companies is a pay-group change.
+// ============================================================================
+
+enum PayFrequency {
+  MONTHLY
+  SEMI_MONTHLY
+  WEEKLY
+  BI_WEEKLY
+}
+
+model PayGroup {
+  id                 String       @id @default(cuid())
+  tenantId           String
+  tenant             Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  legalEntityId      String
+  legalEntity        LegalEntity  @relation(fields: [legalEntityId], references: [id], onDelete: Cascade)
+
+  name               String
+  description        String?
+  frequency          PayFrequency @default(MONTHLY)
+
+  /// Pay period boundaries. End day 0 = last calendar day of the month,
+  /// which is the compliance-aligned default.
+  payPeriodStartDay  Int          @default(1)
+  payPeriodEndDay    Int          @default(0)
+
+  /// The attendance cut-off is decoupled from the pay period end date.
+  /// "The last day that an employee's attendance will be included in the
+  /// salary processing for a pay period." LOP after the cut-off rolls forward.
+  attendanceCutoffDay Int?
+  payDay             Int          @default(1)
+
+  /// Contributions and deductions toggles.
+  pfEnabled          Boolean      @default(true)
+  esiEnabled         Boolean      @default(true)
+  ptEnabled          Boolean      @default(true)
+  lwfEnabled         Boolean      @default(true)
+  tdsEnabled         Boolean      @default(true)
+
+  /// Declaration and proof-submission timelines.
+  declarationOpenDay  Int         @default(1)
+  declarationCloseDay Int         @default(22)
+  /// FY cut-off for declaration changes, e.g. 31 Jan.
+  declarationFyCutoff DateTime?
+  /// New joiners may declare within N days of joining, or by 22 February.
+  newJoinerWindowDays Int         @default(30)
+  proofSubmissionDue  DateTime?
+  proofMandatory      Boolean     @default(true)
+  allowLateDeclaration Boolean    @default(false)
+
+  /// Employees may opt in/out of the new regime under s.115BAC.
+  allowRegimeChoice   Boolean     @default(true)
+  regimeChangeCutoff  DateTime?
+
+  /// Maker-checker on Lock Payroll and Compensation Change.
+  approvalWorkflowEnabled Boolean @default(false)
+
+  isActive           Boolean      @default(true)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  employees          Employee[]
+  filingDetail       PayGroupFilingDetail?
+  salaryStructures   SalaryStructure[]
+  componentLinks     PayGroupComponent[]
+  payrollRuns        PayrollRun[]
+  payslipSetting     PayslipSetting?
+  payRegisterConfig  PayRegisterConfig?
+  ptRegistrations    PtStateRegistration[]
+  lwfRegistrations   LwfStateRegistration[]
+  approvalRules      PayrollApprovalRule[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@index([legalEntityId])
+  @@map("pay_groups")
+}
+
+// ---------------------------------------------------------------------------
+//  SALARY COMPONENTS
+// ---------------------------------------------------------------------------
+
+enum ComponentType {
+  /// Adds to gross. Basic, HRA, DA, Special Allowance.
+  EARNING
+  /// Subtracts from gross. PF employee share, PT, TDS, loan EMI.
+  DEDUCTION
+  /// Employer cost — may sit inside or outside CTC.
+  EMPLOYER_CONTRIBUTION
+  /// Tax-exempt, claim-based, paid on a segregated payslip.
+  REIMBURSEMENT
+  /// Perquisite valued under the IT rules.
+  PERK
+}
+
+enum CalculationType {
+  /// A fixed monthly or annual amount.
+  FIXED
+  /// A percentage of another component.
+  PERCENTAGE
+  /// An expression in bracket notation, e.g. "[BASIC] * 0.12".
+  FORMULA
+  /// Absorbs whatever is left of the CTC after all other components.
+  BALANCE
+}
+
+enum TaxTreatment {
+  FULLY_TAXABLE
+  PARTIALLY_EXEMPT
+  FULLY_EXEMPT
+}
+
+/// Global repository of components. Three-step setup:
+/// global repository -> assign to pay group -> include in salary structure.
+model SalaryComponent {
+  id               String          @id @default(cuid())
+  tenantId         String
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  code             String
+  name             String
+  displayName      String?
+  type             ComponentType
+  calculationType  CalculationType @default(FORMULA)
+  taxTreatment     TaxTreatment    @default(FULLY_TAXABLE)
+
+  /// Recurring components are paid every cycle; ad-hoc ones are added as
+  /// needed (joining bonus, referral bonus, salary advance recovery,
+  /// asset damage recovery).
+  isRecurring      Boolean         @default(true)
+  /// System-mandated components are locked from editing.
+  isSystem         Boolean         @default(false)
+
+  /// Part of the Flexible Benefits Plan — employee selects and claims.
+  isPartOfFbp      Boolean         @default(false)
+  /// Paid over and above the CTC.
+  isOutsideCtc     Boolean         @default(false)
+  /// Reduced proportionally for loss-of-pay days.
+  isLopApplicable  Boolean         @default(true)
+  /// Included when computing arrears on a back-dated revision.
+  isArrearApplicable Boolean       @default(true)
+  /// Counts toward the PF wage base.
+  affectsPfWage    Boolean         @default(false)
+  /// Counts toward the ESI gross.
+  affectsEsiGross  Boolean         @default(true)
+  /// Shown on the payslip.
+  showOnPayslip    Boolean         @default(true)
+  /// Annual exemption ceiling where partially exempt.
+  annualExemptLimit Decimal?       @db.Decimal(18, 2)
+  /// IT section for reporting, e.g. "10(13A)" for HRA.
+  taxSection       String?
+
+  displayOrder     Int             @default(0)
+  isActive         Boolean         @default(true)
+
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  payGroupLinks    PayGroupComponent[]
+  structureLines   SalaryStructureComponent[]
+  payslipLines     PayslipLine[]
+  claims           ComponentClaim[]
+  perkDetail       Perk?
+
+  @@unique([tenantId, code])
+  @@index([tenantId, type])
+  @@map("salary_components")
+}
+
+/// Step 2 of component setup: assign to a pay group.
+model PayGroupComponent {
+  id          String          @id @default(cuid())
+  payGroupId  String
+  payGroup    PayGroup        @relation(fields: [payGroupId], references: [id], onDelete: Cascade)
+  componentId String
+  component   SalaryComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
+
+  @@unique([payGroupId, componentId])
+  @@index([payGroupId])
+  @@map("pay_group_components")
+}
+
+// ---------------------------------------------------------------------------
+//  SALARY STRUCTURES
+// ---------------------------------------------------------------------------
+
+enum StructureType {
+  /// Predefined and grouped by annual salary range; ranges can be split.
+  RANGE_BASED
+  /// Replicates an org-specific format; clonable.
+  CUSTOM
+  /// For daily-paid employees.
+  DAILY_WAGE
+}
+
+enum TdsMethod {
+  /// Spread evenly across remaining months of the financial year.
+  AVERAGE
+  /// Deduct a flat amount each month.
+  FLAT
+  /// No TDS on this structure.
+  NONE
+}
+
+model SalaryStructure {
+  id              String        @id @default(cuid())
+  payGroupId      String
+  payGroup        PayGroup      @relation(fields: [payGroupId], references: [id], onDelete: Cascade)
+
+  name            String
+  description     String?
+  type            StructureType @default(CUSTOM)
+
+  /// Range-based structures apply within these annual CTC bounds.
+  minAnnualCtc    Decimal?      @db.Decimal(18, 2)
+  maxAnnualCtc    Decimal?      @db.Decimal(18, 2)
+
+  /// Per-structure statutory toggles.
+  pfEnabled       Boolean       @default(true)
+  esiEnabled      Boolean       @default(true)
+  tdsMethod       TdsMethod     @default(AVERAGE)
+  /// "Salary Structure is Part of Flexible Benefits Plan"
+  isPartOfFbp     Boolean       @default(false)
+
+  /// Round each component to the nearest rupee.
+  roundComponents Boolean       @default(true)
+
+  isActive        Boolean       @default(true)
+  isDefault       Boolean       @default(false)
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  components      SalaryStructureComponent[]
+  revisions       SalaryRevision[]
+
+  @@unique([payGroupId, name])
+  @@index([payGroupId])
+  @@map("salary_structures")
+}
+
+/// A component's placement in a structure, with its formula.
+/// Formula uses bracket notation with BODMAS, e.g.
+///   "[BASIC] * 0.12"                       -> PF at 12% of Basic
+///   "[CTC_ANNUAL] / 2920"                  -> hourly OT rate
+///   "IF([BASIC] > 15000, 1800, [BASIC]*0.12)"  -> nested conditions
+model SalaryStructureComponent {
+  id            String          @id @default(cuid())
+  structureId   String
+  structure     SalaryStructure @relation(fields: [structureId], references: [id], onDelete: Cascade)
+  componentId   String
+  component     SalaryComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
+
+  calculationType CalculationType @default(FORMULA)
+  /// Expression evaluated by @keka/payroll's formula engine.
+  formula       String?
+  /// Used when calculationType is FIXED.
+  fixedAmount   Decimal?        @db.Decimal(18, 2)
+  /// Used when calculationType is PERCENTAGE — of the referenced component.
+  percentage    Decimal?        @db.Decimal(9, 4)
+  percentageOf  String?
+
+  /// Evaluation order. BALANCE components must evaluate last.
+  sequence      Int             @default(0)
+  /// Caps applied after evaluation.
+  minAmount     Decimal?        @db.Decimal(18, 2)
+  maxAmount     Decimal?        @db.Decimal(18, 2)
+
+  isActive      Boolean         @default(true)
+
+  @@unique([structureId, componentId])
+  @@index([structureId])
+  @@map("salary_structure_components")
+}
+
+// ---------------------------------------------------------------------------
+//  EMPLOYEE COMPENSATION
+// ---------------------------------------------------------------------------
+
+enum RevisionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  APPLIED
+}
+
+enum RemunerationType {
+  MONTHLY
+  HOURLY
+  DAILY
+  PIECE_RATE
+}
+
+/// Effective-dated compensation. A back-dated revision generates arrears.
+model SalaryRevision {
+  id               String           @id @default(cuid())
+  employeeId       String
+  employee         Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  structureId      String?
+  structure        SalaryStructure? @relation(fields: [structureId], references: [id], onDelete: SetNull)
+
+  effectiveFrom    DateTime
+  annualCtc        Decimal          @db.Decimal(18, 2)
+  /// Previous CTC, retained so the run can show old/new and % change.
+  previousCtc      Decimal?         @db.Decimal(18, 2)
+
+  remunerationType RemunerationType @default(MONTHLY)
+  /// For HOURLY / DAILY / PIECE_RATE employees.
+  rate             Decimal?         @db.Decimal(18, 4)
+
+  reason           String?
+  status           RevisionStatus   @default(APPLIED)
+  /// True once arrears for a back-dated revision have been raised.
+  arrearsProcessed Boolean          @default(false)
+
+  approvedBy       String?
+  approvedAt       DateTime?
+
+  createdAt        DateTime         @default(now())
+  createdBy        String?
+
+  @@index([employeeId, effectiveFrom])
+  @@map("salary_revisions")
+}
+
+// ---------------------------------------------------------------------------
+//  PAYROLL RUN — the six-step wizard
+// ---------------------------------------------------------------------------
+
+enum PayrollRunStatus {
+  DRAFT
+  IN_PROGRESS
+  PENDING_APPROVAL
+  LOCKED
+  FINALIZED
+  ROLLED_BACK
+}
+
+enum PayrollRunType {
+  REGULAR
+  OFF_CYCLE
+}
+
+/// Steps, in Keka's documented order:
+///   1 Leave, Attendance & Daily Wages
+///   2 New Joinees & Exits
+///   3 Bonus, Salary Revisions & Overtime
+///   4 Reimbursements, Ad-hoc Payments, Deductions
+///   5 Salary on Hold & Arrears
+///   6 Overrides (PT, ESI, TDS, LWF) & Finalizing
+model PayrollRun {
+  id             String           @id @default(cuid())
+  tenantId       String
+  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  payGroupId     String
+  payGroup       PayGroup         @relation(fields: [payGroupId], references: [id], onDelete: Cascade)
+
+  /// Pay period. month is 1-12.
+  year           Int
+  month          Int
+  periodStart    DateTime
+  periodEnd      DateTime
+  payDate        DateTime?
+
+  type           PayrollRunType   @default(REGULAR)
+  /// Off-cycle runs are based on a finalised regular run.
+  baseRunId      String?
+  baseRun        PayrollRun?      @relation("OffCycleBase", fields: [baseRunId], references: [id], onDelete: SetNull)
+  offCycleRuns   PayrollRun[]     @relation("OffCycleBase")
+
+  /// 0 for the regular run; 1..n for off-cycle runs in the same period.
+  /// Part of the uniqueness key because a nullable baseRunId would let
+  /// Postgres treat NULLs as distinct and admit duplicate regular runs.
+  sequence       Int              @default(0)
+
+  status         PayrollRunStatus @default(DRAFT)
+  /// 1-6; which wizard step the run is on.
+  currentStep    Int              @default(1)
+  stepState      Json?
+
+  /// Aggregates, recomputed on each calculation pass.
+  employeeCount  Int              @default(0)
+  totalGross     Decimal          @default(0) @db.Decimal(18, 2)
+  totalDeductions Decimal         @default(0) @db.Decimal(18, 2)
+  totalNetPay    Decimal          @default(0) @db.Decimal(18, 2)
+  totalEmployerCost Decimal       @default(0) @db.Decimal(18, 2)
+
+  lockedAt       DateTime?
+  lockedBy       String?
+  finalizedAt    DateTime?
+  finalizedBy    String?
+  rolledBackAt   DateTime?
+  rollbackReason String?
+
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  lines          PayrollRunEmployee[]
+  payslips       Payslip[]
+  approvalRequests PayrollApprovalRequest[]
+  journalVouchers JournalVoucher[]
+
+  @@unique([payGroupId, year, month, type, sequence])
+  @@index([tenantId, year, month])
+  @@index([payGroupId, status])
+  @@map("payroll_runs")
+}
+
+enum PayAction {
+  PROCESS_AS_SALARY
+  HOLD_SALARY_PROCESSING
+  VOID_SALARY_PROCESSING
+  HOLD_PAYOUT
+  VOID_PAYOUT
+  ALREADY_PAID
+}
+
+/// One employee's computed result inside a run.
+model PayrollRunEmployee {
+  id              String     @id @default(cuid())
+  runId           String
+  run             PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employeeId      String
+  employee        Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  payAction       PayAction  @default(PROCESS_AS_SALARY)
+  comment         String?
+
+  // --- Step 1 inputs ---
+  /// Calendar days in the period.
+  totalDays       Int        @default(30)
+  /// Days the employee was payable.
+  payableDays     Decimal    @default(0) @db.Decimal(9, 2)
+  lopDays         Decimal    @default(0) @db.Decimal(9, 2)
+  /// Manual adjustment on top of the system-calculated LOP.
+  lopAdjustment   Decimal    @default(0) @db.Decimal(9, 2)
+  lopReversalDays Decimal    @default(0) @db.Decimal(9, 2)
+  /// For daily, hourly and per-unit staff.
+  payableUnits    Decimal?   @db.Decimal(12, 2)
+
+  // --- Computed money ---
+  grossEarnings   Decimal    @default(0) @db.Decimal(18, 2)
+  totalDeductions Decimal    @default(0) @db.Decimal(18, 2)
+  employerCost    Decimal    @default(0) @db.Decimal(18, 2)
+  netPay          Decimal    @default(0) @db.Decimal(18, 2)
+
+  // --- Statutory, broken out for reporting and ECR files ---
+  pfWage          Decimal    @default(0) @db.Decimal(18, 2)
+  pfEmployee      Decimal    @default(0) @db.Decimal(18, 2)
+  pfEmployer      Decimal    @default(0) @db.Decimal(18, 2)
+  epsEmployer     Decimal    @default(0) @db.Decimal(18, 2)
+  vpf             Decimal    @default(0) @db.Decimal(18, 2)
+  esiGross        Decimal    @default(0) @db.Decimal(18, 2)
+  esiEmployee     Decimal    @default(0) @db.Decimal(18, 2)
+  esiEmployer     Decimal    @default(0) @db.Decimal(18, 2)
+  professionalTax Decimal    @default(0) @db.Decimal(18, 2)
+  lwfEmployee     Decimal    @default(0) @db.Decimal(18, 2)
+  lwfEmployer     Decimal    @default(0) @db.Decimal(18, 2)
+  tds             Decimal    @default(0) @db.Decimal(18, 2)
+
+  // --- Step 6 overrides ---
+  ptOverride      Decimal?   @db.Decimal(18, 2)
+  esiOverride     Decimal?   @db.Decimal(18, 2)
+  tdsOverride     Decimal?   @db.Decimal(18, 2)
+  lwfOverride     Decimal?   @db.Decimal(18, 2)
+  overrideNote    String?
+
+  /// Snapshot of the annual CTC used for this run.
+  annualCtc       Decimal?   @db.Decimal(18, 2)
+  structureId     String?
+
+  /// Calculation warnings and guided-fix hints surfaced in the UI.
+  errors          Json?
+
+  calculatedAt    DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  lines           PayslipLine[]
+
+  @@unique([runId, employeeId])
+  @@index([runId])
+  @@index([employeeId])
+  @@map("payroll_run_employees")
+}
+
+/// One component's value for one employee in one run.
+model PayslipLine {
+  id           String             @id @default(cuid())
+  runEmployeeId String
+  runEmployee  PayrollRunEmployee @relation(fields: [runEmployeeId], references: [id], onDelete: Cascade)
+  componentId  String?
+  component    SalaryComponent?   @relation(fields: [componentId], references: [id], onDelete: SetNull)
+
+  /// Denormalised so historical payslips survive component renames.
+  code         String
+  name         String
+  type         ComponentType
+
+  /// Full monthly entitlement before LOP proration.
+  fullAmount   Decimal            @default(0) @db.Decimal(18, 2)
+  /// Actual amount after proration and overrides.
+  amount       Decimal            @default(0) @db.Decimal(18, 2)
+  /// Year-to-date total for this component.
+  ytdAmount    Decimal            @default(0) @db.Decimal(18, 2)
+
+  isOverridden Boolean            @default(false)
+  sequence     Int                @default(0)
+  showOnPayslip Boolean           @default(true)
+
+  @@index([runEmployeeId])
+  @@map("payslip_lines")
+}
+
+enum PayslipStatus {
+  NOT_GENERATED
+  GENERATED
+  RELEASED
+  HELD
+}
+
+model Payslip {
+  id            String        @id @default(cuid())
+  runId         String
+  run           PayrollRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employeeId    String
+  employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  year          Int
+  month         Int
+  status        PayslipStatus @default(NOT_GENERATED)
+  /// A provisional payslip is generated before the run is finalised.
+  isProvisional Boolean       @default(false)
+  /// Tax-exempt reimbursements are issued on a separate segregated payslip.
+  isSegregated  Boolean       @default(false)
+
+  netPay        Decimal       @default(0) @db.Decimal(18, 2)
+  pdfUrl        String?
+  /// Password is the employee's PAN in uppercase.
+  isPasswordProtected Boolean @default(true)
+
+  releasedAt    DateTime?
+  releasedBy    String?
+  heldAt        DateTime?
+  viewedAt      DateTime?
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@unique([runId, employeeId, isSegregated])
+  @@index([employeeId, year, month])
+  @@map("payslips")
+}
+
+// ---------------------------------------------------------------------------
+//  PAYSLIP & PAY REGISTER CONFIGURATION
+// ---------------------------------------------------------------------------
+
+enum PayslipLayout {
+  /// Earnings / Contributions / Deductions shown separately.
+  THREE_SECTION
+  /// Contributions and deductions merged.
+  TWO_SECTION
+}
+
+model PayslipSetting {
+  id                      String        @id @default(cuid())
+  payGroupId              String        @unique
+  payGroup                PayGroup      @relation(fields: [payGroupId], references: [id], onDelete: Cascade)
+
+  layout                  PayslipLayout @default(THREE_SECTION)
+  showCompanyLogo         Boolean       @default(true)
+  appendTaxSummary        Boolean       @default(false)
+  showYtdTotals           Boolean       @default(true)
+  showActualGross         Boolean       @default(false)
+  excludeNaFields         Boolean       @default(true)
+  showLoanDetails         Boolean       @default(true)
+  showLeaveSummary        Boolean       @default(true)
+  showArrearBreakup       Boolean       @default(true)
+  showEmployerContributions Boolean     @default(true)
+  showOvertimeHours       Boolean       @default(false)
+  showOutsideCtcComponents Boolean      @default(false)
+  passwordProtect         Boolean       @default(true)
+  /// Drag-and-drop field order.
+  fieldOrder              Json?
+
+  updatedAt               DateTime      @updatedAt
+
+  @@map("payslip_settings")
+}
+
+/// Pay register columns are customisable at pay-group level, with the caveat
+/// that layout changes apply retroactively to all payroll months.
+/// Employee Number, Name, Month, Payable and Salary Components are fixed.
+model PayRegisterConfig {
+  id            String   @id @default(cuid())
+  payGroupId    String   @unique
+  payGroup      PayGroup @relation(fields: [payGroupId], references: [id], onDelete: Cascade)
+
+  /// Ordered list of optional column keys.
+  columns       Json?
+  showOutsideCtc Boolean @default(false)
+
+  updatedAt     DateTime @updatedAt
+
+  @@map("pay_register_configs")
+}
+
+// ---------------------------------------------------------------------------
+//  MAKER-CHECKER
+// ---------------------------------------------------------------------------
+
+enum ApprovalAction {
+  LOCK_PAYROLL
+  COMPENSATION_CHANGE
+}
+
+enum ApprovalRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+/// Payroll Settings -> Approval Workflow. Only explicit user roles appear in
+/// these chains; implicit roles are hidden.
+model PayrollApprovalRule {
+  id          String         @id @default(cuid())
+  payGroupId  String
+  payGroup    PayGroup       @relation(fields: [payGroupId], references: [id], onDelete: Cascade)
+
+  name        String
+  action      ApprovalAction
+  /// Ordered list of role ids forming the chain.
+  approverRoleIds Json
+  /// Optional criteria, e.g. amount thresholds.
+  criteria    Json?
+  isActive    Boolean        @default(true)
+
+  createdAt   DateTime       @default(now())
+
+  @@index([payGroupId])
+  @@map("payroll_approval_rules")
+}
+
+model PayrollApprovalRequest {
+  id           String                @id @default(cuid())
+  runId        String?
+  run          PayrollRun?           @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  action       ApprovalAction
+  status       ApprovalRequestStatus @default(PENDING)
+  /// Index into the rule's chain.
+  currentLevel Int                   @default(0)
+  payload      Json?
+
+  requestedBy  String
+  requestedAt  DateTime              @default(now())
+  resolvedAt   DateTime?
+  comments     Json?
+
+  @@index([runId])
+  @@map("payroll_approval_requests")
+}

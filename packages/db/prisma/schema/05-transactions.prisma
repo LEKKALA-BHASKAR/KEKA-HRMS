@@ -1,0 +1,611 @@
+// ============================================================================
+//  KEKA — Payroll transactions
+// ============================================================================
+//  Arrears · ad-hoc payments and deductions · bonuses · component claims ·
+//  perks · loans and advances · exits and full-and-final settlement ·
+//  accounting journal vouchers
+// ============================================================================
+
+enum ArrearSource {
+  /// A revision effective in a past month.
+  BACKDATED_REVISION
+  /// Salary released after a processing hold.
+  SALARY_HOLD_RELEASE
+  /// LOP days reversed after the month closed.
+  LOP_REVERSAL
+  /// Recovery of LOP that was under-deducted.
+  ARREAR_LOP_RECOVERY
+}
+
+/// Arrears arise from exactly four documented sources.
+model Arrear {
+  id            String       @id @default(cuid())
+  employeeId    String
+  employee      Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  source        ArrearSource
+  /// The month the arrear relates to.
+  forYear       Int
+  forMonth      Int
+  /// The run that pays it out. Null until picked up.
+  paidInRunId   String?
+
+  amount        Decimal      @db.Decimal(18, 2)
+  /// Per-component breakdown: [{ code, name, amount }].
+  breakdown     Json?
+  note          String?
+
+  isProcessed   Boolean      @default(false)
+  createdAt     DateTime     @default(now())
+
+  @@index([employeeId, isProcessed])
+  @@index([paidInRunId])
+  @@map("arrears")
+}
+
+enum AdhocType {
+  PAYMENT
+  DEDUCTION
+}
+
+enum AdhocTaxTreatment {
+  TAXABLE
+  NON_TAXABLE
+  /// Spread the tax impact across remaining months of the FY.
+  SPREAD
+}
+
+/// Added in step 4 of the run, individually or by Excel import.
+model AdhocTransaction {
+  id            String            @id @default(cuid())
+  employeeId    String
+  employee      Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  type          AdhocType
+  /// Free-text label or a linked component code.
+  name          String
+  componentCode String?
+  amount        Decimal           @db.Decimal(18, 2)
+  taxTreatment  AdhocTaxTreatment @default(TAXABLE)
+
+  /// Target pay period.
+  year          Int
+  month         Int
+  runId         String?
+  comment       String?
+
+  /// Pay outside Keka payroll rather than in the run.
+  isPaidOutside Boolean           @default(false)
+  isProcessed   Boolean           @default(false)
+
+  createdAt     DateTime          @default(now())
+  createdBy     String?
+
+  @@index([employeeId, year, month])
+  @@index([runId])
+  @@map("adhoc_transactions")
+}
+
+enum BonusPayAction {
+  PAY
+  ON_HOLD
+  VOID
+  PAY_OUTSIDE_PAYROLL
+  PARTIALLY_PAY
+}
+
+model BonusType {
+  id           String   @id @default(cuid())
+  tenantId     String
+  name         String
+  description  String?
+  /// Part of annual salary rather than over and above it.
+  isPartOfCtc  Boolean  @default(false)
+  isTaxable    Boolean  @default(true)
+  /// Include in the ESI wage base.
+  affectsEsi   Boolean  @default(false)
+  isActive     Boolean  @default(true)
+
+  createdAt    DateTime @default(now())
+  bonuses      EmployeeBonus[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("bonus_types")
+}
+
+model EmployeeBonus {
+  id           String         @id @default(cuid())
+  employeeId   String
+  employee     Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  bonusTypeId  String
+  bonusType    BonusType      @relation(fields: [bonusTypeId], references: [id], onDelete: Cascade)
+
+  amount       Decimal        @db.Decimal(18, 2)
+  /// Set when partially paying.
+  paidAmount   Decimal?       @db.Decimal(18, 2)
+  payoutYear   Int
+  payoutMonth  Int
+  payAction    BonusPayAction @default(PAY)
+
+  runId        String?
+  isProcessed  Boolean        @default(false)
+  note         String?
+
+  createdAt    DateTime       @default(now())
+
+  @@index([employeeId, payoutYear, payoutMonth])
+  @@map("employee_bonuses")
+}
+
+enum ClaimStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  PAID
+}
+
+/// Employee claims against payroll-eligible components — FBP and tax-saving
+/// reimbursements. Unclaimed reimbursement amounts convert to taxable income
+/// under Special Allowance at year end.
+model ComponentClaim {
+  id            String          @id @default(cuid())
+  employeeId    String
+  employee      Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  componentId   String
+  component     SalaryComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
+
+  fyStartYear   Int
+  claimedAmount Decimal         @db.Decimal(18, 2)
+  /// Editable by the reviewer in step 4.
+  payableAmount Decimal?        @db.Decimal(18, 2)
+  status        ClaimStatus     @default(SUBMITTED)
+
+  /// Which run pays it out.
+  payoutYear    Int?
+  payoutMonth   Int?
+  runId         String?
+
+  attachmentUrl String?
+  billDate      DateTime?
+  billNumber    String?
+  comment       String?
+  reviewerNote  String?
+  reviewedBy    String?
+  reviewedAt    DateTime?
+
+  createdAt     DateTime        @default(now())
+
+  @@index([employeeId, fyStartYear])
+  @@index([status])
+  @@map("component_claims")
+}
+
+enum PerkValuationMethod {
+  /// One fixed amount for all employees.
+  FIXED_FOR_ALL
+  /// Derived from salary components.
+  FORMULA
+  /// A custom value per employee.
+  PER_EMPLOYEE
+}
+
+/// Perquisites — company car, meal card, skill development reimbursement.
+model Perk {
+  id               String              @id @default(cuid())
+  componentId      String              @unique
+  component        SalaryComponent     @relation(fields: [componentId], references: [id], onDelete: Cascade)
+
+  category         String
+  isTaxable        Boolean             @default(true)
+  /// Who bears the tax on the perquisite.
+  taxBorneByEmployer Boolean           @default(false)
+  /// Exclusion under s.192(1A) when the employer pays the tax.
+  section192_1aExclusion Boolean       @default(false)
+
+  valuationMethod  PerkValuationMethod @default(FIXED_FOR_ALL)
+  fixedAmount      Decimal?            @db.Decimal(18, 2)
+  formula          String?
+
+  createdAt        DateTime            @default(now())
+
+  @@map("perks")
+}
+
+// ---------------------------------------------------------------------------
+//  LOANS AND ADVANCES
+// ---------------------------------------------------------------------------
+
+enum InterestType {
+  FLAT
+  REDUCING
+  /// Interest-free — tracked for perquisite valuation against SBI benchmark.
+  NONE
+}
+
+model LoanCategory {
+  id           String   @id @default(cuid())
+  tenantId     String
+  name         String
+  description  String?
+  icon         String?
+  color        String?
+  /// Concessional loans are valued as a perquisite against the SBI benchmark rate.
+  isConcessional Boolean @default(false)
+  sbiBenchmarkRate Decimal? @db.Decimal(9, 4)
+  isActive     Boolean  @default(true)
+
+  createdAt    DateTime @default(now())
+
+  policyRules  LoanPolicyRule[]
+  loans        Loan[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("loan_categories")
+}
+
+model LoanPolicy {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  name                  String
+  description           String?
+
+  // --- Eligibility ---
+  requireProbationComplete Boolean @default(true)
+  minDaysFromJoining    Int?
+  minAnnualSalary       Decimal? @db.Decimal(18, 2)
+  maxAnnualSalary       Decimal? @db.Decimal(18, 2)
+  /// Block applications from employees serving notice.
+  blockOnNoticePeriod   Boolean  @default(true)
+
+  // --- Approval ---
+  /// Ordered role ids.
+  approverRoleIds       Json?
+  /// Auto-approve or skip a level after N days of inaction.
+  autoApproveAfterDays  Int?
+  autoApproveAction     String?  @default("APPROVE")
+
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+
+  rules                 LoanPolicyRule[]
+  loans                 Loan[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("loan_policies")
+}
+
+/// Per-category rules within a policy.
+model LoanPolicyRule {
+  id                String       @id @default(cuid())
+  policyId          String
+  policy            LoanPolicy   @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  categoryId        String
+  category          LoanCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  interestType      InterestType @default(NONE)
+  interestRate      Decimal?     @db.Decimal(9, 4)
+  maxInstallments   Int          @default(12)
+  /// Months after disbursal before the first EMI.
+  commencementMonths Int         @default(1)
+
+  /// Limit as a fixed amount or a percentage of annual salary.
+  maxAmount         Decimal?     @db.Decimal(18, 2)
+  maxPercentOfSalary Decimal?    @db.Decimal(9, 4)
+  requiresDocuments Boolean      @default(false)
+
+  @@unique([policyId, categoryId])
+  @@index([policyId])
+  @@map("loan_policy_rules")
+}
+
+enum LoanStatus {
+  REQUESTED
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  DISBURSED
+  ACTIVE
+  CLOSED
+  FORECLOSED
+}
+
+model Loan {
+  id              String       @id @default(cuid())
+  employeeId      String
+  employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  categoryId      String
+  category        LoanCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  policyId        String?
+  policy          LoanPolicy?  @relation(fields: [policyId], references: [id], onDelete: SetNull)
+
+  principal       Decimal      @db.Decimal(18, 2)
+  interestType    InterestType @default(NONE)
+  interestRate    Decimal      @default(0) @db.Decimal(9, 4)
+  installments    Int
+  emiAmount       Decimal      @db.Decimal(18, 2)
+
+  status          LoanStatus   @default(REQUESTED)
+  requestedAt     DateTime     @default(now())
+  approvedAt      DateTime?
+  approvedBy      String?
+  disbursedAt     DateTime?
+  /// Disbursal handled outside Keka payroll.
+  disbursedOutside Boolean     @default(false)
+
+  /// First EMI period.
+  startYear       Int?
+  startMonth      Int?
+
+  outstanding     Decimal      @default(0) @db.Decimal(18, 2)
+  totalRepaid     Decimal      @default(0) @db.Decimal(18, 2)
+  closedAt        DateTime?
+  purpose         String?
+  documentUrl     String?
+
+  schedule        LoanInstallment[]
+
+  @@index([employeeId, status])
+  @@map("loans")
+}
+
+enum InstallmentStatus {
+  SCHEDULED
+  /// Employee skipped this month's EMI.
+  SKIPPED
+  DEDUCTED
+  WAIVED
+}
+
+model LoanInstallment {
+  id            String            @id @default(cuid())
+  loanId        String
+  loan          Loan              @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  sequence      Int
+  year          Int
+  month         Int
+  principalPart Decimal           @db.Decimal(18, 2)
+  interestPart  Decimal           @default(0) @db.Decimal(18, 2)
+  totalAmount   Decimal           @db.Decimal(18, 2)
+  balanceAfter  Decimal           @db.Decimal(18, 2)
+
+  status        InstallmentStatus @default(SCHEDULED)
+  runId         String?
+  deductedAt    DateTime?
+
+  @@unique([loanId, sequence])
+  @@index([loanId, year, month])
+  @@map("loan_installments")
+}
+
+// ---------------------------------------------------------------------------
+//  EXIT AND FULL & FINAL SETTLEMENT
+// ---------------------------------------------------------------------------
+
+enum ExitType {
+  RESIGNATION
+  TERMINATION
+  RETIREMENT
+  ABSCONDING
+  END_OF_CONTRACT
+  DEATH
+}
+
+enum ExitStatus {
+  INITIATED
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  IN_CLEARANCE
+  SETTLED
+  COMPLETED
+  CANCELLED
+  RETAINED
+}
+
+model ExitRecord {
+  id                String     @id @default(cuid())
+  employeeId        String     @unique
+  employee          Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  type              ExitType   @default(RESIGNATION)
+  reason            String?
+  status            ExitStatus @default(INITIATED)
+
+  /// When the resignation or termination was communicated.
+  noticeDate        DateTime
+  /// Auto-calculated from the notice-period policy, overridable.
+  lastWorkingDay    DateTime
+  /// Shortfall bought out rather than served.
+  noticeBuyoutDays  Decimal?   @db.Decimal(9, 2)
+
+  /// Whether management met the departing employee.
+  hadDiscussion     Boolean    @default(false)
+  discussionNote    String?
+  isRehireEligible  Boolean?
+  attachmentUrl     String?
+
+  initiatedBy       String?
+  approvedBy        String?
+  approvedAt        DateTime?
+
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@index([status])
+  @@map("exit_records")
+}
+
+enum SettlementMode {
+  ONE_TIME
+  /// Spread across multiple months, each section managed separately.
+  PERIODIC_PARTIAL
+}
+
+enum SettlementStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  FINALIZED
+  PAID
+  VOIDED
+  ALREADY_PAID
+}
+
+/// F&F computes across six documented groups: Leave · Salary · Others ·
+/// Reimbursements & Expenses · Attendance · Assets.
+/// Payroll must be locked for the settlement to proceed.
+model FnfSettlement {
+  id                String           @id @default(cuid())
+  employeeId        String           @unique
+  employee          Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  mode              SettlementMode   @default(ONE_TIME)
+  status            SettlementStatus @default(PENDING)
+  settlementYear    Int?
+  settlementMonth   Int?
+
+  // --- Payable groups ---
+  leaveEncashment   Decimal @default(0) @db.Decimal(18, 2)
+  lopReversal       Decimal @default(0) @db.Decimal(18, 2)
+  salaryArrears     Decimal @default(0) @db.Decimal(18, 2)
+  pendingSalary     Decimal @default(0) @db.Decimal(18, 2)
+  bonusPayable      Decimal @default(0) @db.Decimal(18, 2)
+  gratuity          Decimal @default(0) @db.Decimal(18, 2)
+  noticeBuyoutPay   Decimal @default(0) @db.Decimal(18, 2)
+  reimbursements    Decimal @default(0) @db.Decimal(18, 2)
+  overtimeAndShift  Decimal @default(0) @db.Decimal(18, 2)
+
+  // --- Recovery groups ---
+  noticeShortfallRecovery Decimal @default(0) @db.Decimal(18, 2)
+  loanRecovery      Decimal @default(0) @db.Decimal(18, 2)
+  assetDamageRecovery Decimal @default(0) @db.Decimal(18, 2)
+  advanceRecovery   Decimal @default(0) @db.Decimal(18, 2)
+  otherDeductions   Decimal @default(0) @db.Decimal(18, 2)
+
+  // --- Statutory on the settlement ---
+  pfDeduction       Decimal @default(0) @db.Decimal(18, 2)
+  esiDeduction      Decimal @default(0) @db.Decimal(18, 2)
+  ptDeduction       Decimal @default(0) @db.Decimal(18, 2)
+  lwfDeduction      Decimal @default(0) @db.Decimal(18, 2)
+  tdsDeduction      Decimal @default(0) @db.Decimal(18, 2)
+
+  totalPayable      Decimal @default(0) @db.Decimal(18, 2)
+  totalRecovery     Decimal @default(0) @db.Decimal(18, 2)
+  netSettlement     Decimal @default(0) @db.Decimal(18, 2)
+
+  /// Gratuity is enabled per exit inside F&F.
+  gratuityEligible  Boolean @default(false)
+  /// Covered by the Gratuity Act (10+ employees) or not.
+  gratuityActCovered Boolean @default(true)
+
+  breakdown         Json?
+  statementUrl      String?
+  finalizedAt       DateTime?
+  finalizedBy       String?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("fnf_settlements")
+}
+
+/// Notice period rules, which can vary by role or policy.
+model NoticePeriodPolicy {
+  id             String   @id @default(cuid())
+  tenantId       String
+  name           String
+  /// Days of notice required on resignation.
+  resignationDays Int     @default(60)
+  /// Days of notice given on termination.
+  terminationDays Int     @default(30)
+  /// Notice during probation is usually shorter.
+  probationDays  Int      @default(15)
+  /// Buyout is permitted for the shortfall.
+  allowBuyout    Boolean  @default(true)
+  /// Basis for the buyout amount, e.g. "BASIC" or "GROSS".
+  buyoutBasis    String   @default("GROSS")
+  isDefault      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+
+  createdAt      DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("notice_period_policies")
+}
+
+// ---------------------------------------------------------------------------
+//  ACCOUNTING
+// ---------------------------------------------------------------------------
+
+enum JournalVoucherStatus {
+  DRAFT
+  GENERATED
+  EXPORTED
+  ARCHIVED
+}
+
+/// Payroll -> Payroll Admin -> Accounting. Components map to debit or credit
+/// accounts; debits must equal credits for a successful post. JVs cannot be
+/// deleted after export, only regenerated — superseded versions are archived.
+model JournalVoucher {
+  id           String               @id @default(cuid())
+  runId        String
+  run          PayrollRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  status       JournalVoucherStatus @default(DRAFT)
+  version      Int                  @default(1)
+  totalDebit   Decimal              @default(0) @db.Decimal(18, 2)
+  totalCredit  Decimal              @default(0) @db.Decimal(18, 2)
+  isBalanced   Boolean              @default(false)
+
+  /// Target system: ZOHO_BOOKS | TALLY | QUICKBOOKS | XLSX.
+  target       String?
+  exportedAt   DateTime?
+  fileUrl      String?
+
+  createdAt    DateTime             @default(now())
+
+  entries      JournalEntry[]
+
+  @@index([runId])
+  @@map("journal_vouchers")
+}
+
+model JournalEntry {
+  id         String         @id @default(cuid())
+  voucherId  String
+  voucher    JournalVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  accountCode String
+  accountName String
+  narration  String?
+  debit      Decimal        @default(0) @db.Decimal(18, 2)
+  credit     Decimal        @default(0) @db.Decimal(18, 2)
+  componentCode String?
+  costCenterId String?
+
+  @@index([voucherId])
+  @@map("journal_entries")
+}
+
+/// Maps a salary component to a GL account for JV generation.
+model AccountMapping {
+  id            String  @id @default(cuid())
+  tenantId      String
+  componentCode String
+  accountCode   String
+  accountName   String
+  /// DEBIT or CREDIT.
+  side          String  @default("DEBIT")
+  target        String  @default("XLSX")
+
+  @@unique([tenantId, target, componentCode])
+  @@index([tenantId])
+  @@map("account_mappings")
+}

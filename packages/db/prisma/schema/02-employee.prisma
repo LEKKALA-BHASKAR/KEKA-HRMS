@@ -1,0 +1,338 @@
+// ============================================================================
+//  KEKA — Employee record
+// ============================================================================
+//  Nine profile tabs (Core HR research A2):
+//    About · Profile · Job · Time · Documents · Assets · Finances ·
+//    Expenses · Performance
+//  Profile tab cards: Primary Details · Contact Information · Addresses ·
+//    Experience · Education · Identity Information
+// ============================================================================
+
+enum EmployeeStatus {
+  PREBOARDING
+  ONBOARDING
+  PROBATION
+  CONFIRMED
+  NOTICE_PERIOD
+  EXITED
+  /// Temporarily deactivated — sabbatical or extended leave.
+  INACTIVE
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNDISCLOSED
+}
+
+enum MaritalStatus {
+  SINGLE
+  MARRIED
+  DIVORCED
+  WIDOWED
+  UNDISCLOSED
+}
+
+enum BloodGroup {
+  A_POS
+  A_NEG
+  B_POS
+  B_NEG
+  AB_POS
+  AB_NEG
+  O_POS
+  O_NEG
+  UNKNOWN
+}
+
+model Employee {
+  id                String         @id @default(cuid())
+  tenantId          String
+  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Generated from an EmployeeNumberSeries; editable after assignment.
+  employeeNumber    String
+  /// Key that must match the biometric device roster.
+  attendanceNumber  String?
+
+  userId            String?        @unique
+  user              User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // --- Primary details ---
+  firstName         String
+  middleName        String?
+  lastName          String
+  displayName       String?
+  workEmail         String?
+  personalEmail     String?
+  mobile            String?
+  alternatePhone    String?
+  dateOfBirth       DateTime?
+  gender            Gender?
+  maritalStatus     MaritalStatus?
+  bloodGroup        BloodGroup?
+  nationality       String?        @default("Indian")
+  photoUrl          String?
+
+  // --- Job ---
+  status            EmployeeStatus @default(ONBOARDING)
+  dateOfJoining     DateTime
+  /// Confirmation date once probation completes.
+  confirmationDate  DateTime?
+  legalEntityId     String?
+  legalEntity       LegalEntity?   @relation(fields: [legalEntityId], references: [id], onDelete: SetNull)
+  businessUnitId    String?
+  businessUnit      BusinessUnit?  @relation(fields: [businessUnitId], references: [id], onDelete: SetNull)
+  departmentId      String?
+  department        Department?    @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  locationId        String?
+  location          Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  costCenterId      String?
+  costCenter        CostCenter?    @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  bandId            String?
+  band              Band?          @relation(fields: [bandId], references: [id], onDelete: SetNull)
+  payGradeId        String?
+  payGrade          PayGrade?      @relation(fields: [payGradeId], references: [id], onDelete: SetNull)
+  workerTypeId      String?
+  workerType        WorkerType?    @relation(fields: [workerTypeId], references: [id], onDelete: SetNull)
+
+  /// Only a single Reporting Manager is documented — there is no dotted-line
+  /// or secondary manager field. Department/Business Head come from the org
+  /// tree as implicit roles.
+  reportingManagerId String?
+  reportingManager  Employee?      @relation("ReportingLine", fields: [reportingManagerId], references: [id], onDelete: SetNull)
+  directReports     Employee[]     @relation("ReportingLine")
+
+  /// Current job title, denormalised from the latest EmployeeJobRecord.
+  jobTitleName      String?
+
+  // --- Payroll linkage ---
+  payGroupId        String?
+  payGroup          PayGroup?      @relation(fields: [payGroupId], references: [id], onDelete: SetNull)
+
+  // --- Exit ---
+  exitInitiatedAt   DateTime?
+  lastWorkingDay    DateTime?
+  isRehireEligible  Boolean?
+
+  /// Profile completion percentage, recomputed on save.
+  profileCompletion Int            @default(0)
+
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  // --- Relations ---
+  addresses         EmployeeAddress[]
+  experiences       EmployeeExperience[]
+  educations        EmployeeEducation[]
+  identityDocs      EmployeeIdentity[]
+  emergencyContacts EmergencyContact[]
+  dependents        Dependent[]
+  jobHistory        EmployeeJobRecord[]
+  bankAccounts      EmployeeBankAccount[]
+
+  headedBusinessUnits BusinessUnit[] @relation("BusinessUnitHead")
+  headedDepartments   Department[]   @relation("DepartmentHead")
+
+  salaryRevisions   SalaryRevision[]
+  payrollLines      PayrollRunEmployee[]
+  payslips          Payslip[]
+  statutoryProfile  EmployeeStatutoryProfile?
+  declarations      InvestmentDeclaration[]
+  loans             Loan[]
+  adhocTransactions AdhocTransaction[]
+  bonuses           EmployeeBonus[]
+  componentClaims   ComponentClaim[]
+  arrears           Arrear[]
+  fnfSettlement     FnfSettlement?
+  exitRecord        ExitRecord?
+
+  @@unique([tenantId, employeeNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, departmentId])
+  @@index([tenantId, locationId])
+  @@index([tenantId, payGroupId])
+  @@index([reportingManagerId])
+  @@map("employees")
+}
+
+enum AddressType {
+  CURRENT
+  PERMANENT
+  EMERGENCY
+}
+
+model EmployeeAddress {
+  id          String      @id @default(cuid())
+  employeeId  String
+  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  type        AddressType @default(CURRENT)
+  line1       String
+  line2       String?
+  city        String?
+  state       String?
+  stateCode   String?
+  postalCode  String?
+  countryCode String      @default("IN")
+
+  @@unique([employeeId, type])
+  @@index([employeeId])
+  @@map("employee_addresses")
+}
+
+model EmployeeExperience {
+  id           String    @id @default(cuid())
+  employeeId   String
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  companyName  String
+  jobTitle     String?
+  fromDate     DateTime?
+  toDate       DateTime?
+  description  String?
+  /// Previous-employment income is imported for TDS continuity.
+  isCurrentFY  Boolean   @default(false)
+
+  @@index([employeeId])
+  @@map("employee_experiences")
+}
+
+model EmployeeEducation {
+  id            String    @id @default(cuid())
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  institution   String
+  degree        String?
+  specialization String?
+  fromYear      Int?
+  toYear        Int?
+  grade         String?
+
+  @@index([employeeId])
+  @@map("employee_educations")
+}
+
+enum IdentityDocType {
+  PAN
+  AADHAAR
+  VOTER_ID
+  DRIVING_LICENCE
+  PASSPORT
+  UAN
+  ESIC_NUMBER
+}
+
+/// PAN doubles as the payslip password (uppercase).
+model EmployeeIdentity {
+  id         String          @id @default(cuid())
+  employeeId String
+  employee   Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  type       IdentityDocType
+  number     String
+  nameOnDoc  String?
+  issuedDate DateTime?
+  expiryDate DateTime?
+  fileUrl    String?
+  isVerified Boolean         @default(false)
+
+  @@unique([employeeId, type])
+  @@index([employeeId])
+  @@map("employee_identities")
+}
+
+model EmergencyContact {
+  id           String   @id @default(cuid())
+  employeeId   String
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  name         String
+  relationship String
+  phone        String
+  email        String?
+  isPrimary    Boolean  @default(false)
+
+  @@index([employeeId])
+  @@map("emergency_contacts")
+}
+
+model Dependent {
+  id           String    @id @default(cuid())
+  employeeId   String
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  name         String
+  relationship String
+  dateOfBirth  DateTime?
+  /// Relevant for medical-insurance and Section 80D handling.
+  isNominee    Boolean   @default(false)
+
+  @@index([employeeId])
+  @@map("dependents")
+}
+
+enum JobChangeReason {
+  NEW_HIRE
+  PROMOTION
+  TRANSFER
+  DEPARTMENT_CHANGE
+  LOCATION_CHANGE
+  MANAGER_CHANGE
+  CONFIRMATION
+  DEMOTION
+  WORKER_TYPE_CHANGE
+}
+
+/// Effective-dated job history. There is no separate transfer or promotion
+/// module — position changes are made here with an effective date and the
+/// full change history is retained.
+model EmployeeJobRecord {
+  id               String          @id @default(cuid())
+  employeeId       String
+  employee         Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  effectiveFrom    DateTime
+  effectiveTo      DateTime?
+  reason           JobChangeReason @default(NEW_HIRE)
+
+  jobTitleId       String?
+  jobTitle         JobTitle?       @relation(fields: [jobTitleId], references: [id], onDelete: SetNull)
+  departmentId     String?
+  businessUnitId   String?
+  locationId       String?
+  legalEntityId    String?
+  bandId           String?
+  payGradeId       String?
+  workerTypeId     String?
+  reportingManagerId String?
+
+  note             String?
+  createdAt        DateTime        @default(now())
+  createdBy        String?
+
+  @@index([employeeId, effectiveFrom])
+  @@map("employee_job_records")
+}
+
+model EmployeeBankAccount {
+  id            String   @id @default(cuid())
+  employeeId    String
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  bankName      String
+  accountNumber String
+  ifsc          String
+  branch        String?
+  accountHolder String?
+  isPrimary     Boolean  @default(true)
+  /// Bank-account verification result.
+  isVerified    Boolean  @default(false)
+  verifiedAt    DateTime?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([employeeId])
+  @@map("employee_bank_accounts")
+}

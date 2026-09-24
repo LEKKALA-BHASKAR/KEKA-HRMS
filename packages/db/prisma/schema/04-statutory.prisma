@@ -1,0 +1,491 @@
+// ============================================================================
+//  KEKA — Indian statutory compliance
+// ============================================================================
+//  PF/EPS/VPF · ESI · Professional Tax (per state) · LWF (per state) ·
+//  Income Tax under both regimes · investment declarations · Form 16/24Q/26Q
+//
+//  Statutory registrations are held on the PAY GROUP, per state, each with an
+//  establishment ID, registration date, signatory and an explicit mapping of
+//  the office locations that follow that state's rules.
+// ============================================================================
+
+/// IT / PF / ESI filing identity for a pay group.
+model PayGroupFilingDetail {
+  id                 String   @id @default(cuid())
+  payGroupId         String   @unique
+  payGroup           PayGroup @relation(fields: [payGroupId], references: [id], onDelete: Cascade)
+
+  // --- Income tax ---
+  pan                String?
+  tan                String?
+  tanCircle          String?
+  /// Commissioner of Income Tax (TDS) jurisdiction.
+  citTds             String?
+  form16SignatoryName String?
+  form16SignatoryDesignation String?
+  form16SignatoryPan String?
+  /// Responsible person for 24Q/26Q filing.
+  responsiblePersonName String?
+  responsiblePersonDesignation String?
+  responsiblePersonPan String?
+
+  // --- Provident Fund ---
+  pfRegistrationNumber String?
+  pfRegistrationDate DateTime?
+  pfSignatoryName    String?
+  /// Statutory PF wage ceiling. 15000 under the current EPF scheme.
+  pfWageCeiling      Decimal  @default(15000) @db.Decimal(18, 2)
+  /// Restrict PF to the ceiling rather than actual basic.
+  pfCapAtCeiling     Boolean  @default(true)
+  pfEmployeeRate     Decimal  @default(12) @db.Decimal(9, 4)
+  pfEmployerRate     Decimal  @default(12) @db.Decimal(9, 4)
+  /// EPS is 8.33% of PF wage, capped at the ceiling.
+  epsRate            Decimal  @default(8.33) @db.Decimal(9, 4)
+  epsWageCeiling     Decimal  @default(15000) @db.Decimal(18, 2)
+  /// EDLI and administrative charges, borne by the employer.
+  edliRate           Decimal  @default(0.5) @db.Decimal(9, 4)
+  pfAdminRate        Decimal  @default(0.5) @db.Decimal(9, 4)
+  /// Employer PF sits inside CTC by default in Indian practice.
+  pfEmployerInsideCtc Boolean @default(true)
+  /// When PF is prorated for LOP, top up special allowance to hold CTC.
+  pfProrationAffectsSpecialAllowance Boolean @default(false)
+
+  // --- ESI ---
+  esiRegistrationNumber String?
+  esiRegistrationDate DateTime?
+  esiSignatoryName   String?
+  /// Coverage threshold on monthly gross.
+  esiWageLimit       Decimal  @default(21000) @db.Decimal(18, 2)
+  esiEmployeeRate    Decimal  @default(0.75) @db.Decimal(9, 4)
+  esiEmployerRate    Decimal  @default(3.25) @db.Decimal(9, 4)
+  /// Employer contribution inside CTC (deducted from annual salary) or
+  /// over and above it.
+  esiEmployerInsideCtc Boolean @default(false)
+  esiHideEmployerOnPayslip Boolean @default(false)
+  /// Arrears are included in the ESI wage base.
+  esiIncludeArrears  Boolean  @default(true)
+
+  updatedAt          DateTime @updatedAt
+
+  @@map("pay_group_filing_details")
+}
+
+// ---------------------------------------------------------------------------
+//  PROFESSIONAL TAX — per state
+// ---------------------------------------------------------------------------
+
+enum PtFrequency {
+  MONTHLY
+  HALF_YEARLY
+  ANNUAL
+}
+
+model PtStateRegistration {
+  id              String      @id @default(cuid())
+  payGroupId      String
+  payGroup        PayGroup    @relation(fields: [payGroupId], references: [id], onDelete: Cascade)
+
+  stateCode       String
+  stateName       String
+  locationName    String?
+  establishmentId String?
+  registrationDate DateTime?
+  signatoryName   String?
+  frequency       PtFrequency @default(MONTHLY)
+  /// Tamil Nadu splits by local body: CORPORATION vs PANCHAYAT.
+  /// Empty string rather than null so the unique key below actually holds —
+  /// Postgres treats NULLs as distinct in unique indexes.
+  localBodyType   String      @default("")
+
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+
+  linkedLocations PtStateRegistrationLocation[]
+
+  @@unique([payGroupId, stateCode, localBodyType])
+  @@index([payGroupId])
+  @@map("pt_state_registrations")
+}
+
+/// "Location of Employees Linked to <State>" — the office locations that
+/// follow this registration's rules.
+model PtStateRegistrationLocation {
+  id             String              @id @default(cuid())
+  registrationId String
+  registration   PtStateRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  locationId     String
+  location       Location            @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([registrationId, locationId])
+  @@map("pt_state_registration_locations")
+}
+
+/// Slab table per state. Amount is the PT for gross within [fromAmount, toAmount].
+/// Seeded from published state schedules; effective-dated so historical runs
+/// reproduce exactly.
+model PtSlab {
+  id            String      @id @default(cuid())
+  stateCode     String
+  localBodyType String?
+  /// Some states differ by gender (e.g. Karnataka historically).
+  gender        Gender?
+  frequency     PtFrequency @default(MONTHLY)
+
+  fromAmount    Decimal     @db.Decimal(18, 2)
+  /// Null means unbounded.
+  toAmount      Decimal?    @db.Decimal(18, 2)
+  amount        Decimal     @db.Decimal(18, 2)
+  /// Some states levy a different amount in a specific month (e.g. Feb in TN/MH).
+  specialMonth  Int?
+  specialAmount Decimal?    @db.Decimal(18, 2)
+
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+
+  @@index([stateCode, effectiveFrom])
+  @@map("pt_slabs")
+}
+
+// ---------------------------------------------------------------------------
+//  LABOUR WELFARE FUND — per state
+// ---------------------------------------------------------------------------
+
+enum LwfFrequency {
+  MONTHLY
+  HALF_YEARLY
+  ANNUAL
+}
+
+model LwfStateRegistration {
+  id              String       @id @default(cuid())
+  payGroupId      String
+  payGroup        PayGroup     @relation(fields: [payGroupId], references: [id], onDelete: Cascade)
+
+  stateCode       String
+  stateName       String
+  establishmentId String?
+  registrationDate DateTime?
+  signatoryName   String?
+  /// Employer contribution inside annual salary or above it.
+  employerInsideCtc Boolean    @default(false)
+  hideEmployerOnPayslip Boolean @default(false)
+  /// Prorate contributions for new joiners.
+  prorateNewJoiners Boolean    @default(false)
+
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+
+  linkedLocations LwfStateRegistrationLocation[]
+
+  @@unique([payGroupId, stateCode])
+  @@index([payGroupId])
+  @@map("lwf_state_registrations")
+}
+
+model LwfStateRegistrationLocation {
+  id             String               @id @default(cuid())
+  registrationId String
+  registration   LwfStateRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  locationId     String
+  location       Location             @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([registrationId, locationId])
+  @@map("lwf_state_registration_locations")
+}
+
+/// Contribution rule per state. Deduction months encode when the levy falls
+/// (e.g. Karnataka annually in December, Maharashtra in June and December).
+model LwfRule {
+  id              String       @id @default(cuid())
+  stateCode       String
+  frequency       LwfFrequency @default(ANNUAL)
+  /// Months in which the contribution is deducted, 1-12.
+  deductionMonths Json
+  employeeAmount  Decimal      @db.Decimal(18, 2)
+  employerAmount  Decimal      @db.Decimal(18, 2)
+  /// Only employees earning at or below this gross contribute, where applicable.
+  wageLimit       Decimal?     @db.Decimal(18, 2)
+
+  effectiveFrom   DateTime
+  effectiveTo     DateTime?
+
+  @@index([stateCode, effectiveFrom])
+  @@map("lwf_rules")
+}
+
+// ---------------------------------------------------------------------------
+//  INCOME TAX
+// ---------------------------------------------------------------------------
+
+enum TaxRegime {
+  /// Higher rates, wide range of deductions.
+  OLD
+  /// Lower rates, fewer deductions. Section 115BAC.
+  NEW
+}
+
+/// Slab table per regime per financial year.
+model IncomeTaxSlab {
+  id            String    @id @default(cuid())
+  regime        TaxRegime
+  /// Financial year start, e.g. 2026 for FY 2026-27.
+  fyStartYear   Int
+  /// Age band for the old regime's senior-citizen slabs.
+  minAge        Int       @default(0)
+  maxAge        Int       @default(200)
+
+  fromAmount    Decimal   @db.Decimal(18, 2)
+  toAmount      Decimal?  @db.Decimal(18, 2)
+  ratePercent   Decimal   @db.Decimal(9, 4)
+
+  @@index([regime, fyStartYear])
+  @@map("income_tax_slabs")
+}
+
+/// Surcharge, cess, rebate and standard deduction per regime per FY.
+model IncomeTaxConfig {
+  id                    String    @id @default(cuid())
+  regime                TaxRegime
+  fyStartYear           Int
+
+  standardDeduction     Decimal   @db.Decimal(18, 2)
+  /// Section 87A rebate: full relief when taxable income is at or below the limit.
+  rebateLimit           Decimal   @db.Decimal(18, 2)
+  rebateMaxAmount       Decimal   @db.Decimal(18, 2)
+  /// Health and education cess on tax plus surcharge.
+  cessPercent           Decimal   @default(4) @db.Decimal(9, 4)
+  /// Surcharge bands as [{ from, to, percent }].
+  surchargeBands        Json?
+  /// Marginal relief applies above the rebate threshold.
+  marginalReliefEnabled Boolean   @default(true)
+
+  @@unique([regime, fyStartYear])
+  @@map("income_tax_configs")
+}
+
+/// Per-employee statutory identity and elections.
+model EmployeeStatutoryProfile {
+  id                String    @id @default(cuid())
+  employeeId        String    @unique
+  employee          Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  // --- PF ---
+  pfEnabled         Boolean   @default(true)
+  uan               String?
+  pfAccountNumber   String?
+  /// Restrict PF to the statutory ceiling for this employee.
+  pfCapAtCeiling    Boolean?
+  /// Voluntary Provident Fund, as an amount or a percentage of basic.
+  vpfAmount         Decimal?  @db.Decimal(18, 2)
+  vpfPercent        Decimal?  @db.Decimal(9, 4)
+  /// Some employees opt out of the EPS split.
+  epsApplicable     Boolean   @default(true)
+  pfJoinDate        DateTime?
+
+  // --- ESI ---
+  esiEnabled        Boolean   @default(true)
+  esicNumber        String?
+  /// Set when an employee crosses the wage limit mid contribution cycle and
+  /// must continue contributing until the cycle ends.
+  esiCycleEndDate   DateTime?
+
+  // --- PT / LWF ---
+  ptEnabled         Boolean   @default(true)
+  lwfEnabled        Boolean   @default(true)
+
+  // --- Income tax ---
+  taxRegime         TaxRegime @default(NEW)
+  regimeLockedAt    DateTime?
+  /// Flat monthly TDS, used for contractual employees.
+  flatTdsAmount     Decimal?  @db.Decimal(18, 2)
+  tdsDisabled       Boolean   @default(false)
+
+  // --- Previous employment, for TDS continuity ---
+  previousEmployerIncome Decimal? @db.Decimal(18, 2)
+  previousEmployerTds    Decimal? @db.Decimal(18, 2)
+  previousEmployerPf     Decimal? @db.Decimal(18, 2)
+  previousEmployerPt     Decimal? @db.Decimal(18, 2)
+
+  updatedAt         DateTime  @updatedAt
+
+  @@map("employee_statutory_profiles")
+}
+
+// ---------------------------------------------------------------------------
+//  INVESTMENT DECLARATIONS
+// ---------------------------------------------------------------------------
+
+enum DeclarationStatus {
+  DRAFT
+  SUBMITTED
+  PARTIALLY_APPROVED
+  APPROVED
+  REJECTED
+  LOCKED
+}
+
+enum ProofStatus {
+  NOT_SUBMITTED
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+model InvestmentDeclaration {
+  id            String            @id @default(cuid())
+  employeeId    String
+  employee      Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  fyStartYear   Int
+  regime        TaxRegime         @default(NEW)
+  status        DeclarationStatus @default(DRAFT)
+
+  declaredTotal Decimal           @default(0) @db.Decimal(18, 2)
+  approvedTotal Decimal           @default(0) @db.Decimal(18, 2)
+
+  submittedAt   DateTime?
+  approvedAt    DateTime?
+  approvedBy    String?
+  isLocked      Boolean           @default(false)
+
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  items         DeclarationItem[]
+  hraDetail     HraDeclaration?
+
+  @@unique([employeeId, fyStartYear])
+  @@index([employeeId])
+  @@map("investment_declarations")
+}
+
+/// One line under a section, e.g. 80C / LIC premium.
+model DeclarationItem {
+  id             String                @id @default(cuid())
+  declarationId  String
+  declaration    InvestmentDeclaration @relation(fields: [declarationId], references: [id], onDelete: Cascade)
+
+  /// e.g. "80C", "80D", "24B", "80CCD(1B)".
+  section        String
+  category       String
+  description    String?
+
+  declaredAmount Decimal               @default(0) @db.Decimal(18, 2)
+  approvedAmount Decimal               @default(0) @db.Decimal(18, 2)
+
+  proofStatus    ProofStatus           @default(NOT_SUBMITTED)
+  proofFileUrl   String?
+  proofRemark    String?
+  reviewedBy     String?
+  reviewedAt     DateTime?
+
+  @@index([declarationId])
+  @@map("declaration_items")
+}
+
+enum HraDeclarationMode {
+  /// A single annual rent figure.
+  ANNUAL
+  /// Rent declared month by month.
+  MONTH_ON_MONTH
+}
+
+/// HRA exemption under s.10(13A). Landlord PAN is required once annual rent
+/// exceeds 1,00,000.
+model HraDeclaration {
+  id             String                @id @default(cuid())
+  declarationId  String                @unique
+  declaration    InvestmentDeclaration @relation(fields: [declarationId], references: [id], onDelete: Cascade)
+
+  mode           HraDeclarationMode    @default(ANNUAL)
+  /// Metro cities attract 50% of basic rather than 40%.
+  isMetro        Boolean               @default(false)
+  annualRent     Decimal?              @db.Decimal(18, 2)
+  /// { "4": 25000, "5": 25000, ... } keyed by month.
+  monthlyRent    Json?
+
+  landlordName   String?
+  landlordPan    String?
+  rentAddress    String?
+
+  @@map("hra_declarations")
+}
+
+// ---------------------------------------------------------------------------
+//  STATUTORY FILINGS
+// ---------------------------------------------------------------------------
+
+enum FilingType {
+  FORM_16
+  FORM_12BB
+  FORM_24Q
+  FORM_26Q
+  PF_ECR
+  ESI_ECR
+  PT_RETURN
+  LWF_RETURN
+}
+
+enum FilingStatus {
+  DRAFT
+  GENERATED
+  FILED
+  ACKNOWLEDGED
+}
+
+model StatutoryFiling {
+  id            String       @id @default(cuid())
+  tenantId      String
+  legalEntityId String?
+  payGroupId    String?
+
+  type          FilingType
+  fyStartYear   Int
+  /// 1-4 for quarterly returns.
+  quarter       Int?
+  /// 1-12 for monthly returns.
+  month         Int?
+
+  status        FilingStatus @default(DRAFT)
+  fileUrl       String?
+  /// Token and receipt numbers recorded after filing on TRACES.
+  tokenNumber   String?
+  receiptNumber String?
+  filedAt       DateTime?
+  generatedAt   DateTime?
+
+  meta          Json?
+  createdAt     DateTime     @default(now())
+
+  challans      TdsChallan[]
+
+  @@index([tenantId, type, fyStartYear])
+  @@map("statutory_filings")
+}
+
+/// TDS challans mapped to a 24Q or 26Q return.
+model TdsChallan {
+  id             String           @id @default(cuid())
+  filingId       String?
+  filing         StatutoryFiling? @relation(fields: [filingId], references: [id], onDelete: SetNull)
+  tenantId       String
+
+  /// 200 = TDS payable by taxpayer, 400 = TDS on regular assessment.
+  minorHeadCode  String?
+  challanNumber  String
+  bsrCode        String
+  deductionDate  DateTime
+  paymentDate    DateTime
+  bankName       String?
+
+  tdsAmount      Decimal          @db.Decimal(18, 2)
+  surcharge      Decimal          @default(0) @db.Decimal(18, 2)
+  cess           Decimal          @default(0) @db.Decimal(18, 2)
+  interest       Decimal          @default(0) @db.Decimal(18, 2)
+  fee            Decimal          @default(0) @db.Decimal(18, 2)
+
+  createdAt      DateTime         @default(now())
+
+  @@index([tenantId])
+  @@map("tds_challans")
+}

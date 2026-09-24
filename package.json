@@ -1,0 +1,30 @@
+{
+  "name": "keka",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Keka-equivalent HR & Payroll platform — multi-tenant HRMS with Indian statutory payroll",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@keka/web",
+    "build": "npm run build --workspace=@keka/db && npm run build --workspace=@keka/web",
+    "db:generate": "npm run generate --workspace=@keka/db",
+    "db:push": "npm run push --workspace=@keka/db",
+    "db:migrate": "npm run migrate --workspace=@keka/db",
+    "db:seed": "npm run seed --workspace=@keka/db",
+    "db:studio": "npm run studio --workspace=@keka/db",
+    "db:reset": "npm run reset --workspace=@keka/db",
+    "test": "node --test --experimental-strip-types packages/payroll/test/*.test.ts",
+    "typecheck": "tsc -b --pretty"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "tsx": "^4.19.2"
+  }
+}

@@ -1,0 +1,310 @@
+// ============================================================================
+//  KEKA — Base: generator, datasource, tenancy, identity, RBAC, audit
+// ============================================================================
+//  Tenancy model (ref: Teardown Part 07)
+//    - Multi-tenant shared infrastructure with logical isolation.
+//    - Every customer gets a subdomain: <subdomain>.keka.local
+//    - Every tenant-scoped row carries tenantId and is indexed on it.
+// ============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  // multi-file schema (prisma/schema/) is GA as of Prisma 6.7
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+//  TENANT
+// ---------------------------------------------------------------------------
+
+enum PlanTier {
+  FOUNDATION
+  STRENGTH
+  GROWTH
+}
+
+/// A customer account. Owns every other row in the system.
+model Tenant {
+  id          String   @id @default(cuid())
+  /// Tenant address: <subdomain>.keka.local — also stamped on every webhook payload.
+  subdomain   String   @unique
+  name        String
+  /// Commercial tier. Gates features per the published matrix (Teardown Part 04).
+  plan        PlanTier @default(FOUNDATION)
+  /// Add-on product flags — neither can be bought standalone.
+  hasHire     Boolean  @default(false)
+  hasPsa      Boolean  @default(false)
+  hasLearn    Boolean  @default(false)
+
+  countryCode String   @default("IN")
+  currency    String   @default("INR")
+  timezone    String   @default("Asia/Kolkata")
+  /// Financial year start month, 1-12. India defaults to April.
+  fyStartMonth Int     @default(4)
+  logoUrl     String?
+
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users              User[]
+  legalEntities      LegalEntity[]
+  businessUnits      BusinessUnit[]
+  departments        Department[]
+  locations          Location[]
+  costCenters        CostCenter[]
+  bands              Band[]
+  payGrades          PayGrade[]
+  workerTypes        WorkerType[]
+  jobTitles          JobTitle[]
+  employees          Employee[]
+  employeeNumberSeries EmployeeNumberSeries[]
+  roles              Role[]
+  auditLogs          AuditLog[]
+  customFieldDefs    CustomFieldDefinition[]
+  payGroups          PayGroup[]
+  salaryComponents   SalaryComponent[]
+  payrollRuns        PayrollRun[]
+  visibilitySetting  TenantVisibilitySetting?
+
+  @@index([subdomain])
+  @@map("tenants")
+}
+
+/// Org-wide visibility restriction (Teardown Part 06).
+/// NOTE the documented combining rule: effective access =
+///   scope-of-privilege UNION scope-of-visibility.
+/// An unscoped role therefore sees across all legal entities regardless of this.
+/// This is a directory-visibility control, NOT a hard data partition.
+model TenantVisibilitySetting {
+  id                      String  @id @default(cuid())
+  tenantId                String  @unique
+  tenant                  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  restrictByLegalEntity   Boolean @default(false)
+  restrictByBusinessUnit  Boolean @default(false)
+  /// Managers and their direct reports retain mutual visibility across boundaries.
+  managerReporteeOverride Boolean @default(true)
+
+  updatedAt               DateTime @updatedAt
+
+  @@map("tenant_visibility_settings")
+}
+
+// ---------------------------------------------------------------------------
+//  IDENTITY
+// ---------------------------------------------------------------------------
+
+enum AuthMethod {
+  PASSWORD
+  MOBILE_OTP
+  MICROSOFT
+  GOOGLE
+}
+
+enum TwoFactorMethod {
+  NONE
+  SMS
+  EMAIL
+}
+
+/// A login. One-to-one with Employee once the employee is invited.
+model User {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  email          String
+  passwordHash   String?
+  phone          String?
+
+  /// Disable Login — "effect is immediate, with no delay or grace period".
+  /// Distinct from deactivation and from exit (Teardown Part 05).
+  loginDisabled  Boolean  @default(false)
+  /// Temporary deactivation, e.g. sabbatical or extended leave.
+  isDeactivated  Boolean  @default(false)
+
+  twoFactor      TwoFactorMethod @default(NONE)
+  lastLoginAt    DateTime?
+  emailVerifiedAt DateTime?
+
+  employee       Employee?
+
+  sessions       Session[]
+  roleAssignments UserRoleAssignment[]
+  auditLogs      AuditLog[]
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String   @unique
+  expiresAt    DateTime
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+/// One-time codes for mobile OTP login and 2FA.
+model OtpChallenge {
+  id         String   @id @default(cuid())
+  tenantId   String
+  identifier String   // email or phone
+  codeHash   String
+  purpose    String   // LOGIN | TWO_FACTOR
+  attempts   Int      @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, identifier])
+  @@map("otp_challenges")
+}
+
+// ---------------------------------------------------------------------------
+//  RBAC
+// ---------------------------------------------------------------------------
+
+/// Explicit, administratively assigned roles.
+/// Eleven are seeded per tenant as system roles (Teardown Part 06);
+/// custom roles are created by ticking individual privileges.
+model Role {
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Stable machine key, e.g. GLOBAL_ADMIN. Null for custom roles.
+  key         String?
+  name        String
+  description String?
+  /// System roles cannot be deleted and their key is fixed.
+  isSystem    Boolean @default(false)
+
+  permissions RolePermission[]
+  assignments UserRoleAssignment[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("roles")
+}
+
+/// A single granted privilege, e.g. "payroll.run.execute".
+/// The authoritative catalogue lives in @keka/rbac.
+model RolePermission {
+  id           String @id @default(cuid())
+  roleId       String
+  role         Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   String
+
+  @@unique([roleId, permission])
+  @@index([roleId])
+  @@map("role_permissions")
+}
+
+/// A grant is (user x role x scope). Scope filters are department and location.
+/// Legal entity is deliberately NOT available as a role scope filter —
+/// this mirrors the documented gap (Teardown Part 06).
+model UserRoleAssignment {
+  id        String @id @default(cuid())
+  userId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId    String
+  role      Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  scopes    RoleScope[]
+
+  grantedAt DateTime @default(now())
+  grantedBy String?
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_role_assignments")
+}
+
+model RoleScope {
+  id           String @id @default(cuid())
+  assignmentId String
+  assignment   UserRoleAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  departmentId String?
+  locationId   String?
+
+  @@index([assignmentId])
+  @@map("role_scopes")
+}
+
+// ---------------------------------------------------------------------------
+//  AUDIT
+// ---------------------------------------------------------------------------
+
+enum AuditModule {
+  EMPLOYEE
+  PAYROLL
+  LEAVE
+  ATTENDANCE
+  ROLE
+  AUTH
+  FINANCE
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  APPROVE
+  REJECT
+  LOCK
+  UNLOCK
+  EXPORT
+  LOGIN
+  LOGOUT
+}
+
+/// Who, when, what, old value, new value.
+/// Keka's own audit log covers four modules; this model covers those plus
+/// role and auth changes, which the teardown flags as a real audit gap.
+model AuditLog {
+  id         String      @id @default(cuid())
+  tenantId   String
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  module     AuditModule
+  action     AuditAction
+  entityType String
+  entityId   String?
+  /// Human-readable summary for the log list.
+  summary    String?
+
+  oldValue   Json?
+  newValue   Json?
+
+  actorId    String?
+  actor      User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorLabel String?
+  ipAddress  String?
+
+  createdAt  DateTime    @default(now())
+
+  @@index([tenantId, module, createdAt])
+  @@index([tenantId, entityType, entityId])
+  @@map("audit_logs")
+}
