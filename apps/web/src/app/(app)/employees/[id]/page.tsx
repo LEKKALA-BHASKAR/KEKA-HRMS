@@ -10,6 +10,12 @@ import {
   AccessDenied,
 } from "@/components/ui";
 
+import {
+  EditToggle, PersonalForm, JobChangeForm, SalaryRevisionForm, StatutoryForm,
+  AddressForm, IdentityForm, BankForm, EducationForm, ExperienceForm,
+  DependentForm, EmergencyForm, RemoveSubRecord, AccessControls,
+} from "./forms";
+
 const P = PERMISSIONS;
 
 const TABS = [
@@ -32,7 +38,7 @@ export default async function EmployeePage({
   const employee = await prisma.employee.findFirst({
     where: { id, tenantId: viewer.tenantId },
     include: {
-      user: { select: { email: true, lastLoginAt: true, loginDisabled: true, twoFactor: true } },
+      user: { select: { email: true, lastLoginAt: true, loginDisabled: true, isDeactivated: true, twoFactor: true } },
       department: true, businessUnit: true, location: true, legalEntity: true,
       costCenter: true, band: true, payGrade: true, workerType: true,
       payGroup: { include: { filingDetail: true } },
@@ -80,6 +86,28 @@ export default async function EmployeePage({
   const currentSalary = employee.salaryRevisions[0] ?? null;
   const pan = employee.identityDocs.find((d) => d.type === "PAN")?.number ?? null;
 
+  const canEdit = canAccessEmployee(viewer, target, P.EMPLOYEE_UPDATE);
+  const canEditFinancials = canAccessEmployee(viewer, target, P.EMPLOYEE_MANAGE_FINANCIALS);
+  const canRevise = can(viewer, P.SALARY_REVISE) && showFinancials;
+  const canManageAccess = can(viewer, P.EMPLOYEE_DISABLE_LOGIN) || can(viewer, P.EMPLOYEE_INVITE);
+
+  // Option lists for the edit forms. Only loaded when an edit form will render.
+  const needsJobOptions = canEdit && tab === "job";
+  const needsStructures = canRevise && tab === "finances";
+  const [jobTitlesO, departmentsO, unitsO, locationsO, bandsO, gradesO, workerTypesO, managersO, structuresO] =
+    await Promise.all([
+      needsJobOptions ? prisma.jobTitle.findMany({ where: { tenantId: viewer.tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [],
+      needsJobOptions ? prisma.department.findMany({ where: { tenantId: viewer.tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [],
+      needsJobOptions ? prisma.businessUnit.findMany({ where: { tenantId: viewer.tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [],
+      needsJobOptions ? prisma.location.findMany({ where: { tenantId: viewer.tenantId, stateCode: { not: null } }, select: { id: true, name: true, stateCode: true }, orderBy: { name: "asc" } }) : [],
+      needsJobOptions ? prisma.band.findMany({ where: { tenantId: viewer.tenantId }, select: { id: true, name: true }, orderBy: { rank: "asc" } }) : [],
+      needsJobOptions ? prisma.payGrade.findMany({ where: { tenantId: viewer.tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [],
+      needsJobOptions ? prisma.workerType.findMany({ where: { tenantId: viewer.tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [],
+      needsJobOptions ? prisma.employee.findMany({ where: { tenantId: viewer.tenantId, status: { notIn: ["EXITED"] }, id: { not: employee.id } }, select: { id: true, displayName: true, employeeNumber: true }, orderBy: { firstName: "asc" } }) : [],
+      needsStructures && employee.payGroupId ? prisma.salaryStructure.findMany({ where: { payGroupId: employee.payGroupId, isActive: true }, select: { id: true, name: true }, orderBy: { minAnnualCtc: "asc" } }) : [],
+    ]);
+  const opt = (rows: Array<{ id: string; name: string }>) => rows.map((r) => ({ value: r.id, label: r.name }));
+
   const resolved = showFinancials && currentSalary?.structure
     ? resolveStructure({
         annualCtc: Number(currentSalary.annualCtc),
@@ -123,7 +151,9 @@ export default async function EmployeePage({
         actions={
           <>
             <StatusBadge status={employee.status} />
-            {can(viewer, P.EMPLOYEE_UPDATE) ? <button className="btn">Edit</button> : null}
+            {canEdit && tab !== "about" ? (
+              <Link className="btn" href={`/employees/${employee.id}?tab=about`}>Edit details</Link>
+            ) : null}
           </>
         }
       />
@@ -139,6 +169,38 @@ export default async function EmployeePage({
       {/* ---------------------------------------------------------------- */}
       {tab === "about" ? (
         <div className="grid grid-2" style={{ alignItems: "start" }}>
+          {canEdit ? (
+            <div style={{ gridColumn: "1 / -1" }}>
+              <Card title="Edit personal details">
+                <EditToggle label="Edit personal details">
+                  <PersonalForm employee={{
+                    id: employee.id, firstName: employee.firstName, middleName: employee.middleName,
+                    lastName: employee.lastName, displayName: employee.displayName,
+                    workEmail: employee.workEmail, personalEmail: employee.personalEmail,
+                    mobile: employee.mobile, alternatePhone: employee.alternatePhone,
+                    dateOfBirth: employee.dateOfBirth?.toISOString() ?? null,
+                    gender: employee.gender, maritalStatus: employee.maritalStatus,
+                    bloodGroup: employee.bloodGroup, nationality: employee.nationality,
+                  }} />
+                </EditToggle>
+              </Card>
+            </div>
+          ) : null}
+
+          {canManageAccess ? (
+            <Card title="Portal access" description={employee.user
+              ? `${employee.user.email}${employee.user.lastLoginAt ? ` · last signed in ${formatDate(employee.user.lastLoginAt)}` : " · never signed in"}`
+              : "No login"}>
+              <AccessControls
+                employeeId={employee.id}
+                hasLogin={!!employee.user}
+                loginDisabled={employee.user?.loginDisabled ?? false}
+                isDeactivated={employee.user?.isDeactivated ?? false}
+                email={employee.workEmail}
+              />
+            </Card>
+          ) : null}
+
           <Card title="Primary details">
             <KeyValue items={[
               ["Employee number", <span className="mono" key="n">{employee.employeeNumber}</span>],
@@ -220,6 +282,7 @@ export default async function EmployeePage({
                 ))}
               </div>
             )}
+            {canEdit ? <AddressForm employeeId={employee.id} /> : null}
           </Card>
 
           <Card title="Identity information">
@@ -238,6 +301,7 @@ export default async function EmployeePage({
                 ))}
               </div>
             )}
+            {canEdit ? <IdentityForm employeeId={employee.id} /> : null}
           </Card>
 
           <Card title="Experience">
@@ -252,6 +316,7 @@ export default async function EmployeePage({
                 ))}
               </div>
             )}
+            {canEdit ? <ExperienceForm employeeId={employee.id} /> : null}
           </Card>
 
           <Card title="Education">
@@ -266,12 +331,71 @@ export default async function EmployeePage({
                 ))}
               </div>
             )}
+            {canEdit ? <EducationForm employeeId={employee.id} /> : null}
+          </Card>
+        </div>
+      ) : null}
+
+      {tab === "profile" ? (
+        <div className="grid grid-2" style={{ alignItems: "start", marginTop: 16 }}>
+          <Card title={`Dependents (${employee.dependents.length})`}>
+            {employee.dependents.length === 0 ? <Empty title="No dependents recorded" /> : (
+              <div className="stack gap-2">
+                {employee.dependents.map((d) => (
+                  <div key={d.id} className="row" style={{ justifyContent: "space-between" }}>
+                    <span className="text-sm">
+                      <span className="strong">{d.name}</span>
+                      <span className="subtle"> · {d.relationship}</span>
+                      {d.isNominee ? <Badge tone="brand">nominee</Badge> : null}
+                    </span>
+                    {canEdit ? <RemoveSubRecord kind="dependent" id={d.id} employeeId={employee.id} /> : null}
+                  </div>
+                ))}
+              </div>
+            )}
+            {canEdit ? <DependentForm employeeId={employee.id} /> : null}
+          </Card>
+
+          <Card title={`Emergency contacts (${employee.emergencyContacts.length})`}>
+            {employee.emergencyContacts.length === 0 ? <Empty title="No emergency contact on file" /> : (
+              <div className="stack gap-2">
+                {employee.emergencyContacts.map((c) => (
+                  <div key={c.id} className="row" style={{ justifyContent: "space-between" }}>
+                    <span className="text-sm">
+                      <span className="strong">{c.name}</span>
+                      <span className="subtle"> · {c.relationship} · {c.phone}</span>
+                      {c.isPrimary ? <Badge tone="brand">primary</Badge> : null}
+                    </span>
+                    {canEdit ? <RemoveSubRecord kind="emergency" id={c.id} employeeId={employee.id} /> : null}
+                  </div>
+                ))}
+              </div>
+            )}
+            {canEdit ? <EmergencyForm employeeId={employee.id} /> : null}
           </Card>
         </div>
       ) : null}
 
       {/* ---------------------------------------------------------------- */}
       {tab === "job" ? (
+        <div className="stack gap-4">
+        {canEdit ? (
+          <Card title="Record a job change" description="Promotion, transfer, manager change or confirmation — effective-dated.">
+            <EditToggle label="+ Record a change">
+              <JobChangeForm
+                employeeId={employee.id}
+                jobTitles={opt(jobTitlesO)}
+                departments={opt(departmentsO)}
+                businessUnits={opt(unitsO)}
+                locations={locationsO.map((l) => ({ value: l.id, label: `${l.name} (${l.stateCode})` }))}
+                bands={opt(bandsO)}
+                grades={opt(gradesO)}
+                workerTypes={opt(workerTypesO)}
+                managers={managersO.map((m) => ({ value: m.id, label: `${m.displayName} (${m.employeeNumber})` }))}
+              />
+            </EditToggle>
+          </Card>
+        ) : null}
         <Card
           title="Job history"
           description="Effective-dated. There is no separate transfer or promotion module — position changes are made here with an effective date and the full history is retained."
@@ -300,6 +424,7 @@ export default async function EmployeePage({
             </table>
           </div>
         </Card>
+        </div>
       ) : null}
 
       {/* ---------------------------------------------------------------- */}
@@ -338,6 +463,22 @@ export default async function EmployeePage({
                 </div>
               </Card>
             </div>
+
+            {canRevise ? (
+              <Card title="Revise salary">
+                {employee.payGroupId ? (
+                  <EditToggle label="+ New salary revision">
+                    <SalaryRevisionForm
+                      employeeId={employee.id}
+                      structures={opt(structuresO)}
+                      currentCtc={currentSalary ? Number(currentSalary.annualCtc) : null}
+                    />
+                  </EditToggle>
+                ) : (
+                  <p className="text-sm muted">Assign a pay group first — it carries the statutory configuration a salary needs.</p>
+                )}
+              </Card>
+            ) : null}
 
             {resolved ? (
               <Card
@@ -410,7 +551,30 @@ export default async function EmployeePage({
                     ? `Yes · ${employee.location?.stateCode ?? "—"}` : "No"],
                   ["LWF", employee.statutoryProfile?.lwfEnabled ? "Yes" : "No"],
                 ]} />
-              </Card>
+                {canEditFinancials ? (
+              <div style={{ marginTop: 14 }}>
+                <EditToggle label="Edit statutory profile">
+                  <StatutoryForm employeeId={employee.id} profile={employee.statutoryProfile ? {
+                    pfEnabled: employee.statutoryProfile.pfEnabled,
+                    uan: employee.statutoryProfile.uan,
+                    pfAccountNumber: employee.statutoryProfile.pfAccountNumber,
+                    vpfAmount: employee.statutoryProfile.vpfAmount ? Number(employee.statutoryProfile.vpfAmount) : null,
+                    vpfPercent: employee.statutoryProfile.vpfPercent ? Number(employee.statutoryProfile.vpfPercent) : null,
+                    epsApplicable: employee.statutoryProfile.epsApplicable,
+                    esiEnabled: employee.statutoryProfile.esiEnabled,
+                    esicNumber: employee.statutoryProfile.esicNumber,
+                    ptEnabled: employee.statutoryProfile.ptEnabled,
+                    lwfEnabled: employee.statutoryProfile.lwfEnabled,
+                    taxRegime: employee.statutoryProfile.taxRegime,
+                    flatTdsAmount: employee.statutoryProfile.flatTdsAmount ? Number(employee.statutoryProfile.flatTdsAmount) : null,
+                    tdsDisabled: employee.statutoryProfile.tdsDisabled,
+                    previousEmployerIncome: employee.statutoryProfile.previousEmployerIncome ? Number(employee.statutoryProfile.previousEmployerIncome) : null,
+                    previousEmployerTds: employee.statutoryProfile.previousEmployerTds ? Number(employee.statutoryProfile.previousEmployerTds) : null,
+                  } : null} />
+                </EditToggle>
+              </div>
+            ) : null}
+          </Card>
 
               <Card title="Bank accounts">
                 {employee.bankAccounts.length === 0 ? <Empty title="No bank account on file" /> : (
@@ -429,7 +593,8 @@ export default async function EmployeePage({
                     ))}
                   </div>
                 )}
-              </Card>
+                {canEditFinancials ? <BankForm employeeId={employee.id} /> : null}
+          </Card>
             </div>
 
             <Card title="Salary revision history" tight>

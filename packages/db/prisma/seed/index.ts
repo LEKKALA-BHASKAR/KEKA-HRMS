@@ -577,6 +577,14 @@ async function main() {
     });
   }
 
+  // The seed assigns numbers directly, so the series has to be advanced past
+  // them. Leaving it at 1 makes the first real "add employee" walk the whole
+  // clash-avoidance loop before it finds a free slot.
+  await prisma.employeeNumberSeries.updateMany({
+    where: { tenantId: tenant.id, name: "Default" },
+    data: { nextNumber: created.length + 1 },
+  });
+
   // Reporting lines and heads, now that every employee exists.
   for (const [i, e] of emps.entries()) {
     if (!e.manager) continue;
