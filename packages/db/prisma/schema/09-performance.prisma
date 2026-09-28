@@ -1,0 +1,412 @@
+// ============================================================================
+//  KEKA — Performance: indicators, goals, review cycles, evaluations
+// ============================================================================
+//  Follows the reference products' shape: indicator categories and indicators
+//  (HRM), goal types with timelines and employee self-managed goals, review
+//  cycle execution with evaluations and rating tracking.
+// ============================================================================
+
+model IndicatorCategory {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  /// Relative weight when rolling up to an overall rating. Categories in a
+  /// cycle should total 100.
+  weight      Decimal  @default(0) @db.Decimal(9, 2)
+  displayOrder Int     @default(0)
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+
+  indicators  PerformanceIndicator[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("indicator_categories")
+}
+
+model PerformanceIndicator {
+  id          String            @id @default(cuid())
+  categoryId  String
+  category    IndicatorCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  /// Applies only to these designations or bands. Empty means everyone.
+  appliesToJobTitleIds Json?
+  appliesToBandIds     Json?
+  weight      Decimal           @default(0) @db.Decimal(9, 2)
+  displayOrder Int              @default(0)
+  isActive    Boolean           @default(true)
+
+  createdAt   DateTime          @default(now())
+
+  ratings     IndicatorRating[]
+
+  @@unique([categoryId, name])
+  @@index([categoryId])
+  @@map("performance_indicators")
+}
+
+enum GoalMetricType {
+  PERCENTAGE
+  /// Binary done / not done.
+  COMPLETION
+  /// A number moving up toward a target.
+  NUMBER_INCREASE
+  /// A number moving down toward a target.
+  NUMBER_DECREASE
+  CURRENCY
+}
+
+enum GoalLevel {
+  COMPANY
+  DEPARTMENT
+  TEAM
+  INDIVIDUAL
+}
+
+enum GoalStatus {
+  DRAFT
+  ON_TRACK
+  NEEDS_ATTENTION
+  AT_RISK
+  COMPLETED
+  MISSED
+  CANCELLED
+}
+
+model GoalType {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  /// Default timeline in days, used to prefill new goals.
+  defaultDurationDays Int?
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  goals       Goal[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("goal_types")
+}
+
+model Goal {
+  id            String         @id @default(cuid())
+  tenantId      String
+  goalTypeId    String?
+  goalType      GoalType?      @relation(fields: [goalTypeId], references: [id], onDelete: SetNull)
+
+  title         String
+  description   String?
+  level         GoalLevel      @default(INDIVIDUAL)
+
+  /// Owner. Null for a company-level goal.
+  employeeId    String?
+  employee      Employee?      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  departmentId  String?
+
+  metricType    GoalMetricType @default(PERCENTAGE)
+  metricName    String?
+  startValue    Decimal        @default(0) @db.Decimal(18, 2)
+  targetValue   Decimal        @default(100) @db.Decimal(18, 2)
+  currentValue  Decimal        @default(0) @db.Decimal(18, 2)
+  /// Derived, but stored so lists and roll-ups do not recompute per row.
+  progressPercent Decimal      @default(0) @db.Decimal(9, 2)
+
+  startDate     DateTime
+  dueDate       DateTime
+  status        GoalStatus     @default(DRAFT)
+  /// Manual override of the auto-computed status.
+  statusOverride GoalStatus?
+
+  /// Alignment: a parent goal this rolls up into.
+  parentGoalId  String?
+  parentGoal    Goal?          @relation("GoalAlignment", fields: [parentGoalId], references: [id], onDelete: SetNull)
+  childGoals    Goal[]         @relation("GoalAlignment")
+  /// Sub-goals roll up by AVERAGE or SUM.
+  rollupMethod  String         @default("AVERAGE")
+  /// Weight within the parent. Siblings should total 100.
+  weight        Decimal        @default(0) @db.Decimal(9, 2)
+
+  /// Whether this goal feeds performance reviews.
+  countsInReview Boolean       @default(true)
+
+  createdBy     String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  checkIns      GoalCheckIn[]
+
+  @@index([tenantId, status])
+  @@index([employeeId, dueDate])
+  @@index([parentGoalId])
+  @@map("goals")
+}
+
+model GoalCheckIn {
+  id          String   @id @default(cuid())
+  goalId      String
+  goal        Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  value       Decimal  @db.Decimal(18, 2)
+  progressPercent Decimal @db.Decimal(9, 2)
+  note        String?
+  /// Set when progress came from an integration rather than a person.
+  source      String   @default("MANUAL")
+
+  recordedBy  String?
+  recordedAt  DateTime @default(now())
+
+  @@index([goalId, recordedAt])
+  @@map("goal_check_ins")
+}
+
+enum ReviewTiming {
+  /// Everyone reviewed at once — annual, half-yearly, quarterly.
+  SYNCHRONOUS
+  /// Driven by each employee's joining date, for probation and anniversary reviews.
+  DATE_OF_JOINING
+  CUSTOM
+}
+
+enum ReviewCycleStatus {
+  DRAFT
+  LAUNCHED
+  IN_PROGRESS
+  CALIBRATION
+  COMPLETED
+  CANCELLED
+}
+
+model ReviewCycle {
+  id            String            @id @default(cuid())
+  tenantId      String
+
+  name          String
+  timing        ReviewTiming      @default(SYNCHRONOUS)
+  status        ReviewCycleStatus @default(DRAFT)
+
+  periodStart   DateTime
+  periodEnd     DateTime
+  /// Window in which reviewers must submit.
+  reviewOpensAt DateTime?
+  reviewClosesAt DateTime?
+
+  /// Which reviewer types participate: SELF, REPORTING_MANAGER, SKIP_LEVEL,
+  /// DEPARTMENT_HEAD, PEER, SUBORDINATE, EXTERNAL.
+  reviewerTypes Json?
+  /// Rating scale: { max: 5, allowDecimal: true, labels: [...] }
+  ratingScale   Json?
+  /// Whether reviewers may assess future potential as well as performance.
+  ratePotential Boolean           @default(false)
+  /// PUBLIC | RESTRICTED | PRIVATE | CUSTOM
+  visibility    String            @default("RESTRICTED")
+
+  /// Eligibility filters for who is included.
+  eligibility   Json?
+
+  launchedAt    DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  reviews       EmployeeReview[]
+  bands         PerformanceBand[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+  @@map("review_cycles")
+}
+
+enum ReviewStatus {
+  NOT_STARTED
+  SELF_PENDING
+  MANAGER_PENDING
+  PENDING_CALIBRATION
+  CALIBRATED
+  SHARED
+  ACKNOWLEDGED
+}
+
+model EmployeeReview {
+  id            String       @id @default(cuid())
+  cycleId       String
+  cycle         ReviewCycle  @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  employeeId    String
+  employee      Employee     @relation("ReviewSubject", fields: [employeeId], references: [id], onDelete: Cascade)
+
+  status        ReviewStatus @default(NOT_STARTED)
+
+  /// Rating before calibration.
+  rawRating     Decimal?     @db.Decimal(9, 2)
+  /// Rating after calibration. Both are kept for audit and comparison.
+  finalRating   Decimal?     @db.Decimal(9, 2)
+  potentialRating Decimal?   @db.Decimal(9, 2)
+  bandId        String?
+  band          PerformanceBand? @relation(fields: [bandId], references: [id], onDelete: SetNull)
+
+  /// Mandatory when a calibrator overrides the raw rating.
+  calibrationReason String?
+  calibratedBy  String?
+  calibratedAt  DateTime?
+
+  managerSummary String?
+  employeeComments String?
+  sharedAt      DateTime?
+  acknowledgedAt DateTime?
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  responses     ReviewResponse[]
+  indicatorRatings IndicatorRating[]
+
+  @@unique([cycleId, employeeId])
+  @@index([cycleId, status])
+  @@index([employeeId])
+  @@map("employee_reviews")
+}
+
+/// One reviewer's submission against a review.
+model ReviewResponse {
+  id          String         @id @default(cuid())
+  reviewId    String
+  review      EmployeeReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  reviewerId  String
+  reviewer    Employee       @relation("ReviewAuthor", fields: [reviewerId], references: [id], onDelete: Cascade)
+  /// SELF | REPORTING_MANAGER | SKIP_LEVEL | DEPARTMENT_HEAD | PEER | SUBORDINATE | EXTERNAL
+  reviewerType String
+
+  /// Weight of this reviewer's input in the aggregate.
+  weight      Decimal        @default(0) @db.Decimal(9, 2)
+  overallRating Decimal?     @db.Decimal(9, 2)
+  /// Free-text answers keyed by question id.
+  answers     Json?
+  strengths   String?
+  improvements String?
+
+  submittedAt DateTime?
+  createdAt   DateTime       @default(now())
+
+  @@unique([reviewId, reviewerId, reviewerType])
+  @@index([reviewerId, submittedAt])
+  @@map("review_responses")
+}
+
+model IndicatorRating {
+  id          String               @id @default(cuid())
+  reviewId    String
+  review      EmployeeReview       @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  indicatorId String
+  indicator   PerformanceIndicator @relation(fields: [indicatorId], references: [id], onDelete: Cascade)
+
+  reviewerId  String?
+  rating      Decimal              @db.Decimal(9, 2)
+  comment     String?
+
+  createdAt   DateTime             @default(now())
+
+  @@index([reviewId])
+  @@index([indicatorId])
+  @@map("indicator_ratings")
+}
+
+/// Rating bands for calibration. A calibrator may only move a rating within
+/// the configured bands.
+model PerformanceBand {
+  id          String      @id @default(cuid())
+  cycleId     String
+  cycle       ReviewCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+
+  name        String
+  minRating   Decimal     @db.Decimal(9, 2)
+  maxRating   Decimal     @db.Decimal(9, 2)
+  /// Target share of the workforce, for the bell curve.
+  targetPercent Decimal?  @db.Decimal(9, 2)
+  color       String?
+  displayOrder Int        @default(0)
+
+  reviews     EmployeeReview[]
+
+  @@unique([cycleId, name])
+  @@index([cycleId])
+  @@map("performance_bands")
+}
+
+/// Performance improvement plan.
+model ImprovementPlan {
+  id          String    @id @default(cuid())
+  tenantId    String
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  reason      String
+  objectives  String
+  startDate   DateTime
+  endDate     DateTime
+  /// ACTIVE | EXTENDED | COMPLETED_RETAINED | COMPLETED_EXITED | CANCELLED
+  status      String    @default("ACTIVE")
+  /// RETAIN | EXTEND | INITIATE_EXIT
+  outcome     String?
+  outcomeNote String?
+  decidedAt   DateTime?
+  decidedBy   String?
+
+  managerId   String?
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("improvement_plans")
+}
+
+/// Skills repository and per-employee proficiency, feeding the skill matrix.
+model Skill {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  category    String?
+  description String?
+  /// Named proficiency levels, e.g. ["Novice","Working","Proficient","Expert"].
+  levels      Json?
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+
+  employeeSkills EmployeeSkill[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("skills")
+}
+
+model EmployeeSkill {
+  id          String   @id @default(cuid())
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  skillId     String
+  skill       Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  /// Index into the skill's levels array.
+  level       Int      @default(0)
+  rating      Decimal? @db.Decimal(9, 2)
+  /// SELF | MANAGER | IMPORT | COURSE_COMPLETION
+  source      String   @default("SELF")
+  /// Manager approval for an employee-added skill.
+  isApproved  Boolean  @default(false)
+  approvedBy  String?
+  approvedAt  DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([employeeId, skillId])
+  @@index([skillId])
+  @@map("employee_skills")
+}

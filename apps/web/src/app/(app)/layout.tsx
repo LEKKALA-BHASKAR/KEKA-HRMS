@@ -10,13 +10,29 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const viewer = await requireViewer();
 
   // Counts shown as nav badges. Only queried when the viewer may see them.
-  const [pendingApprovals, openRunCount] = await Promise.all([
+  const [pendingApprovals, openRunCount, pendingDocuments, pendingAcks] = await Promise.all([
     canAny(viewer, [P.PAYROLL_APPROVE, P.LEAVE_APPROVE, P.EXIT_APPROVE])
       ? prisma.leaveRequest.count({ where: { tenantId: viewer.tenantId, status: "PENDING" } })
       : Promise.resolve(0),
     can(viewer, P.PAYROLL_VIEW)
       ? prisma.payrollRun.count({
           where: { tenantId: viewer.tenantId, status: { in: ["DRAFT", "IN_PROGRESS", "PENDING_APPROVAL"] } },
+        })
+      : Promise.resolve(0),
+    can(viewer, P.DOCUMENT_VERIFY)
+      ? prisma.employeeDocument.count({
+          where: { tenantId: viewer.tenantId, status: "PENDING_VERIFICATION" },
+        })
+      : Promise.resolve(0),
+    // Announcements this viewer still has to acknowledge.
+    viewer.employee
+      ? prisma.announcement.count({
+          where: {
+            tenantId: viewer.tenantId,
+            status: "PUBLISHED",
+            requireAck: true,
+            reads: { none: { employeeId: viewer.employee.id, acknowledgedAt: { not: null } } },
+          },
         })
       : Promise.resolve(0),
   ]);
@@ -52,6 +68,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (can(viewer, P.EXIT_MANAGE)) {
     peopleItems.push({ href: "/exits", label: "Exits", icon: "clock" });
   }
+  if (can(viewer, P.HR_ACTIVITY_VIEW)) {
+    peopleItems.push({ href: "/activities", label: "HR Activities", icon: "briefcase" });
+  }
+  if (can(viewer, P.DOCUMENT_VIEW)) {
+    peopleItems.push({ href: "/documents", label: "Documents", icon: "file", count: pendingDocuments });
+  }
   if (peopleItems.length > 0) sections.push({ label: "People", items: peopleItems });
 
   const payrollItems = [];
@@ -74,6 +96,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     payrollItems.push({ href: "/payroll/loans", label: "Loans", icon: "wallet" });
   }
   if (payrollItems.length > 0) sections.push({ label: "Payroll", items: payrollItems });
+
+  const workplaceItems = [];
+  if (can(viewer, P.ANNOUNCEMENT_VIEW)) {
+    workplaceItems.push({ href: "/announcements", label: "Announcements", icon: "inbox", count: pendingAcks });
+  }
+  if (can(viewer, P.AWARD_VIEW)) {
+    workplaceItems.push({ href: "/awards", label: "Awards & Praise", icon: "chart" });
+  }
+  if (can(viewer, P.TRAINING_VIEW)) {
+    workplaceItems.push({ href: "/training", label: "Training", icon: "file" });
+  }
+  if (can(viewer, P.MEETING_VIEW)) {
+    workplaceItems.push({ href: "/meetings", label: "Meetings", icon: "calendar" });
+  }
+  if (workplaceItems.length > 0) sections.push({ label: "Workplace", items: workplaceItems });
 
   const opsItems = [];
   if (can(viewer, P.LEAVE_VIEW)) opsItems.push({ href: "/leave", label: "Leave", icon: "calendar" });

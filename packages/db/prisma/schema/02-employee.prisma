@@ -148,6 +148,46 @@ model Employee {
   fnfSettlement     FnfSettlement?
   exitRecord        ExitRecord?
 
+  // --- Workplace (07) ---
+  announcementReads AnnouncementRead[]
+  awards            EmployeeAward[]
+  praiseGiven       Praise[]              @relation("PraiseGiven")
+  praiseReceived    Praise[]              @relation("PraiseReceived")
+  assetAssignments  AssetAssignment[]
+  assetRequests     AssetRequest[]
+  documents         EmployeeDocument[]
+  orgDocumentAcks   OrgDocumentAck[]
+  generatedDocuments GeneratedDocument[]
+  contracts         EmployeeContract[]
+  hrActivities      HrActivity[]
+  trainingEnrolments TrainingEnrolment[]
+  meetingAttendance MeetingAttendee[]
+  meetingActionItems MeetingActionItem[]
+
+  // --- Recruitment (08) ---
+  backfillRequisitions Requisition[]      @relation("BackfillFor")
+  referredCandidates   Candidate[]        @relation("CandidateReferral")
+  interviewPanels      InterviewPanelist[]
+  bgvChecks            BgvCheck[]
+
+  // --- Performance (09) ---
+  goals             Goal[]
+  reviewsAboutMe    EmployeeReview[]      @relation("ReviewSubject")
+  reviewsIWrote     ReviewResponse[]      @relation("ReviewAuthor")
+  improvementPlans  ImprovementPlan[]
+  employeeSkills    EmployeeSkill[]
+
+  // --- Projects (10) ---
+  managedProjects   Project[]             @relation("ProjectManager")
+  assignedTasks     Task[]                @relation("TaskAssignee")
+  projectAllocations ResourceAllocation[] @relation("ProjectAllocation")
+  timesheets        Timesheet[]           @relation("EmployeeTimesheet")
+
+  // --- Accounting, expenses, travel (11) ---
+  expenseClaims     ExpenseClaim[]
+  cashAdvances      CashAdvance[]
+  travelRequests    TravelRequest[]
+
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
   @@index([tenantId, departmentId])

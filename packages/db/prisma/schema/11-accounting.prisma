@@ -1,0 +1,423 @@
+// ============================================================================
+//  KEKA — Accounting: chart of accounts, double-entry ledger, expenses
+// ============================================================================
+//  HRM OS ships "account creation and transaction management, salary payment
+//  transaction and expense management with account-wise balance view, and
+//  financial statement generation".
+//
+//  This is a real double-entry ledger, not a transaction list. Every posting
+//  carries balanced debit and credit legs, which is the only way an
+//  account-wise balance and a trial balance can be trusted. The existing
+//  payroll journal-voucher export posts into this ledger.
+// ============================================================================
+
+enum AccountClass {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+/// Chart of accounts, self-referencing so groups and sub-accounts nest.
+model Account {
+  id            String       @id @default(cuid())
+  tenantId      String
+  legalEntityId String?
+
+  code          String
+  name          String
+  accountClass  AccountClass
+  /// A group heading holds no postings itself; only leaf accounts do.
+  isGroup       Boolean      @default(false)
+  parentId      String?
+  parent        Account?     @relation("AccountTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children      Account[]    @relation("AccountTree")
+
+  /// Normal balance side, derived from the class but stored for clarity:
+  /// assets and expenses are DEBIT; liabilities, equity and income are CREDIT.
+  normalSide    String       @default("DEBIT")
+  description   String?
+  /// Bank and cash accounts get reconciliation treatment.
+  isBankAccount Boolean      @default(false)
+  bankName      String?
+  accountNumber String?
+  ifsc          String?
+
+  /// Opening balance at the start of the first period.
+  openingBalance Decimal     @default(0) @db.Decimal(18, 2)
+  openingDate   DateTime?
+  /// Running balance, maintained on posting so a balance view does not have
+  /// to aggregate the whole ledger.
+  currentBalance Decimal     @default(0) @db.Decimal(18, 2)
+
+  isActive      Boolean      @default(true)
+  /// System accounts are created by the platform and cannot be deleted.
+  isSystem      Boolean      @default(false)
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  lines         LedgerLine[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, accountClass])
+  @@index([parentId])
+  @@map("accounts")
+}
+
+enum LedgerEntryStatus {
+  DRAFT
+  POSTED
+  /// Reversed by a contra entry rather than deleted.
+  REVERSED
+}
+
+enum LedgerSource {
+  MANUAL
+  PAYROLL
+  EXPENSE
+  INVOICE
+  PAYMENT
+  OPENING_BALANCE
+  LOAN
+}
+
+/// A journal entry: the header. Its lines must balance before it can post.
+model LedgerEntry {
+  id            String            @id @default(cuid())
+  tenantId      String
+  legalEntityId String?
+
+  /// Sequential within the tenant, assigned on posting.
+  entryNumber   String
+  entryDate     DateTime
+  narration     String?
+  status        LedgerEntryStatus @default(DRAFT)
+  source        LedgerSource      @default(MANUAL)
+
+  /// Link back to whatever produced it.
+  sourceRefType String?
+  sourceRefId   String?
+
+  totalDebit    Decimal           @default(0) @db.Decimal(18, 2)
+  totalCredit   Decimal           @default(0) @db.Decimal(18, 2)
+  /// Guard: an entry can only post when debits equal credits.
+  isBalanced    Boolean           @default(false)
+
+  postedAt      DateTime?
+  postedBy      String?
+  /// The contra entry that reversed this one.
+  reversedById  String?           @unique
+  reversedBy    LedgerEntry?      @relation("Reversal", fields: [reversedById], references: [id], onDelete: SetNull)
+  reverses      LedgerEntry?      @relation("Reversal")
+  reversedAt    DateTime?
+  reversalReason String?
+
+  createdBy     String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  lines         LedgerLine[]
+
+  @@unique([tenantId, entryNumber])
+  @@index([tenantId, entryDate])
+  @@index([tenantId, status])
+  @@index([sourceRefType, sourceRefId])
+  @@map("ledger_entries")
+}
+
+model LedgerLine {
+  id          String      @id @default(cuid())
+  entryId     String
+  entry       LedgerEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  accountId   String
+  account     Account     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  /// Exactly one of debit or credit is non-zero on any line.
+  debit       Decimal     @default(0) @db.Decimal(18, 2)
+  credit      Decimal     @default(0) @db.Decimal(18, 2)
+  narration   String?
+
+  /// Optional analysis dimensions.
+  costCenterId String?
+  departmentId String?
+  employeeId   String?
+  projectId    String?
+
+  sequence    Int         @default(0)
+
+  @@index([entryId])
+  @@index([accountId])
+  @@index([employeeId])
+  @@map("ledger_lines")
+}
+
+/// A period that can be closed, after which postings are blocked.
+model AccountingPeriod {
+  id            String   @id @default(cuid())
+  tenantId      String
+  legalEntityId String?
+
+  /// e.g. "2026-06"
+  code          String
+  startDate     DateTime
+  endDate       DateTime
+  isClosed      Boolean  @default(false)
+  closedAt      DateTime?
+  closedBy      String?
+
+  @@unique([tenantId, code, legalEntityId])
+  @@index([tenantId, startDate])
+  @@map("accounting_periods")
+}
+
+// ---------------------------------------------------------------------------
+//  EXPENSES AND TRAVEL
+// ---------------------------------------------------------------------------
+
+model ExpenseCategory {
+  id            String   @id @default(cuid())
+  tenantId      String
+
+  name          String
+  description   String?
+  /// GL account this category posts to.
+  accountId     String?
+  /// Per-claim ceiling.
+  maxAmount     Decimal? @db.Decimal(18, 2)
+  /// Receipt required above this amount.
+  receiptRequiredAbove Decimal? @db.Decimal(18, 2)
+  /// Ordered approver role ids. Overrides the policy chain for this category.
+  approverRoleIds Json?
+  isActive      Boolean  @default(true)
+
+  createdAt     DateTime @default(now())
+
+  policyLinks   ExpensePolicyCategory[]
+  claimLines    ExpenseClaimLine[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("expense_categories")
+}
+
+model ExpensePolicy {
+  id            String   @id @default(cuid())
+  tenantId      String
+
+  name          String
+  description   String?
+  baseCurrency  String   @default("INR")
+  /// Allow claims dated in the future.
+  allowFutureDated Boolean @default(false)
+  /// Days within which a receipt must be submitted against a cash advance.
+  advanceReceiptDays Int?
+  /// Ordered approver role ids.
+  approverRoleIds Json?
+  /// Extra approval level above this amount.
+  escalationAboveAmount Decimal? @db.Decimal(18, 2)
+  isDefault     Boolean  @default(false)
+  isActive      Boolean  @default(true)
+
+  createdAt     DateTime @default(now())
+
+  categories    ExpensePolicyCategory[]
+  claims        ExpenseClaim[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("expense_policies")
+}
+
+model ExpensePolicyCategory {
+  id          String          @id @default(cuid())
+  policyId    String
+  policy      ExpensePolicy   @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  categoryId  String
+  category    ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  /// Category limit within this policy, overriding the category default.
+  maxAmount   Decimal?        @db.Decimal(18, 2)
+
+  @@unique([policyId, categoryId])
+  @@index([policyId])
+  @@map("expense_policy_categories")
+}
+
+enum ClaimStage {
+  DRAFT
+  SUBMITTED
+  PARTIALLY_APPROVED
+  APPROVED
+  REJECTED
+  /// Approved and queued for payment through payroll or a direct transfer.
+  PAYMENT_PENDING
+  PAID
+  CANCELLED
+}
+
+model ExpenseClaim {
+  id            String        @id @default(cuid())
+  tenantId      String
+  employeeId    String
+  employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  policyId      String?
+  policy        ExpensePolicy? @relation(fields: [policyId], references: [id], onDelete: SetNull)
+
+  claimNumber   String
+  title         String
+  stage         ClaimStage    @default(DRAFT)
+  currency      String        @default("INR")
+
+  claimedTotal  Decimal       @default(0) @db.Decimal(18, 2)
+  approvedTotal Decimal       @default(0) @db.Decimal(18, 2)
+
+  /// Settled against an outstanding cash advance rather than paid out.
+  advanceId     String?
+  /// Paid with salary rather than by separate transfer.
+  payViaPayroll Boolean       @default(true)
+  paidInRunId   String?
+  projectId     String?
+  costCenterId  String?
+
+  submittedAt   DateTime?
+  approvedBy    String?
+  approvedAt    DateTime?
+  rejectReason  String?
+  paidAt        DateTime?
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  lines         ExpenseClaimLine[]
+
+  @@unique([tenantId, claimNumber])
+  @@index([tenantId, stage])
+  @@index([employeeId])
+  @@map("expense_claims")
+}
+
+model ExpenseClaimLine {
+  id          String          @id @default(cuid())
+  claimId     String
+  claim       ExpenseClaim    @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  categoryId  String
+  category    ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  expenseDate DateTime
+  description String?
+  /// Amount as incurred, in its original currency.
+  amount      Decimal         @db.Decimal(18, 2)
+  currency    String          @default("INR")
+  /// Rate used to convert to the claim's base currency.
+  exchangeRate Decimal        @default(1) @db.Decimal(18, 6)
+  baseAmount  Decimal         @db.Decimal(18, 2)
+  approvedAmount Decimal?     @db.Decimal(18, 2)
+
+  receiptUrl  String?
+  merchant    String?
+  /// Reason a line was reduced or refused.
+  reviewNote  String?
+  isApproved  Boolean?
+
+  @@index([claimId])
+  @@index([categoryId])
+  @@map("expense_claim_lines")
+}
+
+enum AdvanceStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  DISBURSED
+  PARTIALLY_SETTLED
+  SETTLED
+  RECOVERED
+}
+
+/// A cash advance, later settled against claims. Any unsettled balance is
+/// recovered through payroll.
+model CashAdvance {
+  id            String        @id @default(cuid())
+  tenantId      String
+  employeeId    String
+  employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  amount        Decimal       @db.Decimal(18, 2)
+  purpose       String
+  status        AdvanceStatus @default(REQUESTED)
+  neededBy      DateTime?
+
+  settledAmount Decimal       @default(0) @db.Decimal(18, 2)
+  outstanding   Decimal       @default(0) @db.Decimal(18, 2)
+
+  approvedBy    String?
+  approvedAt    DateTime?
+  disbursedAt   DateTime?
+  /// Set when the unsettled balance is recovered in a payroll run.
+  recoveredInRunId String?
+
+  projectId     String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("cash_advances")
+}
+
+enum TripStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  BOOKED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+/// Travel request handled by the travel desk.
+model TravelRequest {
+  id            String     @id @default(cuid())
+  tenantId      String
+  employeeId    String
+  employee      Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  requestNumber String
+  purpose       String
+  status        TripStatus @default(REQUESTED)
+
+  fromCity      String
+  toCity        String
+  departDate    DateTime
+  returnDate    DateTime?
+  /// DOMESTIC | INTERNATIONAL
+  travelType    String     @default("DOMESTIC")
+  /// FLIGHT | TRAIN | BUS | CAB | SELF
+  modes         Json?
+  needsAccommodation Boolean @default(false)
+  needsVisa     Boolean    @default(false)
+
+  estimatedCost Decimal?   @db.Decimal(18, 2)
+  actualCost    Decimal?   @db.Decimal(18, 2)
+  advanceId     String?
+  projectId     String?
+  clientId      String?
+
+  approvedBy    String?
+  approvedAt    DateTime?
+  rejectReason  String?
+  /// Travel desk booking details.
+  bookingRef    String?
+  bookedBy      String?
+  bookedAt      DateTime?
+
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@unique([tenantId, requestNumber])
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("travel_requests")
+}

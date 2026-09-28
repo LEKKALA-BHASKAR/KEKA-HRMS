@@ -1,0 +1,796 @@
+// ============================================================================
+//  KEKA — Workplace: engagement, assets, documents, training, meetings
+// ============================================================================
+//  Consolidated from the reference HRM products: announcements and awards
+//  (HRM OS), assets with depreciation and contracts (HRM), documents with
+//  acknowledgement tracking, training/LMS, and meetings with minutes.
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+//  ANNOUNCEMENTS
+// ---------------------------------------------------------------------------
+
+enum AnnouncementStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  EXPIRED
+  ARCHIVED
+}
+
+model Announcement {
+  id            String             @id @default(cuid())
+  tenantId      String
+
+  title         String
+  body          String
+  bannerUrl     String?
+  status        AnnouncementStatus @default(DRAFT)
+
+  /// Audience filters. Empty means everyone.
+  /// { departmentIds: [], locationIds: [], businessUnitIds: [], workerTypeIds: [],
+  ///   excludeOnNotice: bool }
+  audience      Json?
+
+  publishAt     DateTime?
+  expiresAt     DateTime?
+  /// Employees must tick to confirm they have read it.
+  requireAck    Boolean            @default(false)
+  notifyByEmail Boolean            @default(false)
+  isPinned      Boolean            @default(false)
+
+  createdBy     String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  reads         AnnouncementRead[]
+
+  @@index([tenantId, status, publishAt])
+  @@map("announcements")
+}
+
+model AnnouncementRead {
+  id             String       @id @default(cuid())
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  employeeId     String
+  employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  viewedAt       DateTime     @default(now())
+  acknowledgedAt DateTime?
+
+  @@unique([announcementId, employeeId])
+  @@index([employeeId])
+  @@map("announcement_reads")
+}
+
+// ---------------------------------------------------------------------------
+//  AWARDS AND RECOGNITION
+// ---------------------------------------------------------------------------
+
+enum AwardCadence {
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+  SPOT
+}
+
+model AwardType {
+  id          String       @id @default(cuid())
+  tenantId    String
+
+  name        String
+  description String?
+  icon        String?
+  color       String?
+  cadence     AwardCadence @default(MONTHLY)
+  /// A cash prize attached to the award, paid through payroll as an ad-hoc payment.
+  cashAmount  Decimal?     @db.Decimal(18, 2)
+  /// Reward points redeemed through a rewards partner.
+  points      Int?
+  isActive    Boolean      @default(true)
+
+  createdAt   DateTime     @default(now())
+
+  awards      EmployeeAward[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("award_types")
+}
+
+model EmployeeAward {
+  id          String    @id @default(cuid())
+  tenantId    String
+  awardTypeId String
+  awardType   AwardType @relation(fields: [awardTypeId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  /// The period the award recognises, e.g. "2026-06" or "2026-Q2".
+  period      String?
+  awardedOn   DateTime
+  citation    String?
+  /// Set when a cash award is pushed into a payroll run.
+  cashAmount  Decimal?  @db.Decimal(18, 2)
+  paidInRunId String?
+  certificateUrl String?
+
+  nominatedBy String?
+  approvedBy  String?
+  isPublished Boolean   @default(true)
+
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId, awardedOn])
+  @@index([employeeId])
+  @@map("employee_awards")
+}
+
+/// Peer-to-peer praise, distinct from a formal award.
+model Praise {
+  id          String   @id @default(cuid())
+  tenantId    String
+  fromEmployeeId String
+  fromEmployee   Employee @relation("PraiseGiven", fields: [fromEmployeeId], references: [id], onDelete: Cascade)
+  toEmployeeId   String
+  toEmployee     Employee @relation("PraiseReceived", fields: [toEmployeeId], references: [id], onDelete: Cascade)
+
+  /// Badge name, e.g. "Team Player", "Above and Beyond".
+  badge       String?
+  message     String
+  /// Visible on the organisation praise wall.
+  isPublic    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([toEmployeeId])
+  @@map("praises")
+}
+
+// ---------------------------------------------------------------------------
+//  ASSETS
+// ---------------------------------------------------------------------------
+
+enum AssetStatus {
+  AVAILABLE
+  ASSIGNED
+  IN_REPAIR
+  RETIRED
+  LOST
+  /// Withheld from assignment without being retired.
+  UNAVAILABLE
+}
+
+enum AssetCondition {
+  NEW
+  GOOD
+  FAIR
+  DAMAGED
+  UNUSABLE
+}
+
+model AssetCategory {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  /// Straight-line depreciation over this many months. Null means none.
+  usefulLifeMonths Int?
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+
+  types       AssetType[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("asset_categories")
+}
+
+model AssetType {
+  id          String        @id @default(cuid())
+  categoryId  String
+  category    AssetCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  name        String
+  make        String?
+  model       String?
+  /// Requires employee acknowledgement on assignment.
+  requireAck  Boolean       @default(true)
+
+  createdAt   DateTime      @default(now())
+
+  assets      Asset[]
+
+  @@unique([categoryId, name])
+  @@index([categoryId])
+  @@map("asset_types")
+}
+
+/// Configurable asset ID series, mirroring the employee number series.
+model AssetIdSeries {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  prefix      String   @default("AST")
+  digits      Int      @default(5)
+  suffix      String   @default("")
+  nextNumber  Int      @default(1)
+  isDefault   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("asset_id_series")
+}
+
+model Asset {
+  id             String         @id @default(cuid())
+  tenantId       String
+  assetTypeId    String
+  assetType      AssetType      @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
+
+  /// Generated from an AssetIdSeries.
+  assetTag       String
+  serialNumber   String?
+  status         AssetStatus    @default(AVAILABLE)
+  condition      AssetCondition @default(NEW)
+
+  purchaseDate   DateTime?
+  purchaseCost   Decimal?       @db.Decimal(18, 2)
+  vendor         String?
+  invoiceNumber  String?
+  warrantyExpiry DateTime?
+  /// Book value after depreciation, recomputed on demand.
+  currentValue   Decimal?       @db.Decimal(18, 2)
+
+  locationId     String?
+  notes          String?
+
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  assignments    AssetAssignment[]
+  requests       AssetRequest[]
+
+  @@unique([tenantId, assetTag])
+  @@index([tenantId, status])
+  @@index([assetTypeId])
+  @@map("assets")
+}
+
+model AssetAssignment {
+  id             String         @id @default(cuid())
+  assetId        String
+  asset          Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  employeeId     String
+  employee       Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  assignedOn     DateTime
+  assignedBy     String?
+  conditionOut   AssetCondition @default(GOOD)
+
+  /// Acknowledgement by the employee that they have received it.
+  acknowledgedAt DateTime?
+
+  returnedOn     DateTime?
+  conditionIn    AssetCondition?
+  /// Recovered from the employee, and flows into the F&F settlement.
+  damageCharge   Decimal?       @db.Decimal(18, 2)
+  damageNote     String?
+  /// Set once the charge has been pushed to payroll or a settlement.
+  chargeRecovered Boolean       @default(false)
+
+  notes          String?
+  createdAt      DateTime       @default(now())
+
+  @@index([assetId])
+  @@index([employeeId, returnedOn])
+  @@map("asset_assignments")
+}
+
+enum AssetRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FULFILLED
+  CANCELLED
+}
+
+model AssetRequest {
+  id          String             @id @default(cuid())
+  tenantId    String
+  employeeId  String
+  employee    Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  /// Set once a specific asset is allocated against the request.
+  assetId     String?
+  asset       Asset?             @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  assetTypeId String?
+  reason      String
+  status      AssetRequestStatus @default(PENDING)
+  neededBy    DateTime?
+
+  approvedBy  String?
+  approvedAt  DateTime?
+  rejectReason String?
+
+  createdAt   DateTime           @default(now())
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("asset_requests")
+}
+
+// ---------------------------------------------------------------------------
+//  DOCUMENTS AND CONTRACTS
+// ---------------------------------------------------------------------------
+
+enum DocumentScope {
+  /// Belongs to one employee.
+  EMPLOYEE
+  /// Organisation-wide policy document.
+  ORGANISATION
+}
+
+model DocumentFolder {
+  id             String        @id @default(cuid())
+  tenantId       String
+  name           String
+  description    String?
+  scope          DocumentScope @default(EMPLOYEE)
+  /// Restricts access to explicitly permitted roles.
+  isConfidential Boolean       @default(false)
+  /// Role keys that may view, and separately edit.
+  viewRoles      Json?
+  editRoles      Json?
+
+  createdAt      DateTime      @default(now())
+
+  types          DocumentType[]
+  documents      EmployeeDocument[]
+  orgDocuments   OrgDocument[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("document_folders")
+}
+
+model DocumentType {
+  id             String          @id @default(cuid())
+  folderId       String
+  folder         DocumentFolder  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  name           String
+  /// Single upload, or many of this type.
+  allowMultiple  Boolean         @default(false)
+  isMandatory    Boolean         @default(false)
+  /// Routes to admin verification after upload.
+  requireVerification Boolean    @default(true)
+  /// Prompts the employee for an expiry date.
+  trackExpiry    Boolean         @default(false)
+  /// Employee may mark it as not applicable to them.
+  allowNotApplicable Boolean     @default(false)
+
+  createdAt      DateTime        @default(now())
+
+  documents      EmployeeDocument[]
+
+  @@unique([folderId, name])
+  @@index([folderId])
+  @@map("document_types")
+}
+
+enum EmployeeDocumentStatus {
+  PENDING_ON_EMPLOYEE
+  PENDING_VERIFICATION
+  VERIFIED
+  REJECTED
+  NOT_APPLICABLE
+  EXPIRED
+}
+
+model EmployeeDocument {
+  id          String                 @id @default(cuid())
+  tenantId    String
+  employeeId  String
+  employee    Employee               @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  folderId    String?
+  folder      DocumentFolder?        @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  documentTypeId String?
+  documentType DocumentType?         @relation(fields: [documentTypeId], references: [id], onDelete: SetNull)
+
+  name        String
+  fileUrl     String?
+  fileSize    Int?
+  mimeType    String?
+  status      EmployeeDocumentStatus @default(PENDING_ON_EMPLOYEE)
+
+  issuedOn    DateTime?
+  expiresOn   DateTime?
+
+  uploadedBy  String?
+  uploadedAt  DateTime?
+  verifiedBy  String?
+  verifiedAt  DateTime?
+  rejectReason String?
+
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@index([expiresOn])
+  @@map("employee_documents")
+}
+
+/// Organisation policy documents, with enforced acknowledgement.
+model OrgDocument {
+  id          String          @id @default(cuid())
+  tenantId    String
+  folderId    String?
+  folder      DocumentFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
+  title       String
+  description String?
+  fileUrl     String?
+  version     String?
+  effectiveFrom DateTime?
+  requireAck  Boolean         @default(false)
+  isPublished Boolean         @default(true)
+
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  acknowledgements OrgDocumentAck[]
+
+  @@index([tenantId])
+  @@map("org_documents")
+}
+
+model OrgDocumentAck {
+  id            String      @id @default(cuid())
+  documentId    String
+  document      OrgDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  employeeId    String
+  employee      Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  acknowledgedAt DateTime   @default(now())
+
+  @@unique([documentId, employeeId])
+  @@index([employeeId])
+  @@map("org_document_acks")
+}
+
+/// Letter and document generation templates with dynamic placeholders.
+model DocumentTemplate {
+  id            String   @id @default(cuid())
+  tenantId      String
+
+  name          String
+  /// OFFER | CONFIRMATION | RELIEVING | APPOINTMENT | EXPERIENCE | WARNING | CUSTOM
+  category      String   @default("CUSTOM")
+  /// HTML body containing {{placeholders}}.
+  body          String
+  /// Placeholder keys the template uses, for validation before generation.
+  placeholders  Json?
+  /// Scope to specific legal entities. Empty means org-wide.
+  legalEntityIds Json?
+  /// Attached workflow: ACKNOWLEDGE | APPROVE | SIGN
+  workflow      String?
+  isArchived    Boolean  @default(false)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  generated     GeneratedDocument[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, category])
+  @@map("document_templates")
+}
+
+model GeneratedDocument {
+  id          String           @id @default(cuid())
+  templateId  String
+  template    DocumentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  /// Rendered HTML at the time of generation, so a later template edit does
+  /// not rewrite history.
+  renderedBody String
+  fileUrl     String?
+  /// DRAFT | PENDING_APPROVAL | PENDING_SIGNATURE | ISSUED | ACKNOWLEDGED
+  status      String           @default("ISSUED")
+
+  issuedOn    DateTime         @default(now())
+  issuedBy    String?
+  acknowledgedAt DateTime?
+  signedAt    DateTime?
+
+  @@index([employeeId])
+  @@index([templateId])
+  @@map("generated_documents")
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  EXPIRING
+  EXPIRED
+  TERMINATED
+  RENEWED
+}
+
+model EmployeeContract {
+  id          String         @id @default(cuid())
+  tenantId    String
+  employeeId  String
+  employee    Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  contractNumber String?
+  /// PERMANENT | FIXED_TERM | PROBATION | CONSULTANT | INTERNSHIP
+  contractType String        @default("FIXED_TERM")
+  startDate   DateTime
+  endDate     DateTime?
+  status      ContractStatus @default(ACTIVE)
+
+  /// Contracted annual value, which may differ from the payroll CTC.
+  contractValue Decimal?     @db.Decimal(18, 2)
+  noticeDays   Int?
+  fileUrl      String?
+  terms        String?
+
+  /// Chain when a contract is renewed rather than replaced.
+  renewedFromId String?
+  renewedFrom   EmployeeContract? @relation("ContractRenewal", fields: [renewedFromId], references: [id], onDelete: SetNull)
+  renewals      EmployeeContract[] @relation("ContractRenewal")
+
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@index([endDate])
+  @@map("employee_contracts")
+}
+
+// ---------------------------------------------------------------------------
+//  HR ACTIVITIES
+// ---------------------------------------------------------------------------
+
+enum HrActivityType {
+  PROMOTION
+  TRANSFER
+  WARNING
+  COMPLAINT
+  WORK_TRIP
+  TERMINATION
+  RESIGNATION
+  APPRECIATION
+  SALARY_REVISION
+}
+
+/// A timeline of discrete HR events, distinct from the effective-dated job
+/// record. A warning or a work trip is an event, not a position change.
+model HrActivity {
+  id          String         @id @default(cuid())
+  tenantId    String
+  employeeId  String
+  employee    Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  type        HrActivityType
+  title       String
+  description String?
+  occurredOn  DateTime
+
+  /// Promotion and transfer carry from/to values.
+  fromValue   String?
+  toValue     String?
+  /// Work trip fields.
+  tripFrom    DateTime?
+  tripTo      DateTime?
+  destination String?
+  /// Warning severity: MINOR | MAJOR | FINAL
+  severity    String?
+
+  attachmentUrl String?
+  /// Links to the effective-dated job record where one was created.
+  jobRecordId String?
+
+  recordedBy  String?
+  createdAt   DateTime       @default(now())
+
+  @@index([tenantId, type, occurredOn])
+  @@index([employeeId, occurredOn])
+  @@map("hr_activities")
+}
+
+// ---------------------------------------------------------------------------
+//  TRAINING
+// ---------------------------------------------------------------------------
+
+enum TrainingStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum EnrolmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  WITHDRAWN
+}
+
+model TrainingType {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  /// INTERNAL | EXTERNAL | ONLINE | CERTIFICATION
+  mode        String   @default("INTERNAL")
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  programs    TrainingProgram[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("training_types")
+}
+
+model TrainingProgram {
+  id             String         @id @default(cuid())
+  tenantId       String
+  trainingTypeId String
+  trainingType   TrainingType   @relation(fields: [trainingTypeId], references: [id], onDelete: Cascade)
+
+  title          String
+  description    String?
+  trainer        String?
+  /// Cost per participant, for training budget reporting.
+  costPerHead    Decimal?       @db.Decimal(18, 2)
+  venue          String?
+  startDate      DateTime?
+  endDate        DateTime?
+  durationHours  Decimal?       @db.Decimal(9, 2)
+  maxSeats       Int?
+  status         TrainingStatus @default(PLANNED)
+  /// Skills this programme develops, awarded on completion.
+  skills         Json?
+  materialUrl    String?
+
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  enrolments     TrainingEnrolment[]
+
+  @@index([tenantId, status])
+  @@map("training_programs")
+}
+
+model TrainingEnrolment {
+  id          String          @id @default(cuid())
+  programId   String
+  program     TrainingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  status      EnrolmentStatus @default(ASSIGNED)
+  progressPercent Int         @default(0)
+  score       Decimal?        @db.Decimal(9, 2)
+  completedAt DateTime?
+  certificateUrl String?
+  feedback    String?
+
+  assignedAt  DateTime        @default(now())
+  assignedBy  String?
+
+  @@unique([programId, employeeId])
+  @@index([employeeId, status])
+  @@map("training_enrolments")
+}
+
+// ---------------------------------------------------------------------------
+//  MEETINGS
+// ---------------------------------------------------------------------------
+
+enum MeetingStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model MeetingRoom {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  locationId  String?
+  capacity    Int?
+  /// Projector, video conferencing, whiteboard.
+  facilities  Json?
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  meetings    Meeting[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("meeting_rooms")
+}
+
+model Meeting {
+  id          String        @id @default(cuid())
+  tenantId    String
+  roomId      String?
+  room        MeetingRoom?  @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  title       String
+  /// REVIEW | ONE_ON_ONE | STANDUP | INTERVIEW | TOWN_HALL | OTHER
+  meetingType String        @default("OTHER")
+  agenda      String?
+  startsAt    DateTime
+  endsAt      DateTime
+  /// Set for a video meeting rather than a room.
+  meetingUrl  String?
+  status      MeetingStatus @default(SCHEDULED)
+
+  /// Minutes recorded after the meeting.
+  minutes     String?
+  organiserId String?
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  attendees   MeetingAttendee[]
+  actionItems MeetingActionItem[]
+
+  @@index([tenantId, startsAt])
+  @@index([roomId, startsAt])
+  @@map("meetings")
+}
+
+model MeetingAttendee {
+  id          String   @id @default(cuid())
+  meetingId   String
+  meeting     Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  /// REQUIRED | OPTIONAL
+  attendance  String   @default("REQUIRED")
+  /// PENDING | ACCEPTED | DECLINED | TENTATIVE
+  response    String   @default("PENDING")
+  attended    Boolean?
+
+  @@unique([meetingId, employeeId])
+  @@index([employeeId])
+  @@map("meeting_attendees")
+}
+
+model MeetingActionItem {
+  id          String    @id @default(cuid())
+  meetingId   String
+  meeting     Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  description String
+  ownerId     String?
+  owner       Employee? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  dueDate     DateTime?
+  /// OPEN | IN_PROGRESS | DONE | CANCELLED
+  status      String    @default("OPEN")
+  completedAt DateTime?
+
+  createdAt   DateTime  @default(now())
+
+  @@index([meetingId])
+  @@index([ownerId, status])
+  @@map("meeting_action_items")
+}

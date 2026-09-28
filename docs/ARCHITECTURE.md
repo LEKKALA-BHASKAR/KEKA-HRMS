@@ -123,3 +123,51 @@ Finalising consumes inputs — arrears, ad-hoc transactions, loan instalments an
 all marked processed. Rollback reverses every one of those, deletes the payslips, and
 **archives** journal vouchers rather than deleting them, because an exported voucher must
 remain auditable.
+
+
+## Module layering (Phase 2)
+
+The schema is split by domain, with a strict rule: a module may reference the employee
+record, but modules do not reference each other's internals. Cross-module effects go
+through payroll's existing transaction tables rather than through direct coupling.
+
+```
+00-base          tenancy, identity, RBAC, audit
+01-org           legal entity -> business unit -> department; location
+02-employee      the employee record and its back-relations
+03-payroll       pay groups, components, structures, runs, payslips
+04-statutory     PF/ESI/PT/LWF/income tax reference tables
+05-transactions  arrears, ad-hoc, bonus, claims, loans, F&F, journal vouchers
+06-time          leave and attendance
+07-workplace     announcements, awards, assets, documents, contracts,
+                 HR activities, training, meetings
+08-recruitment   requisitions, jobs, candidates, applications, interviews, offers
+09-performance   indicators, goals, review cycles, calibration, skills, PIP
+10-projects      clients, projects, tasks, milestones, timesheets, invoices
+11-accounting    chart of accounts, double-entry ledger, expenses, travel
+```
+
+### Why cross-module effects route through payroll transactions
+
+An award with a cash value does not get a foreign key into the payslip. It creates an
+`AdhocTransaction` and stores the run id it was pushed into. The same is true of an asset
+damage charge. This matters for three reasons:
+
+1. **The payroll engine stays pure.** It consumes ad-hoc transactions and knows nothing
+   about awards or assets. Adding a tenth module that needs to pay or recover money requires
+   no engine change.
+2. **Rollback works uniformly.** Rolling a run back releases every ad-hoc transaction
+   regardless of which module created it, because there is one mechanism, not ten.
+3. **Double recovery is visible.** An asset charge carries `chargeRecovered`, and a leaver's
+   charge is read directly by the full-and-final settlement. The UI states which route
+   applies, because the alternative is recovering the same money twice.
+
+### The accounting ledger is double-entry, deliberately
+
+HRM OS describes "account creation and transaction management with account-wise balance
+view". A flat transaction list cannot produce a balance anyone should trust. `LedgerEntry`
+holds a header with `isBalanced`, and `LedgerLine` holds legs where exactly one of debit or
+credit is non-zero. An entry cannot post until debits equal credits, periods can be closed
+to block back-dated postings, and an entry is reversed by a contra entry rather than
+deleted. The payroll journal-voucher export posts into this ledger rather than existing
+beside it.

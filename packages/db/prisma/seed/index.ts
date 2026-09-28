@@ -10,6 +10,7 @@ import bcrypt from "bcryptjs";
 import { SYSTEM_ROLES } from "../../../rbac/src/roles";
 import { seedReferenceData } from "./reference";
 import { SALARY_COMPONENTS, SALARY_STRUCTURES } from "./components";
+import { seedWorkplace } from "./workplace";
 
 const prisma = new PrismaClient();
 
@@ -802,6 +803,25 @@ async function main() {
     });
   }
   log("Accounting", `${mappings.length} GL mappings for journal-voucher export`);
+
+  // ---------------------------------------------------------------------
+  //  Workplace modules
+  // ---------------------------------------------------------------------
+  const wp = await seedWorkplace(prisma, {
+    tenantId: tenant.id,
+    employees: created,
+    locationIds: locations.map((l) => l.id),
+    departmentIds: departments,
+    empIdByNumber,
+  });
+  log("Announcements", `${wp.announcements} (2 pinned, 1 scheduled, acknowledgement tracked)`);
+  log("Awards & praise", `${wp.awardTypes} award types, ${wp.awards} granted, ${wp.praises} praises`);
+  log("Assets", `${wp.assets} items across 4 categories, assigned with 1 damage recovery`);
+  log("Documents", `${wp.orgDocuments} org policies, ${wp.templates} letter templates, per-employee docs`);
+  log("Contracts", `1 per employee, mix of permanent and fixed-term`);
+  log("HR activities", `${wp.activities} timeline events`);
+  log("Training", `${wp.trainingPrograms} programmes with enrolments`);
+  log("Meetings", `${wp.meetings} across ${wp.rooms} rooms, with minutes and action items`);
 
   // ---------------------------------------------------------------------
   //  Summary

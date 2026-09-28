@@ -110,6 +110,62 @@ export const PERMISSIONS = {
   TIMESHEET_APPROVE: "psa.timesheet.approve",
   BILLING_MANAGE: "psa.billing.manage",
 
+  // --- Engagement ---------------------------------------------------------
+  ANNOUNCEMENT_VIEW: "engagement.announcement.view",
+  ANNOUNCEMENT_MANAGE: "engagement.announcement.manage",
+  AWARD_VIEW: "engagement.award.view",
+  AWARD_MANAGE: "engagement.award.manage",
+  PRAISE_GIVE: "engagement.praise.give",
+
+  // --- Contracts and letters ---------------------------------------------
+  CONTRACT_VIEW: "document.contract.view",
+  CONTRACT_MANAGE: "document.contract.manage",
+
+  // --- HR activities ------------------------------------------------------
+  HR_ACTIVITY_VIEW: "lifecycle.activity.view",
+  HR_ACTIVITY_MANAGE: "lifecycle.activity.manage",
+
+  // --- Training -----------------------------------------------------------
+  TRAINING_VIEW: "training.program.view",
+  TRAINING_MANAGE: "training.program.manage",
+  TRAINING_ENROL: "training.enrolment.manage",
+
+  // --- Meetings -----------------------------------------------------------
+  MEETING_VIEW: "meeting.event.view",
+  MEETING_MANAGE: "meeting.event.manage",
+  MEETING_ROOM_MANAGE: "meeting.room.manage",
+
+  // --- Recruitment, extended ---------------------------------------------
+  INTERVIEW_MANAGE: "hire.interview.manage",
+  INTERVIEW_FEEDBACK: "hire.scorecard.submit",
+  OFFER_MANAGE: "hire.offer.manage",
+  OFFER_APPROVE: "hire.offer.approve",
+  CAREER_PORTAL_MANAGE: "hire.portal.manage",
+
+  // --- Performance, extended ---------------------------------------------
+  SKILL_VIEW: "performance.skill.view",
+  SKILL_MANAGE: "performance.skill.manage",
+  PIP_MANAGE: "performance.pip.manage",
+
+  // --- Projects, extended -------------------------------------------------
+  CLIENT_VIEW: "psa.client.view",
+  CLIENT_MANAGE: "psa.client.manage",
+  TASK_VIEW: "psa.task.view",
+  TASK_MANAGE: "psa.task.manage",
+  TIMESHEET_SUBMIT: "psa.timesheet.submit",
+  RATE_CARD_MANAGE: "psa.ratecard.manage",
+  INVOICE_MANAGE: "psa.invoice.manage",
+
+  // --- Accounting ---------------------------------------------------------
+  ACCOUNT_VIEW: "accounting.account.view",
+  ACCOUNT_MANAGE: "accounting.account.manage",
+  LEDGER_VIEW: "accounting.ledger.view",
+  LEDGER_POST: "accounting.ledger.post",
+  LEDGER_REVERSE: "accounting.ledger.reverse",
+  PERIOD_CLOSE: "accounting.period.close",
+  FINANCIAL_REPORT_VIEW: "accounting.report.view",
+  ADVANCE_APPROVE: "expense.advance.approve",
+
   // --- Platform administration -------------------------------------------
   ROLE_MANAGE: "admin.role.manage",
   AUTH_SETTINGS_MANAGE: "admin.auth.manage",
@@ -168,6 +224,8 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.EXIT_APPROVE, label: "Approve exits" },
       { key: PERMISSIONS.EXIT_MANAGE, label: "Manage exits" },
       { key: PERMISSIONS.BGV_MANAGE, label: "Manage background verification" },
+      { key: PERMISSIONS.HR_ACTIVITY_VIEW, label: "View HR activity timeline" },
+      { key: PERMISSIONS.HR_ACTIVITY_MANAGE, label: "Record HR activities" },
     ],
   },
   {
@@ -179,6 +237,8 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.DOCUMENT_VERIFY, label: "Verify documents" },
       { key: PERMISSIONS.DOCUMENT_TEMPLATE_MANAGE, label: "Manage templates" },
       { key: PERMISSIONS.LETTER_GENERATE, label: "Generate letters" },
+      { key: PERMISSIONS.CONTRACT_VIEW, label: "View contracts" },
+      { key: PERMISSIONS.CONTRACT_MANAGE, label: "Manage contracts" },
     ],
   },
   {
@@ -258,6 +318,9 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.PERFORMANCE_MANAGE, label: "Manage review cycles" },
       { key: PERMISSIONS.PERFORMANCE_CALIBRATE, label: "Calibrate ratings" },
       { key: PERMISSIONS.GOALS_MANAGE, label: "Manage goals & OKRs" },
+      { key: PERMISSIONS.SKILL_VIEW, label: "View skills & matrix" },
+      { key: PERMISSIONS.SKILL_MANAGE, label: "Manage skills" },
+      { key: PERMISSIONS.PIP_MANAGE, label: "Manage improvement plans" },
     ],
   },
   {
@@ -269,6 +332,11 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.REQUISITION_APPROVE, label: "Approve requisitions" },
       { key: PERMISSIONS.JOB_MANAGE, label: "Manage jobs" },
       { key: PERMISSIONS.CANDIDATE_MANAGE, label: "Manage candidates" },
+      { key: PERMISSIONS.INTERVIEW_MANAGE, label: "Schedule interviews" },
+      { key: PERMISSIONS.INTERVIEW_FEEDBACK, label: "Submit scorecards" },
+      { key: PERMISSIONS.OFFER_MANAGE, label: "Manage offers" },
+      { key: PERMISSIONS.OFFER_APPROVE, label: "Approve offers" },
+      { key: PERMISSIONS.CAREER_PORTAL_MANAGE, label: "Manage career portal" },
     ],
   },
   {
@@ -279,6 +347,56 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.PROJECT_MANAGE, label: "Manage projects" },
       { key: PERMISSIONS.TIMESHEET_APPROVE, label: "Approve timesheets" },
       { key: PERMISSIONS.BILLING_MANAGE, label: "Manage billing" },
+      { key: PERMISSIONS.CLIENT_VIEW, label: "View clients" },
+      { key: PERMISSIONS.CLIENT_MANAGE, label: "Manage clients" },
+      { key: PERMISSIONS.TASK_VIEW, label: "View tasks" },
+      { key: PERMISSIONS.TASK_MANAGE, label: "Manage tasks" },
+      { key: PERMISSIONS.TIMESHEET_SUBMIT, label: "Submit timesheets" },
+      { key: PERMISSIONS.RATE_CARD_MANAGE, label: "Manage rate cards" },
+      { key: PERMISSIONS.INVOICE_MANAGE, label: "Manage invoices" },
+    ],
+  },
+  {
+    module: "engagement",
+    label: "Engagement",
+    permissions: [
+      { key: PERMISSIONS.ANNOUNCEMENT_VIEW, label: "View announcements" },
+      { key: PERMISSIONS.ANNOUNCEMENT_MANAGE, label: "Publish announcements" },
+      { key: PERMISSIONS.AWARD_VIEW, label: "View awards" },
+      { key: PERMISSIONS.AWARD_MANAGE, label: "Manage & grant awards" },
+      { key: PERMISSIONS.PRAISE_GIVE, label: "Give praise" },
+    ],
+  },
+  {
+    module: "training",
+    label: "Training",
+    permissions: [
+      { key: PERMISSIONS.TRAINING_VIEW, label: "View programmes" },
+      { key: PERMISSIONS.TRAINING_MANAGE, label: "Manage programmes" },
+      { key: PERMISSIONS.TRAINING_ENROL, label: "Assign & track enrolment" },
+    ],
+  },
+  {
+    module: "meeting",
+    label: "Meetings",
+    permissions: [
+      { key: PERMISSIONS.MEETING_VIEW, label: "View meetings" },
+      { key: PERMISSIONS.MEETING_MANAGE, label: "Schedule & minute meetings" },
+      { key: PERMISSIONS.MEETING_ROOM_MANAGE, label: "Manage rooms" },
+    ],
+  },
+  {
+    module: "accounting",
+    label: "Accounting",
+    permissions: [
+      { key: PERMISSIONS.ACCOUNT_VIEW, label: "View chart of accounts" },
+      { key: PERMISSIONS.ACCOUNT_MANAGE, label: "Manage accounts" },
+      { key: PERMISSIONS.LEDGER_VIEW, label: "View the ledger" },
+      { key: PERMISSIONS.LEDGER_POST, label: "Post journal entries" },
+      { key: PERMISSIONS.LEDGER_REVERSE, label: "Reverse entries" },
+      { key: PERMISSIONS.PERIOD_CLOSE, label: "Close accounting periods" },
+      { key: PERMISSIONS.FINANCIAL_REPORT_VIEW, label: "View financial statements" },
+      { key: PERMISSIONS.ADVANCE_APPROVE, label: "Approve cash advances" },
     ],
   },
   {

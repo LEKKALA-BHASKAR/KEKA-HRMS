@@ -79,7 +79,7 @@ payslip release, and rollback that un-consumes every input and archives journal 
 - **168 route/persona combinations** return only 200 or 403, never a 500
 - **A real 28-employee payroll run** reconciles: gross − deductions = net, exactly
 
-## Two bugs worth recording
+## Three bugs worth recording
 
 **Old-regime tax slabs merged across age bands.** The old regime publishes three
 complete tables (under-60, 60–79, 80+). Loading them into one list made the 20% and 30%
@@ -93,17 +93,49 @@ unique index, so `@@unique([payGroupId, year, month, type, baseRunId])` would ha
 duplicate regular payroll runs for the same month. Replaced with an explicit `sequence`
 column. The same fix applied to Tamil Nadu's `localBodyType`.
 
-## Scheduled next
+**Conditional Prisma `include` silently drops the relation.** Writing
+`enrolments: canEnrol ? { include: { employee: true } } : false` widens the row into a union
+in which `employee` does not exist, so the field is unreachable on the half of the union the
+compiler picks. Caught by the production typecheck, not at runtime — which is the argument
+for keeping `ignoreBuildErrors` off. The includes are now unconditional and gated at render.
 
-Schema and navigation are in place; screens come next, in this order:
+## Phase 2 — modules from the CodeCanyon reference products
 
-1. **Leave & attendance operations** — application and approval flows, the accrual job, biometric ingestion, penalisation policy
-2. **Lifecycle** — onboarding task templates with the Applies-To engine, probation evaluation, exit initiation and clearance
-3. **Documents & assets** — letter templates with placeholders, document workflows, asset assignment and damage recovery
-4. **Statutory filing** — PF and ESI ECR generation, Form 16, Form 24Q/26Q with challan mapping
-5. **Helpdesk** — categories with SLA per priority and two-trigger escalation
-6. **Talent** — performance reviews with calibration (bell curve, 9-box), OKRs, Keka Hire ATS
-7. **PSA** — projects, timesheets, rate cards and margin
+Feature sets consolidated from three reference HRM products (HRM - HR and Payroll Tool,
+HRM OS, PeoplePro HRM). The schema now covers all of it — 174 tables, up from 97 — and
+these modules have working screens:
+
+| Module | What works |
+|---|---|
+| **Announcements** | Publish, pin, schedule, expire; per-employee read and acknowledgement tracking with a completion bar against headcount |
+| **Awards & praise** | Award types with cadence and cash value, grants with citations, peer praise wall with badges, quarterly leaderboard |
+| **Assets** | 4 categories, 82 seeded items, straight-line depreciation and book value, assignment with employee acknowledgement, returns with condition, damage charges, employee-raised requests |
+| **Documents** | Folders with confidential flags and role permissions, per-type mandatory/verification/expiry rules, verify-or-reject queue, 90-day expiry tracker, org policies with acknowledgement, letter templates with placeholder substitution |
+| **Contracts** | Permanent and fixed-term, renewal chain, expiry status |
+| **HR activities** | Promotion, transfer, warning, complaint, work trip, termination, resignation, appreciation — as a timeline distinct from the effective-dated job record |
+| **Training** | Types by mode, programmes with seats/cost/trainer, bulk enrolment with seat-limit enforcement, self-service progress, mandatory-compliance completion tracking with an outstanding list |
+| **Meetings** | Rooms with facilities and capacity, invitations with accept/decline/tentative, minutes, action items with owners and overdue flagging |
+
+Schema also in place, screens still to come: recruitment/ATS (requisition → job → candidate
+→ stages → interviews → scorecards → offer), performance (indicators, goals with alignment
+and roll-up, review cycles, calibration bands, PIP, skills matrix), projects (clients,
+tasks, milestones, rate cards with bill-vs-cost margin, timesheets, invoices), and a
+double-entry accounting ledger with expense claims, cash advances and travel requests.
+
+### The seams that matter
+
+Modules that cannot reach payroll are decorative. Two are wired and tested end to end:
+
+- **A cash award becomes an ad-hoc payment.** Granting an award with a cash value pushes it
+  into the open payroll run, raises gross, appears as a named payslip line, and increases TDS
+  because it is taxable.
+- **An asset damage charge becomes an ad-hoc deduction.** Recording a damaged return and
+  recovering it raises deductions, lowers net pay by the same amount, and leaves gross
+  untouched because the recovery is not taxable. For a leaver the charge routes to the
+  full-and-final settlement instead, and the UI says so, so it cannot be recovered twice.
+
+`scripts/smoke-seams.ts` verifies both, plus whole-run reconciliation afterwards and that
+a rollback releases everything the modules injected. **15 checks, all passing.**
 
 ## Known limitations
 
