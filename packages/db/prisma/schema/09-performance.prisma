@@ -220,6 +220,10 @@ model ReviewCycle {
   ratePotential Boolean @default(false)
   /// PUBLIC | RESTRICTED | PRIVATE | CUSTOM
   visibility    String  @default("RESTRICTED")
+  /// Peer, subordinate and skip-level feedback is shown without names.
+  anonymousFeedback Boolean @default(true)
+  /// Most peers one employee can have giving feedback.
+  maxPeers          Int     @default(3)
 
   /// Eligibility filters for who is included.
   eligibility Json?
@@ -293,8 +297,12 @@ model ReviewResponse {
 
   reviewerId   String
   reviewer     Employee @relation("ReviewAuthor", fields: [reviewerId], references: [id], onDelete: Cascade)
-  /// SELF | REPORTING_MANAGER | SKIP_LEVEL | DEPARTMENT_HEAD | PEER | SUBORDINATE | EXTERNAL
+  /// SELF | MANAGER | SKIP_LEVEL | PEER | SUBORDINATE
   reviewerType String
+  /// PROPOSED (peer nominated by the employee, awaiting their manager) |
+  /// ACTIVE | DECLINED | EXPIRED (still open when the review was calibrated)
+  status       String @default("ACTIVE")
+  nominatedBy  String?
 
   /// Weight of this reviewer's input in the aggregate.
   weight        Decimal  @default(0) @db.Decimal(9, 2)

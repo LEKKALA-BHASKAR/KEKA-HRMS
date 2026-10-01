@@ -48,6 +48,9 @@ describe("Ratings", () => {
     assert.equal(weightedRating([{ type: "SELF", rating: 5 }, { type: "MANAGER", rating: 3 }], w), 3.4);
     assert.equal(weightedRating([{ type: "SELF", rating: 5 }, { type: "MANAGER", rating: null }], w), 5);
     assert.equal(weightedRating([{ type: "SELF", rating: 4 }], [{ type: "SELF", weight: 0 }, { type: "MANAGER", weight: 100 }]), null);
+    // Three peers share the peer weight rather than counting three times.
+    const w360 = [{ type: "MANAGER", weight: 50 }, { type: "PEER", weight: 50 }];
+    assert.equal(weightedRating([{ type: "MANAGER", rating: 2 }, { type: "PEER", rating: 5 }, { type: "PEER", rating: 4 }, { type: "PEER", rating: 3 }], w360), 3);
   });
   const bands: Band[] = [
     { id: "1", name: "Needs improvement", minRating: 1, maxRating: 2, targetPercent: 10 },

@@ -3,7 +3,7 @@
 import { prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import {
-  checkInGoal, refreshGoal, launchCycle, submitReviewResponse, calibrateReview, shareCycle, acknowledgeReview, notify,
+  checkInGoal, refreshGoal, launchCycle, submitReviewResponse, nominatePeers, decidePeerNomination, REVIEWER_TYPES, calibrateReview, shareCycle, acknowledgeReview, notify,
   parseGoalSuggestions, parseTimeframe, timeframeOfDates, type GoalSuggestionShape,
 } from "@keka/services";
 import { aiForViewer, aiJson, aiEnabled, AI_UNAVAILABLE } from "@/lib/ai";
@@ -141,6 +141,10 @@ const cycleSchema = z.object({
   reviewClosesAt: zDate(),
   selfWeight: zRequiredNumber({ min: 0, max: 100 }),
   managerWeight: zRequiredNumber({ min: 0, max: 100 }),
+  skipLevelWeight: zNumber({ min: 0, max: 100 }),
+  peerWeight: zNumber({ min: 0, max: 100 }),
+  subordinateWeight: zNumber({ min: 0, max: 100 }),
+  maxPeers: zNumber({ min: 1, max: 10 }),
 });
 
 export async function createCycleAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -149,12 +153,16 @@ export async function createCycleAction(_prev: ActionState, formData: FormData):
   if (parsed.state) return parsed.state;
   const d = parsed.data;
   if (d.periodEnd <= d.periodStart) return { ok: false, message: "The period must end after it starts.", errors: { periodEnd: "Before start" } };
-  if (d.selfWeight + d.managerWeight !== 100) return { ok: false, message: "Self and manager weights must add up to 100.", errors: { managerWeight: "Weights ≠ 100" } };
+  const extra = { SKIP_LEVEL: d.skipLevelWeight ?? 0, PEER: d.peerWeight ?? 0, SUBORDINATE: d.subordinateWeight ?? 0 };
+  const total = d.selfWeight + d.managerWeight + extra.SKIP_LEVEL + extra.PEER + extra.SUBORDINATE;
+  if (total !== 100) return { ok: false, message: `Reviewer weights must add up to 100; they add up to ${total}.`, errors: { managerWeight: "Weights ≠ 100" } };
+  // Self and manager always take part; other reviewers only when weighted.
+  const reviewerTypes = [{ type: "SELF", weight: d.selfWeight }, { type: "MANAGER", weight: d.managerWeight }, ...Object.entries(extra).filter(([, w]) => w > 0).map(([type, weight]) => ({ type, weight }))];
   try {
     const cycle = await prisma.reviewCycle.create({
       data: {
         tenantId: viewer.tenantId, name: d.name, periodStart: d.periodStart, periodEnd: d.periodEnd, reviewClosesAt: d.reviewClosesAt,
-        reviewerTypes: [{ type: "SELF", weight: d.selfWeight }, { type: "MANAGER", weight: d.managerWeight }], ratingScale: { min: 1, max: 5 },
+        reviewerTypes, ratingScale: { min: 1, max: 5 }, maxPeers: d.maxPeers ?? 3, anonymousFeedback: formData.get("anonymity") === "named" ? false : true,
         bands: {
           create: [
             { name: "Outstanding", minRating: 4.5, maxRating: 5, targetPercent: 10, color: "#0f8a55", displayOrder: 0 },
@@ -185,7 +193,7 @@ export async function cycleOpAction(_prev: ActionState, formData: FormData): Pro
 
 const responseSchema = z.object({
   reviewId: zId(),
-  reviewerType: z.enum(["SELF", "MANAGER"]),
+  reviewerType: z.enum(REVIEWER_TYPES),
   overallRating: zRequiredNumber({ min: 1, max: 5 }),
   strengths: zOptional(4000),
   improvements: zOptional(4000),
@@ -202,6 +210,23 @@ export async function submitReviewAction(_prev: ActionState, formData: FormData)
     .filter((r) => r.rating >= 1 && r.rating <= 5);
   const r = await submitReviewResponse({ ...parsed.data, reviewerEmployeeId: viewer.employee.id, indicatorRatings });
   return r.ok ? done([...PERF, `/performance/reviews/${parsed.data.reviewId}`, "/inbox"], r.message) : { ok: false, message: r.message };
+}
+
+export async function nominatePeersAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const viewer = await requireViewer();
+  if (!viewer.employee) return { ok: false, message: "No employee record linked to this login." };
+  const reviewId = String(formData.get("reviewId") ?? "");
+  const r = await nominatePeers({ reviewId, byEmployeeId: viewer.employee.id, peerIds: formData.getAll("peerIds").map(String) });
+  if (r.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "EmployeeReview", entityId: reviewId, summary: `Peer feedback: ${r.message}` });
+  return r.ok ? done([...PERF, `/performance/reviews/${reviewId}`], r.message) : { ok: false, message: r.message };
+}
+
+export async function decideNominationAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const viewer = await requireViewer();
+  if (!viewer.employee) return { ok: false, message: "No employee record linked to this login." };
+  const r = await decidePeerNomination({ responseId: String(formData.get("responseId") ?? ""), byEmployeeId: viewer.employee.id, approve: formData.get("decision") === "approve" });
+  if (r.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "ReviewResponse", entityId: String(formData.get("responseId")), summary: `Peer nomination: ${r.message}` });
+  return r.ok ? done([...PERF, `/performance/reviews/${String(formData.get("reviewId") ?? "")}`], r.message) : { ok: false, message: r.message };
 }
 
 export async function calibrateAction(_prev: ActionState, formData: FormData): Promise<ActionState> {

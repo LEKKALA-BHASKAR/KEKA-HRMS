@@ -1,5 +1,5 @@
 import { prisma } from "@keka/db";
-import { goalProgress, goalHealth, weightedRating, bandFor, DEFAULT_REVIEWERS, type MetricType, type ReviewerWeight } from "./performance-math";
+import { goalProgress, goalHealth, weightedRating, bandFor, DEFAULT_REVIEWERS, REVIEWER_LABEL, type MetricType, type ReviewerWeight, type ReviewerType } from "./performance-math";
 import { notify } from "./lifecycle";
 
 /**
@@ -63,9 +63,12 @@ function reviewersOf(json: unknown): ReviewerWeight[] {
 
 /**
  * Launch: one review per eligible employee, with a response slot for each
- * reviewer type the cycle uses. Eligible means employed for the whole of the
- * cycle's last 90 days and not already exited.
+ * reviewer type the cycle uses: themselves, their manager, their manager's
+ * manager, and their direct reports. Peers are nominated once the cycle is
+ * running. Eligible means employed for the whole of the cycle's last 90 days
+ * and not already exited.
  */
+const MAX_SUBORDINATES = 8;
 export async function launchCycle(cycleId: string): Promise<{ ok: boolean; message: string; reviews?: number }> {
   const c = await prisma.reviewCycle.findUnique({ where: { id: cycleId }, include: { bands: true } });
   if (!c) return { ok: false, message: "Cycle not found." };
@@ -74,9 +77,12 @@ export async function launchCycle(cycleId: string): Promise<{ ok: boolean; messa
   const cutoff = new Date(c.periodEnd.getTime() - 90 * 86_400_000);
   const emps = await prisma.employee.findMany({
     where: { tenantId: c.tenantId, status: { notIn: ["EXITED", "PREBOARDING", "ONBOARDING"] }, dateOfJoining: { lte: cutoff } },
-    select: { id: true, reportingManagerId: true, userId: true },
+    select: { id: true, reportingManagerId: true, userId: true, reportingManager: { select: { reportingManagerId: true } } },
   });
-  const types = reviewersOf(c.reviewerTypes).filter((r) => r.type === "SELF" || r.type === "MANAGER");
+  const active = await prisma.employee.findMany({ where: { tenantId: c.tenantId, status: { notIn: ["EXITED", "PREBOARDING"] } }, select: { id: true, reportingManagerId: true } });
+  const reportsOf = new Map<string, string[]>();
+  for (const e of active) if (e.reportingManagerId) reportsOf.set(e.reportingManagerId, [...(reportsOf.get(e.reportingManagerId) ?? []), e.id]);
+  const types = reviewersOf(c.reviewerTypes).filter((r) => r.type !== "PEER");
   let made = 0;
   for (const e of emps) {
     const review = await prisma.employeeReview.upsert({
@@ -85,28 +91,87 @@ export async function launchCycle(cycleId: string): Promise<{ ok: boolean; messa
       update: {},
     });
     for (const t of types) {
-      const reviewerId = t.type === "SELF" ? e.id : e.reportingManagerId;
-      if (!reviewerId) continue;
-      await prisma.reviewResponse.upsert({
-        where: { reviewId_reviewerId_reviewerType: { reviewId: review.id, reviewerId, reviewerType: t.type } },
-        create: { reviewId: review.id, reviewerId, reviewerType: t.type, weight: t.weight },
-        update: {},
-      });
+      const ids = t.type === "SELF" ? [e.id]
+        : t.type === "MANAGER" ? [e.reportingManagerId]
+        : t.type === "SKIP_LEVEL" ? [e.reportingManager?.reportingManagerId]
+        : t.type === "SUBORDINATE" ? (reportsOf.get(e.id) ?? []).slice(0, MAX_SUBORDINATES)
+        : [];
+      for (const reviewerId of ids) {
+        if (!reviewerId || (reviewerId === e.id && t.type !== "SELF")) continue;
+        await prisma.reviewResponse.upsert({
+          where: { reviewId_reviewerId_reviewerType: { reviewId: review.id, reviewerId, reviewerType: t.type } },
+          create: { reviewId: review.id, reviewerId, reviewerType: t.type, weight: t.weight },
+          update: {},
+        });
+      }
     }
     made++;
   }
   await prisma.reviewCycle.update({ where: { id: cycleId }, data: { status: "IN_PROGRESS", launchedAt: new Date() } });
+  const peers = types.length !== reviewersOf(c.reviewerTypes).length;
   await notify({
     tenantId: c.tenantId, userIds: emps.map((e) => e.userId), kind: "PERFORMANCE",
-    title: `${c.name} has started`, body: "Write your self review, then your manager will add theirs.", link: "/performance?tab=reviews", email: true,
+    title: `${c.name} has started`, body: `Write your self review${peers ? " and choose the peers you would like feedback from" : ""}, then your manager will add theirs.`, link: "/performance?tab=reviews", email: true,
   });
   return { ok: true, message: `Launched for ${made} employee(s).`, reviews: made };
+}
+
+const OPEN_REVIEW = ["NOT_STARTED", "SELF_PENDING", "MANAGER_PENDING", "PENDING_CALIBRATION"];
+
+/**
+ * Peers giving feedback. The employee proposes and their manager approves;
+ * a manager's own nominations are active straight away. A peer cannot be
+ * the employee, their manager, or someone already reviewing them.
+ */
+export async function nominatePeers(input: { reviewId: string; byEmployeeId: string; peerIds: string[] }): Promise<{ ok: boolean; message: string }> {
+  const review = await prisma.employeeReview.findUnique({
+    where: { id: input.reviewId },
+    include: { cycle: true, responses: { where: { status: { in: ["PROPOSED", "ACTIVE"] } } }, employee: { select: { id: true, displayName: true, reportingManagerId: true, tenantId: true } } },
+  });
+  if (!review) return { ok: false, message: "Review not found." };
+  if (!reviewersOf(review.cycle.reviewerTypes).some((t) => t.type === "PEER")) return { ok: false, message: "This cycle does not collect peer feedback." };
+  if (!["IN_PROGRESS", "LAUNCHED"].includes(review.cycle.status) || !OPEN_REVIEW.includes(review.status)) return { ok: false, message: "This review is no longer taking feedback." };
+  const byManager = input.byEmployeeId === review.employee.reportingManagerId;
+  if (input.byEmployeeId !== review.employeeId && !byManager) return { ok: false, message: "Only the employee or their manager can choose peers." };
+  const ids = [...new Set(input.peerIds.filter(Boolean))];
+  if (ids.length === 0) return { ok: false, message: "Choose at least one peer." };
+  const taken = new Set(review.responses.map((r) => r.reviewerId));
+  if (ids.some((id) => id === review.employeeId || id === review.employee.reportingManagerId || taken.has(id))) return { ok: false, message: "A peer cannot be the employee, their manager, or someone already giving feedback." };
+  const peersNow = review.responses.filter((r) => r.reviewerType === "PEER").length;
+  if (peersNow + ids.length > review.cycle.maxPeers) return { ok: false, message: `Up to ${review.cycle.maxPeers} peers can give feedback; ${peersNow} already chosen.` };
+  const found = await prisma.employee.findMany({ where: { id: { in: ids }, tenantId: review.employee.tenantId, status: { notIn: ["EXITED", "PREBOARDING"] } }, select: { id: true, userId: true } });
+  if (found.length !== ids.length) return { ok: false, message: "A chosen peer was not found." };
+  const weight = reviewersOf(review.cycle.reviewerTypes).find((t) => t.type === "PEER")?.weight ?? 0;
+  for (const id of ids) {
+    await prisma.reviewResponse.upsert({
+      where: { reviewId_reviewerId_reviewerType: { reviewId: review.id, reviewerId: id, reviewerType: "PEER" } },
+      create: { reviewId: review.id, reviewerId: id, reviewerType: "PEER", weight, status: byManager ? "ACTIVE" : "PROPOSED", nominatedBy: input.byEmployeeId },
+      update: { status: byManager ? "ACTIVE" : "PROPOSED", nominatedBy: input.byEmployeeId },
+    });
+  }
+  const tenantId = review.employee.tenantId;
+  if (byManager) {
+    await notify({ tenantId, userIds: found.map((f) => f.userId), kind: "PERFORMANCE", title: `Feedback requested for ${review.employee.displayName}`, link: `/performance/reviews/${review.id}` });
+    return { ok: true, message: `${ids.length} peer${ids.length === 1 ? "" : "s"} asked for feedback.` };
+  }
+  await notify({ tenantId, userIds: [await userOf(review.employee.reportingManagerId)], kind: "PERFORMANCE", title: `${review.employee.displayName} chose peers for feedback`, body: "Approve or decline them on the review.", link: `/performance/reviews/${review.id}` });
+  return { ok: true, message: `Sent ${ids.length} peer${ids.length === 1 ? "" : "s"} to your manager to approve.` };
+}
+
+export async function decidePeerNomination(input: { responseId: string; byEmployeeId: string; approve: boolean }): Promise<{ ok: boolean; message: string }> {
+  const slot = await prisma.reviewResponse.findUnique({ where: { id: input.responseId }, include: { reviewer: { select: { displayName: true, userId: true } }, review: { include: { employee: { select: { displayName: true, reportingManagerId: true, tenantId: true } } } } } });
+  if (!slot || slot.reviewerType !== "PEER") return { ok: false, message: "Nomination not found." };
+  if (slot.review.employee.reportingManagerId !== input.byEmployeeId) return { ok: false, message: "Only the employee's manager can decide peer nominations." };
+  if (slot.status !== "PROPOSED") return { ok: false, message: "This nomination is already decided." };
+  await prisma.reviewResponse.update({ where: { id: slot.id }, data: { status: input.approve ? "ACTIVE" : "DECLINED" } });
+  if (input.approve) await notify({ tenantId: slot.review.employee.tenantId, userIds: [slot.reviewer.userId], kind: "PERFORMANCE", title: `Feedback requested for ${slot.review.employee.displayName}`, link: `/performance/reviews/${slot.reviewId}` });
+  return { ok: true, message: input.approve ? `${slot.reviewer.displayName} will give feedback.` : `Declined ${slot.reviewer.displayName}.` };
 }
 
 export interface ResponseInput {
   reviewId: string;
   reviewerEmployeeId: string;
-  reviewerType: "SELF" | "MANAGER";
+  reviewerType: ReviewerType;
   overallRating: number;
   strengths?: string | null;
   improvements?: string | null;
@@ -120,8 +185,9 @@ export async function submitReviewResponse(input: ResponseInput): Promise<{ ok: 
   });
   if (!review) return { ok: false, message: "Review not found." };
   if (!["IN_PROGRESS", "LAUNCHED"].includes(review.cycle.status)) return { ok: false, message: "This cycle is not accepting reviews." };
-  const slot = review.responses.find((r) => r.reviewerId === input.reviewerEmployeeId && r.reviewerType === input.reviewerType);
+  const slot = review.responses.find((r) => r.reviewerId === input.reviewerEmployeeId && r.reviewerType === input.reviewerType && r.status === "ACTIVE");
   if (!slot) return { ok: false, message: "You are not a reviewer on this review." };
+  if (!OPEN_REVIEW.includes(review.status)) return { ok: false, message: "This review has been calibrated; feedback is closed." };
   if (slot.submittedAt) return { ok: false, message: "Already submitted." };
   if (input.reviewerType === "MANAGER" && review.status === "SELF_PENDING") {
     return { ok: false, message: `${review.employee.displayName} has not submitted their self review yet.` };
@@ -130,6 +196,9 @@ export async function submitReviewResponse(input: ResponseInput): Promise<{ ok: 
   if (!(input.overallRating >= 1 && input.overallRating <= scale)) return { ok: false, message: `Rate from 1 to ${scale}.` };
   if (input.reviewerType === "MANAGER" && !(input.strengths && input.improvements)) {
     return { ok: false, message: "Managers must write both strengths and areas to improve." };
+  }
+  if (input.reviewerType !== "SELF" && input.reviewerType !== "MANAGER" && !(input.strengths || input.improvements)) {
+    return { ok: false, message: "Write what they do well or what they could improve." };
   }
 
   // Indicator ids arrive as form keys; rate only the tenant's own indicators.
@@ -147,15 +216,19 @@ export async function submitReviewResponse(input: ResponseInput): Promise<{ ok: 
     }
   });
 
-  const responses = await prisma.reviewResponse.findMany({ where: { reviewId: review.id } });
-  const pending = responses.filter((r) => !r.submittedAt);
+  // Self and manager reviews move the review along; other feedback adds to
+  // the rating whenever it arrives, until calibration closes it.
+  const responses = await prisma.reviewResponse.findMany({ where: { reviewId: review.id, status: "ACTIVE" } });
+  const open = (type: string) => responses.some((r) => r.reviewerType === type && !r.submittedAt);
   const raw = weightedRating(responses.map((r) => ({ type: r.reviewerType, rating: r.submittedAt ? Number(r.overallRating) : null })), reviewersOf(review.cycle.reviewerTypes));
-  const nextStatus = pending.length === 0 ? "PENDING_CALIBRATION" : pending.every((p) => p.reviewerType === "MANAGER") ? "MANAGER_PENDING" : review.status;
+  const nextStatus = open("SELF") ? "SELF_PENDING" : open("MANAGER") ? "MANAGER_PENDING" : "PENDING_CALIBRATION";
   await prisma.employeeReview.update({ where: { id: review.id }, data: { status: nextStatus, rawRating: raw } });
   if (input.reviewerType === "SELF") {
     await notify({ tenantId: review.cycle.tenantId, userIds: [await userOf(review.employee.reportingManagerId)], kind: "PERFORMANCE", title: `${review.employee.displayName} submitted their self review`, link: `/performance/reviews/${review.id}` });
   }
-  return { ok: true, message: nextStatus === "PENDING_CALIBRATION" ? "Submitted. The review now goes to calibration." : "Submitted." };
+  const label = REVIEWER_LABEL[input.reviewerType] ?? "";
+  if (input.reviewerType !== "SELF" && input.reviewerType !== "MANAGER") return { ok: true, message: `Thank you. Your ${label.toLowerCase()} feedback is submitted.` };
+  return { ok: true, message: nextStatus === "PENDING_CALIBRATION" && review.status !== "PENDING_CALIBRATION" ? "Submitted. The review now goes to calibration." : "Submitted." };
 }
 
 /**
@@ -175,6 +248,8 @@ export async function calibrateReview(opts: { reviewId: string; finalRating: num
     where: { id: review.id },
     data: { finalRating: opts.finalRating, bandId: band?.id ?? null, status: "CALIBRATED", calibrationReason: opts.reason ?? null, calibratedBy: opts.byUserId, calibratedAt: new Date() },
   });
+  // Feedback still outstanding no longer counts.
+  await prisma.reviewResponse.updateMany({ where: { reviewId: review.id, submittedAt: null, status: { in: ["ACTIVE", "PROPOSED"] } }, data: { status: "EXPIRED" } });
   return { ok: true, message: `Calibrated at ${opts.finalRating}${band ? ` — ${band.name}` : ""}.` };
 }
 
