@@ -451,7 +451,7 @@ export async function decideLeave(opts: {
   }
 
   const plan = await planFor(request.employeeId, request.fromDate);
-  const emp = await prisma.employee.findUniqueOrThrow({ where: { id: request.employeeId }, select: { dateOfJoining: true } });
+  const emp = await prisma.employee.findUniqueOrThrow({ where: { id: request.employeeId }, select: { dateOfJoining: true, employeeNumber: true } });
   const yearStart = leaveYearStart(request.fromDate, plan?.plan.yearBasis ?? "FINANCIAL_APR", emp.dateOfJoining);
 
   // Re-check the balance at approval time: another request may have been
@@ -489,6 +489,11 @@ export async function decideLeave(opts: {
   });
 
   await reprocessRange(request.employeeId, request.fromDate, request.toDate);
+  const { emitEvent } = await import("./webhooks");
+  await emitEvent(request.tenantId, "leave.approved", {
+    requestId: request.id, employeeId: request.employeeId, employeeNumber: emp.employeeNumber, leaveType: request.leaveType.name,
+    fromDate: dayKey(request.fromDate), toDate: dayKey(request.toDate), days: Number(request.totalDays),
+  });
   return { ok: true, message: "Approved." };
 }
 

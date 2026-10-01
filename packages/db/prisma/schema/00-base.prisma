@@ -140,6 +140,7 @@ model Tenant {
   shifts                Shift[]
   rosterPatterns        RosterPattern[]
   apiKeys               ApiKey[]
+  webhookEndpoints      WebhookEndpoint[]
   attendanceDevices     AttendanceDevice[]
   skills                Skill[]
   statutoryFilings      StatutoryFiling[]

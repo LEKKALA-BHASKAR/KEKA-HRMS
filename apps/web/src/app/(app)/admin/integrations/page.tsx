@@ -3,10 +3,10 @@ import { forbidden } from "next/navigation";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatDate } from "@keka/shared";
-import { API_SCOPES } from "@keka/services";
+import { API_SCOPES, WEBHOOK_EVENTS } from "@keka/services";
 import { requireViewer, can } from "@/lib/context";
 import { PageHead, Card, Badge, Empty } from "@/components/ui";
-import { CreateKey, RevokeKey, DeviceForm, ToggleDevice } from "./forms";
+import { CreateKey, RevokeKey, DeviceForm, ToggleDevice, CreateWebhook, WebhookOps, RetryDelivery } from "./forms";
 
 const P = PERMISSIONS;
 const when = (d: Date | null) => (d ? `${formatDate(d)} ${d.toISOString().slice(11, 16)} UTC` : "never");
@@ -25,6 +25,10 @@ export default async function IntegrationsPage() {
     devicesOk ? prisma.attendanceDevice.findMany({ where: { tenantId: viewer.tenantId }, include: { location: { select: { name: true } } }, orderBy: { name: "asc" } }) : [],
     devicesOk ? prisma.location.findMany({ where: { tenantId: viewer.tenantId, isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [],
   ]);
+  const [hooks, deliveries] = keysOk ? await Promise.all([
+    prisma.webhookEndpoint.findMany({ where: { tenantId: viewer.tenantId }, orderBy: { createdAt: "asc" } }),
+    prisma.webhookDelivery.findMany({ where: { endpoint: { tenantId: viewer.tenantId } }, include: { endpoint: { select: { url: true } } }, orderBy: { createdAt: "desc" }, take: 25 }),
+  ]) : [[], []];
   const punchCounts = devices.length ? await prisma.attendanceLog.groupBy({ by: ["deviceId"], where: { deviceId: { in: devices.map((d) => d.id) }, timestamp: { gte: new Date(Date.now() - 7 * 86_400_000) } }, _count: true }) : [];
   const weekPunches = new Map(punchCounts.map((p) => [p.deviceId, p._count]));
 
@@ -87,6 +91,55 @@ export default async function IntegrationsPage() {
   -H "Authorization: Bearer <api key>" -H "Content-Type: application/json" \\
   -d '{"punches":[{"employeeCode":"ACM0009","timestamp":"2026-10-01T09:04:00+05:30","direction":"IN","deviceSerial":"${devices[0]?.serialNumber ?? "BLR-GATE-1"}"}]}'`}</pre>
             <p className="text-xs subtle">Up to 500 punches per request. A punch within a minute of one already recorded is counted as a duplicate, so a device can safely re-send its buffer.</p>
+          </Card>
+        </>
+      ) : null}
+      {keysOk ? (
+        <>
+          <Card tight title="Webhooks" description="Signed POSTs to your systems when things happen. Verify X-Keka-Signature: sha256 HMAC of “<X-Keka-Timestamp>.<body>” with the endpoint's secret.">
+            {hooks.length === 0 ? <Empty title="No webhooks yet" /> : (
+              <div className="table-wrap"><table className="data">
+                <thead><tr><th>Endpoint</th><th>Events</th><th>Status</th><th>Last success</th><th /></tr></thead>
+                <tbody>
+                  {hooks.map((h) => (
+                    <tr key={h.id}>
+                      <td><span className="mono text-xs" style={{ wordBreak: "break-all" }}>{h.url}</span>{h.description ? <div className="text-xs subtle">{h.description}</div> : null}</td>
+                      <td className="text-xs mono">{h.events.join(", ")}</td>
+                      <td>{h.isActive ? <Badge tone="success">active</Badge> : <Badge tone="warning">paused</Badge>}{h.failureCount ? <div className="text-xs neg">{h.failureCount} failed in a row</div> : null}</td>
+                      <td className="text-xs">{when(h.lastSuccessAt)}</td>
+                      <td className="right"><WebhookOps id={h.id} active={h.isActive} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table></div>
+            )}
+          </Card>
+          {deliveries.length ? (
+            <Card tight title="Recent deliveries">
+              <div className="table-wrap"><table className="data">
+                <thead><tr><th>Event</th><th>Endpoint</th><th>Status</th><th className="num">Attempts</th><th>When</th><th /></tr></thead>
+                <tbody>
+                  {deliveries.map((d) => (
+                    <tr key={d.id}>
+                      <td className="mono text-xs">{d.event}</td>
+                      <td className="mono text-xs" style={{ wordBreak: "break-all" }}>{d.endpoint.url}</td>
+                      <td><Badge tone={d.status === "DELIVERED" ? "success" : d.status === "FAILED" ? "danger" : "info"}>{d.status.toLowerCase()}</Badge>{d.error ? <div className="text-xs subtle">{d.error}</div> : null}</td>
+                      <td className="num text-sm">{d.attempts}</td>
+                      <td className="text-xs">{when(d.deliveredAt ?? d.createdAt)}</td>
+                      <td className="right">{d.status === "FAILED" ? <RetryDelivery id={d.id} /> : null}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table></div>
+            </Card>
+          ) : null}
+          <Card title="Add a webhook"><CreateWebhook events={Object.entries(WEBHOOK_EVENTS).filter(([k]) => k !== "ping").map(([value, label]) => ({ value, label }))} /></Card>
+          <Card title="Reading data">
+            <p className="text-sm">Keys allowed to read can call these. Lists page with <span className="mono">nextCursor</span>; pass it back as <span className="mono">cursor</span> until it is null.</p>
+            <pre className="mono text-xs" style={{ whiteSpace: "pre-wrap", padding: 12, background: "var(--surface-2, #f4f4f5)", borderRadius: 6 }}>{`GET https://${host}/api/v1/employees?status=ACTIVE&limit=100      (employees:read)
+GET https://${host}/api/v1/employees/ACM0009                       (employees:read)
+GET https://${host}/api/v1/leave/requests?from=2026-10-01&to=2026-10-31  (leave:read)
+GET https://${host}/api/v1/payroll/runs?year=2026                  (payroll:read)`}</pre>
           </Card>
         </>
       ) : null}

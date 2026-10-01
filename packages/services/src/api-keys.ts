@@ -11,6 +11,7 @@ export const API_SCOPES = {
   "attendance:write": "Push attendance punches",
   "employees:read": "Read the employee directory",
   "payroll:read": "Read finalised payroll summaries",
+  "leave:read": "Read approved and pending leave",
 } as const;
 export type ApiScope = keyof typeof API_SCOPES;
 

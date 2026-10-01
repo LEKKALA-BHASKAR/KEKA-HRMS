@@ -44,3 +44,47 @@ model AttendanceDevice {
   @@index([tenantId])
   @@map("attendance_devices")
 }
+
+/// An HTTPS endpoint that receives signed event notifications.
+model WebhookEndpoint {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  url         String
+  description String?
+  /// e.g. ["employee.created", "leave.approved"].
+  events      String[]
+  /// Shared secret for the X-Keka-Signature HMAC; shown once at creation.
+  secret      String
+  isActive    Boolean   @default(true)
+  /// Consecutive failed deliveries; the endpoint is paused at the limit.
+  failureCount Int      @default(0)
+  lastSuccessAt DateTime?
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+
+  deliveries WebhookDelivery[]
+
+  @@index([tenantId])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id         String          @id @default(cuid())
+  endpointId String
+  endpoint   WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  event      String
+  payload    Json
+  /// PENDING | DELIVERED | FAILED
+  status     String          @default("PENDING")
+  attempts   Int             @default(0)
+  nextAttemptAt DateTime     @default(now())
+  responseStatus Int?
+  error      String?
+  createdAt  DateTime        @default(now())
+  deliveredAt DateTime?
+
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
+  @@map("webhook_deliveries")
+}

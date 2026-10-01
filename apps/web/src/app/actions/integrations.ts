@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { prisma } from "@keka/db";
 import { PERMISSIONS as P } from "@keka/rbac";
-import { createApiKey, revokeApiKey, API_SCOPES, type ApiScope } from "@keka/services";
+import { createApiKey, revokeApiKey, API_SCOPES, createWebhook, setWebhookActive, deleteWebhook, emitEvent, retryDelivery, type ApiScope } from "@keka/services";
 import { requireAuth } from "@/lib/context";
 import { actionDone as done, parseForm, writeAudit, toErrorState, zName, zOptionalId, type ActionState } from "@/lib/forms";
 
@@ -68,4 +68,44 @@ export async function toggleDeviceAction(_prev: ActionState, formData: FormData)
   await prisma.attendanceDevice.update({ where: { id }, data: { isActive: !dev.isActive } });
   await writeAudit(viewer, { module: "ATTENDANCE", action: "UPDATE", entityType: "AttendanceDevice", entityId: id, summary: `${dev.isActive ? "Switched off" : "Switched on"} device ${dev.name}` });
   return done(["/admin/integrations"], dev.isActive ? "Switched off; its punches will be refused." : "Switched on.");
+}
+
+// ---------------------------------------------------------------------------
+//  Webhooks
+// ---------------------------------------------------------------------------
+
+export async function createWebhookAction(_prev: ActionState, formData: FormData): Promise<ActionState & { secret?: string }> {
+  const viewer = await requireAuth(P.API_KEY_MANAGE);
+  const res = await createWebhook({
+    tenantId: viewer.tenantId, url: String(formData.get("url") ?? ""), events: formData.getAll("events").map(String),
+    description: String(formData.get("description") ?? "") || null, createdBy: viewer.user.id,
+  });
+  if (!res.ok) return { ok: false, message: res.message };
+  await writeAudit(viewer, { module: "SYSTEM", action: "CREATE", entityType: "WebhookEndpoint", entityId: res.id, summary: `Added webhook ${String(formData.get("url"))}` });
+  // As with API keys: keep the one-time secret on screen.
+  return { ok: true, message: res.message, secret: res.secret };
+}
+
+export async function webhookOpAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const viewer = await requireAuth(P.API_KEY_MANAGE);
+  const id = String(formData.get("id") ?? "");
+  const op = String(formData.get("op") ?? "");
+  const ep = await prisma.webhookEndpoint.findFirst({ where: { id, tenantId: viewer.tenantId }, select: { id: true, url: true } });
+  if (!ep) return { ok: false, message: "Webhook not found." };
+  let res: { ok: boolean; message: string };
+  if (op === "ping") {
+    const queued = await emitEvent(viewer.tenantId, "ping", { message: "Test event from Keka" }, id);
+    res = queued ? { ok: true, message: "Test event queued. It is sent within a few minutes." } : { ok: false, message: "Resume the webhook before sending a test." };
+  } else if (op === "pause" || op === "resume") res = await setWebhookActive(viewer.tenantId, id, op === "resume");
+  else if (op === "delete") res = await deleteWebhook(viewer.tenantId, id);
+  else res = { ok: false, message: "Unknown action." };
+  if (!res.ok) return { ok: false, message: res.message };
+  await writeAudit(viewer, { module: "SYSTEM", action: op === "delete" ? "DELETE" : "UPDATE", entityType: "WebhookEndpoint", entityId: id, summary: `${op} webhook ${ep.url}` });
+  return done(["/admin/integrations"], res.message);
+}
+
+export async function retryDeliveryAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const viewer = await requireAuth(P.API_KEY_MANAGE);
+  const res = await retryDelivery(viewer.tenantId, String(formData.get("id") ?? ""));
+  return res.ok ? done(["/admin/integrations"], res.message) : { ok: false, message: res.message };
 }

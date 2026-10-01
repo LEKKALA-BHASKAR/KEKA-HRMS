@@ -72,6 +72,8 @@ export async function finalizePayrollRun(runId: string, actorUserId: string): Pr
   // The month reaches the books as one accrual. A ledger problem (a closed
   // period, say) does not undo a finalised payroll; it is reported instead.
   const ledger = await postPayrollRun(runId, actorUserId);
+  const { emitEvent } = await import("./webhooks");
+  await emitEvent(run.tenantId, "payroll.finalized", { runId: run.id, year: run.year, month: run.month, type: run.type, payslips: processed.length });
   return { ok: true, message: `Finalised: ${processed.length} payslip(s) generated.${ledger.ok ? ` ${ledger.message}` : ` Not posted to the ledger: ${ledger.message}`}`, payslips: processed.length };
 }
 

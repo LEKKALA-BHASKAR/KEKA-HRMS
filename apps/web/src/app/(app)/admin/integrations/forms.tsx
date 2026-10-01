@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useForm, ActionForm, Field, TextInput, SelectInput } from "@/components/form";
-import { createApiKeyAction, revokeApiKeyAction, saveDeviceAction, toggleDeviceAction } from "@/app/actions/integrations";
+import { createApiKeyAction, revokeApiKeyAction, saveDeviceAction, toggleDeviceAction, createWebhookAction, webhookOpAction, retryDeliveryAction } from "@/app/actions/integrations";
 
 export function CreateKey({ scopes }: { scopes: { value: string; label: string }[] }) {
   const [state, formAction, pending] = useForm(createApiKeyAction);
@@ -74,4 +74,54 @@ export function ToggleDevice({ id, active }: { id: string; active: boolean }) {
       {state.message && !state.ok ? <div className="text-xs neg">{state.message}</div> : null}
     </form>
   );
+}
+
+export function CreateWebhook({ events }: { events: { value: string; label: string }[] }) {
+  const [state, formAction, pending] = useForm(createWebhookAction);
+  const [copied, setCopied] = useState(false);
+  const secret = (state as { secret?: string }).secret;
+  if (state.ok && secret) {
+    return (
+      <div className="stack gap-2">
+        <div className="text-sm"><strong>{state.message}</strong></div>
+        <code className="mono" style={{ wordBreak: "break-all", padding: 8, background: "var(--surface-2, #f4f4f5)", borderRadius: 6 }}>{secret}</code>
+        <div className="row gap-2">
+          <button type="button" className="btn sm" onClick={() => { void navigator.clipboard?.writeText(secret); setCopied(true); }}>{copied ? "Copied" : "Copy secret"}</button>
+          <a className="btn sm ghost" href="/admin/integrations">Done</a>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <form action={formAction} className="stack gap-2">
+      <Field label="Endpoint URL" name="url" state={state} required hint="A public https address"><TextInput name="url" state={state} required placeholder="https://example.com/keka-events" /></Field>
+      <Field label="Description" name="description" state={state}><TextInput name="description" state={state} placeholder="e.g. IT provisioning" /></Field>
+      <Field label="Events" name="events" state={state} required>
+        <div className="stack">{events.map((e) => <label key={e.value} className="row gap-2 text-sm"><input type="checkbox" name="events" value={e.value} /> <span className="mono text-xs">{e.value}</span> {e.label}</label>)}</div>
+      </Field>
+      <div className="row gap-2" style={{ alignItems: "center" }}>
+        <button className="btn primary" disabled={pending}>{pending ? "Adding…" : "Add webhook"}</button>
+        {state.message && !state.ok ? <span className="text-sm neg">{state.message}</span> : null}
+      </div>
+    </form>
+  );
+}
+
+export function WebhookOps({ id, active }: { id: string; active: boolean }) {
+  const [state, formAction, pending] = useForm(webhookOpAction);
+  return (
+    <form action={formAction} className="row gap-1" style={{ justifyContent: "flex-end" }}>
+      <input type="hidden" name="id" value={id} />
+      {active ? <button className="btn ghost sm" name="op" value="ping" disabled={pending}>Send test</button> : null}
+      <button className="btn ghost sm" name="op" value={active ? "pause" : "resume"} disabled={pending}>{active ? "Pause" : "Resume"}</button>
+      <button className="btn ghost sm" name="op" value="delete" disabled={pending}>Remove</button>
+      {state.message ? <span className={`text-xs ${state.ok ? "pos" : "neg"}`}>{state.message}</span> : null}
+    </form>
+  );
+}
+
+export function RetryDelivery({ id }: { id: string }) {
+  const [state, formAction, pending] = useForm(retryDeliveryAction);
+  if (state.ok) return <span className="text-xs pos">{state.message}</span>;
+  return <form action={formAction}><input type="hidden" name="id" value={id} /><button className="btn ghost sm" disabled={pending}>Retry</button></form>;
 }

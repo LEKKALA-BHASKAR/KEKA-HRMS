@@ -3,6 +3,7 @@
  * running one twice — or late — never double-counts anything.
  *
  *   tsx scripts/jobs.ts deliver-mail          every few minutes
+ *   tsx scripts/jobs.ts deliver-webhooks      every minute or two; retries back off on their own
  *   tsx scripts/jobs.ts process-attendance    nightly; re-evaluates the last 3 days
  *   tsx scripts/jobs.ts journeys              nightly; closes tasks the system can verify
  *   tsx scripts/jobs.ts probation             nightly; opens probation reviews, auto-confirms ended probations
@@ -43,6 +44,7 @@ async function main() {
 
   const jobs: Record<string, Job> = {
     "deliver-mail": async () => svc.deliverOutbox(fileTransport, { limit: 500 }),
+    "deliver-webhooks": async () => svc.deliverWebhooks({ limit: 500 }),
     "process-attendance": async () => {
       const to = new Date(), from = new Date(to.getTime() - 3 * 86_400_000);
       let days = 0, lop = 0;

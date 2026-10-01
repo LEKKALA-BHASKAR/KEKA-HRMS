@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { selectStructureForCtc } from "@keka/payroll";
-import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, openApproval, applySalaryRevision } from "@keka/services";
+import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision } from "@keka/services";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
 import {
@@ -330,6 +330,9 @@ export async function createEmployee(_prev: ActionState, formData: FormData): Pr
     const probation = d.status === "PROBATION" ? await startProbation({ employeeId }) : null;
     // ...and ask them for the documents everyone must provide.
     const docs = await requestMandatoryDocuments(employeeId);
+    await emitEvent(viewer.tenantId, "employee.created", {
+      employeeId, employeeNumber: created.employeeNumber, displayName: created.displayName, dateOfJoining: d.dateOfJoining.toISOString().slice(0, 10), status: d.status,
+    });
 
     return done(
       ["/employees", "/org", "/", "/onboarding"],
