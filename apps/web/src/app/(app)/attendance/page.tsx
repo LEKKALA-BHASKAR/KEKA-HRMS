@@ -48,6 +48,7 @@ export default async function AttendanceAdminPage({
             {LABEL[t]}{t === "requests" && pending > 0 ? ` (${pending})` : ""}
           </Link>
         ))}
+        {can(viewer, P.SHIFT_MANAGE) ? <Link href="/attendance/roster" className="tab">Roster</Link> : null}
       </div>
       {tab === "today" ? <TodayTab viewer={viewer} scope={scope} /> : null}
       {tab === "register" ? <RegisterTab viewer={viewer} scope={scope} month={sp.month} /> : null}

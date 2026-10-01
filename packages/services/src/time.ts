@@ -938,6 +938,8 @@ export async function processAttendance(opts: {
       let kind = classifyDay(date, policy.calendar);
       // A roster weekly-off overrides the pattern for that day.
       if (override?.weeklyOffCode === "WO") kind = "WEEKLY_OFF";
+      // ...and a rostered working day overrides a pattern weekly-off.
+      else if (override?.weeklyOffCode === "ON" && (kind === "WEEKLY_OFF" || kind === "HALF_WEEKLY_OFF")) kind = "WORKING";
 
       const shift: ShiftSpec = override ? {
         startTime: override.shift.startTime, endTime: override.shift.endTime,

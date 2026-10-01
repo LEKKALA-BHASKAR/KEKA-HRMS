@@ -138,6 +138,7 @@ model Tenant {
   reviewCycles          ReviewCycle[]
   shiftAllowanceEntries ShiftAllowanceEntry[]
   shifts                Shift[]
+  rosterPatterns        RosterPattern[]
   skills                Skill[]
   statutoryFilings      StatutoryFiling[]
   storedFiles           StoredFile[]
