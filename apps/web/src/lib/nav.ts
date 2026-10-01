@@ -249,7 +249,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         hrAttendance && { label: "Attendance", href: "/time/attendance", paths: ["/time/attendance", "/attendance"] },
         canAny(viewer, [P.SHIFT_MANAGE, P.HOLIDAY_MANAGE]) && { label: "Shift / Weekly Offs & Holidays", href: "/time/shifts" },
         can(viewer, P.SHIFT_MANAGE) && { label: "Roster", href: "/attendance/roster" },
-        hrAttendance && { label: "Overtime", href: "/time/overtime" },
+        (hrAttendance || can(viewer, P.PAYROLL_RUN)) && { label: "Overtime", href: "/time/overtime" },
         can(viewer, P.REPORT_VIEW) && { label: "Reports", href: "/time/reports" },
       ]),
     });

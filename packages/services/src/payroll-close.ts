@@ -56,6 +56,14 @@ export async function finalizePayrollRun(runId: string, actorUserId: string): Pr
       where: { employeeId: { in: ids }, payoutYear: run.year, payoutMonth: run.month, status: "APPROVED" },
       data: { status: "PAID", runId },
     });
+    await tx.overtimeEntry.updateMany({
+      where: { employeeId: { in: ids }, year: run.year, month: run.month, payAction: "PAY", isProcessed: false },
+      data: { isProcessed: true, runId },
+    });
+    await tx.shiftAllowanceEntry.updateMany({
+      where: { employeeId: { in: ids }, year: run.year, month: run.month, payAction: "PAY", isProcessed: false },
+      data: { isProcessed: true, runId },
+    });
   }, { timeout: 60_000 });
 
   await syncLoansForRun(runId, run.year, run.month, run.payGroupId);
@@ -96,6 +104,8 @@ export async function rollbackPayrollRun(runId: string, reason: string): Promise
     await tx.employeeBonus.updateMany({ where: { runId }, data: { isProcessed: false, runId: null } });
     await tx.loanInstallment.updateMany({ where: { runId }, data: { status: "SCHEDULED", runId: null, deductedAt: null } });
     await tx.componentClaim.updateMany({ where: { runId, status: "PAID" }, data: { status: "APPROVED", runId: null } });
+    await tx.overtimeEntry.updateMany({ where: { runId }, data: { isProcessed: false, runId: null } });
+    await tx.shiftAllowanceEntry.updateMany({ where: { runId }, data: { isProcessed: false, runId: null } });
     // Journal vouchers are never deleted after export, only archived.
     await tx.journalVoucher.updateMany({ where: { runId }, data: { status: "ARCHIVED" } });
     await tx.payrollRun.update({
