@@ -561,7 +561,7 @@ export async function Step4({ run, lines, editable, viewer }: StepProps & { view
       },
     }),
     prisma.adhocTransaction.findMany({
-      where: { employeeId: { in: employeeIds }, year: run.year, month: run.month },
+      where: { employeeId: { in: employeeIds }, year: run.year, month: run.month, OR: [{ runId: null }, { runId: run.id }] },
       orderBy: { createdAt: "desc" },
     }),
   ]);

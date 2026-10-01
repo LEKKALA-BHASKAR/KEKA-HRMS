@@ -97,10 +97,11 @@ export async function decideBonus(input: { runId: string; tenantId: string; bonu
 }
 
 /** Bonuses step 3 of a run shows: due this month, plus any held from before. */
-export function bonusesForRun(run: { year: number; month: number }, employeeIds: string[]) {
+export function bonusesForRun(run: { id: string; year: number; month: number }, employeeIds: string[]) {
   return prisma.employeeBonus.findMany({
     where: {
       employeeId: { in: employeeIds },
+      AND: [{ OR: [{ runId: null }, { runId: run.id }] }],
       OR: [
         { payoutYear: run.year, payoutMonth: run.month },
         { payAction: "ON_HOLD", isProcessed: false, OR: [{ payoutYear: { lt: run.year } }, { payoutYear: run.year, payoutMonth: { lt: run.month } }] },

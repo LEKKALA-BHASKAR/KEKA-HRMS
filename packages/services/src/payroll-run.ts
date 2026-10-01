@@ -330,11 +330,13 @@ export async function calculateRun(runId: string): Promise<{
       prisma.arrear.findMany({
         where: { employeeId: { in: employeeIds }, isProcessed: false },
       }),
+      // Items pulled into an off-cycle run (runId set to it) belong to that run.
       prisma.employeeBonus.findMany({
         where: {
           employeeId: { in: employeeIds },
           payoutYear: run.year, payoutMonth: run.month,
           payAction: { in: ["PAY", "PARTIALLY_PAY"] },
+          OR: [{ runId: null }, { runId: run.id }],
         },
       }),
       prisma.adhocTransaction.findMany({
@@ -342,6 +344,7 @@ export async function calculateRun(runId: string): Promise<{
           employeeId: { in: employeeIds },
           year: run.year, month: run.month,
           isPaidOutside: false,
+          OR: [{ runId: null }, { runId: run.id }],
         },
       }),
       prisma.componentClaim.findMany({

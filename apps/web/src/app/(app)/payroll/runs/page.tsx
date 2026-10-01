@@ -94,14 +94,16 @@ export default async function PayrollRunsPage() {
                   <tr key={r.id}>
                     <td className="strong nowrap">{formatPeriod(r.year, r.month)}</td>
                     <td className="text-sm">{r.payGroup.name}</td>
-                    <td className="text-sm muted">{r.type === "OFF_CYCLE" ? "Off-cycle" : "Regular"}</td>
+                    <td className="text-sm muted">{r.type === "OFF_CYCLE" ? `Off-cycle ${r.sequence}` : "Regular"}</td>
                     <td className="num">{r.employeeCount}</td>
                     <td className="num"><Money value={r.totalGross} compact /></td>
                     <td className="num"><Money value={r.totalDeductions} compact /></td>
                     <td className="num strong"><Money value={r.totalNetPay} compact /></td>
-                    <td className="num">{r.status === "FINALIZED" ? "—" : `${r.currentStep} / 6`}</td>
+                    <td className="num">{r.status === "FINALIZED" || r.type === "OFF_CYCLE" ? "—" : `${r.currentStep} / 6`}</td>
                     <td><RunStatusBadge status={r.status} /></td>
-                    <td className="right">
+                    <td className="right nowrap">
+                      {r.type === "REGULAR" && r.status === "FINALIZED" && can(viewer, P.PAYROLL_RUN)
+                        ? <Link className="btn sm ghost" href={`/payroll/runs/off-cycle?base=${r.id}`}>Run off-cycle</Link> : null}
                       <Link className="btn sm" href={`/payroll/runs/${r.id}`}>Open</Link>
                     </td>
                   </tr>

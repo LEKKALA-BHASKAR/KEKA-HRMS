@@ -40,11 +40,11 @@ export async function finalizePayrollRun(runId: string, actorUserId: string): Pr
     });
     // Mirror exactly what calculateRun selected for these people this month.
     await tx.adhocTransaction.updateMany({
-      where: { employeeId: { in: ids }, year: run.year, month: run.month, isPaidOutside: false, isProcessed: false },
+      where: { employeeId: { in: ids }, year: run.year, month: run.month, isPaidOutside: false, isProcessed: false, OR: [{ runId: null }, { runId }] },
       data: { isProcessed: true, runId },
     });
     await tx.employeeBonus.updateMany({
-      where: { employeeId: { in: ids }, payoutYear: run.year, payoutMonth: run.month, isProcessed: false, payAction: { in: ["PAY", "PARTIALLY_PAY"] } },
+      where: { employeeId: { in: ids }, payoutYear: run.year, payoutMonth: run.month, isProcessed: false, payAction: { in: ["PAY", "PARTIALLY_PAY"] }, OR: [{ runId: null }, { runId }] },
       data: { isProcessed: true, runId },
     });
     // Only what the calculation deducted: active loans of processed people.
@@ -86,6 +86,8 @@ export async function rollbackPayrollRun(runId: string, reason: string): Promise
     where: { payGroupId: run.payGroupId, status: "FINALIZED", rolledBackAt: null, OR: [{ year: { gt: run.year } }, { year: run.year, month: { gt: run.month } }] },
   });
   if (later) return { ok: false, message: `Roll back ${later.month}/${later.year} first — it was finalised on top of this month.` };
+  const offCycle = await prisma.payrollRun.findFirst({ where: { baseRunId: runId, status: "FINALIZED", rolledBackAt: null } });
+  if (offCycle) return { ok: false, message: "An off-cycle payroll was finalised on top of this month. Roll that back first." };
 
   await prisma.$transaction(async (tx) => {
     await tx.payslip.deleteMany({ where: { runId } });
