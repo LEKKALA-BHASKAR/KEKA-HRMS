@@ -9,21 +9,13 @@ import { SearchPalette, type QuickAction } from "./search-palette";
 import { Avatar } from "./avatar";
 import {
   IconHome, IconUser, IconInbox, IconTeam, IconDollarCircle, IconOrg, IconEngage, IconUsers, IconUserPlus,
-<<<<<<< HEAD
-  IconTarget, IconTimer, IconWallet, IconLedger, IconSettings, IconBell, IconMenu, IconBook, IconChart,
-=======
-  IconTarget, IconTimer, IconWallet, IconLedger, IconSettings, IconBell, IconMenu, IconAlarm, IconGraduationCap,
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
+  IconTarget, IconTimer, IconWallet, IconLedger, IconSettings, IconBell, IconMenu, IconAlarm, IconGraduationCap, IconChart,
 } from "./icons";
 
 const ICONS: Record<string, (p: { className?: string }) => ReactNode> = {
   home: IconHome, user: IconUser, inbox: IconInbox, team: IconTeam, finance: IconDollarCircle, org: IconOrg,
   engage: IconEngage, people: IconUsers, hire: IconUserPlus, performance: IconTarget, projects: IconTimer,
-<<<<<<< HEAD
-  payroll: IconWallet, ledger: IconLedger, settings: IconSettings, learn: IconBook, analytics: IconChart,
-=======
-  payroll: IconWallet, ledger: IconLedger, settings: IconSettings, time: IconAlarm, learn: IconGraduationCap,
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
+  payroll: IconWallet, ledger: IconLedger, settings: IconSettings, time: IconAlarm, learn: IconGraduationCap, analytics: IconChart,
 };
 
 const pathOf = (href: string) => href.split("?")[0];

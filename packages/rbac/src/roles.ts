@@ -73,7 +73,7 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
       P.PERFORMANCE_VIEW,
       P.REQUISITION_VIEW,
       P.AUDIT_LOG_VIEW, P.REPORT_VIEW, P.REPORT_BUILD,
-      P.ANALYTICS_VIEW, P.ATTRITION_RISK_VIEW,
+      P.ATTRITION_RISK_VIEW,
     ],
   },
   {

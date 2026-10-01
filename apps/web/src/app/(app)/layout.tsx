@@ -142,15 +142,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     approvals: pendingApprovals, leave: pendingLeave + pendingCompOff + pendingEncash, attendance: pendingAttendance,
     surveys: pendingSurveys, learning: myCourses, exits: pendingExits, runs: openRunCount,
     documents: pendingDocuments, acks: pendingAcks, sheets: pendingSheets, notifications: unreadNotifications,
-<<<<<<< HEAD
     probation: probationsToDecide,
-  }, { hasExit: !!myExit, managesProject: managedProjects > 0 });
-=======
   }, {
     hasExit: !!myExit, managesProject: managedProjects > 0,
     welcomeDot: !!myProfile && myProfile.profileCompletion < 100,
   });
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
 
   const name = viewer.employee?.displayName ?? viewer.user.email;
   return (

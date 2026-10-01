@@ -19,9 +19,6 @@ CREATE TYPE "LessonKind" AS ENUM ('ARTICLE', 'VIDEO', 'DOCUMENT', 'QUIZ');
 -- CreateEnum
 CREATE TYPE "CourseEnrolmentStatus" AS ENUM ('ASSIGNED', 'IN_PROGRESS', 'COMPLETED');
 
--- CreateEnum
-CREATE TYPE "TimeOffRequestStatus" AS ENUM ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED');
-
 -- CreateTable
 CREATE TABLE "surveys" (
     "id" TEXT NOT NULL,
@@ -215,47 +212,6 @@ CREATE TABLE "career_aspirations" (
     CONSTRAINT "career_aspirations_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "comp_off_requests" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "employeeId" TEXT NOT NULL,
-    "workedOn" DATE NOT NULL,
-    "days" DECIMAL(4,1) NOT NULL,
-    "reason" TEXT NOT NULL,
-    "dayType" TEXT NOT NULL,
-    "status" "TimeOffRequestStatus" NOT NULL DEFAULT 'PENDING',
-    "expiresOn" DATE,
-    "decidedBy" TEXT,
-    "decidedAt" TIMESTAMP(3),
-    "decisionNote" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "comp_off_requests_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "leave_encashment_requests" (
-    "id" TEXT NOT NULL,
-    "tenantId" TEXT NOT NULL,
-    "employeeId" TEXT NOT NULL,
-    "leaveTypeId" TEXT NOT NULL,
-    "days" DECIMAL(9,2) NOT NULL,
-    "perDayRate" DECIMAL(18,2) NOT NULL,
-    "amount" DECIMAL(18,2) NOT NULL,
-    "basis" TEXT NOT NULL,
-    "reason" TEXT,
-    "status" "TimeOffRequestStatus" NOT NULL DEFAULT 'PENDING',
-    "decidedBy" TEXT,
-    "decidedAt" TIMESTAMP(3),
-    "decisionNote" TEXT,
-    "adhocId" TEXT,
-    "runId" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "leave_encashment_requests_pkey" PRIMARY KEY ("id")
-);
-
 -- CreateIndex
 CREATE INDEX "surveys_tenantId_status_idx" ON "surveys"("tenantId", "status");
 
@@ -312,18 +268,6 @@ CREATE UNIQUE INDEX "career_step_skills_stepId_skillId_key" ON "career_step_skil
 
 -- CreateIndex
 CREATE UNIQUE INDEX "career_aspirations_employeeId_key" ON "career_aspirations"("employeeId");
-
--- CreateIndex
-CREATE INDEX "comp_off_requests_tenantId_status_idx" ON "comp_off_requests"("tenantId", "status");
-
--- CreateIndex
-CREATE UNIQUE INDEX "comp_off_requests_employeeId_workedOn_key" ON "comp_off_requests"("employeeId", "workedOn");
-
--- CreateIndex
-CREATE INDEX "leave_encashment_requests_tenantId_status_idx" ON "leave_encashment_requests"("tenantId", "status");
-
--- CreateIndex
-CREATE INDEX "leave_encashment_requests_employeeId_idx" ON "leave_encashment_requests"("employeeId");
 
 -- AddForeignKey
 ALTER TABLE "surveys" ADD CONSTRAINT "surveys_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -393,15 +337,3 @@ ALTER TABLE "career_aspirations" ADD CONSTRAINT "career_aspirations_employeeId_f
 
 -- AddForeignKey
 ALTER TABLE "career_aspirations" ADD CONSTRAINT "career_aspirations_stepId_fkey" FOREIGN KEY ("stepId") REFERENCES "career_path_steps"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "comp_off_requests" ADD CONSTRAINT "comp_off_requests_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "comp_off_requests" ADD CONSTRAINT "comp_off_requests_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "employees"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "leave_encashment_requests" ADD CONSTRAINT "leave_encashment_requests_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "leave_encashment_requests" ADD CONSTRAINT "leave_encashment_requests_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "employees"("id") ON DELETE CASCADE ON UPDATE CASCADE;

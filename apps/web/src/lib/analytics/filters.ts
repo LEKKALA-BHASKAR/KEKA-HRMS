@@ -120,3 +120,29 @@ export async function filterOptions(tenantId: string): Promise<FilterOptions> {
 
 /** Tenure filter tokens are URL-safe stand-ins for the band labels. */
 export const TEN_TOKEN: Record<string, string> = { lt1: "<1", "1-2": "1-2", "2-3": "2-3", "3-5": "3-5", "5-10": "5-10", "10plus": "10+" };
+
+export const FILTER_LABEL: Record<DimKey | PostKey, string> = {
+  bu: "Business Unit", le: "Legal Entity", dept: "Department", loc: "Location", cc: "Cost Center", wt: "Worker Type",
+  xt: "Exit Types", xr: "Exit Reasons", g: "Genders", perf: "Performance", ten: "Tenure",
+};
+
+/** Filter definitions for the client filter bar, in the order given. */
+export function filterDefs(opts: FilterOptions, keys: Array<DimKey | PostKey>) {
+  return keys.map((k) => ({ key: k, label: FILTER_LABEL[k], options: opts[k], unassigned: (DIM_KEYS as readonly string[]).includes(k) }));
+}
+
+/** Headcount pages show today's picture unless a date range is chosen. */
+export function headcountAsOf(sp: Record<string, string | string[] | undefined>, f: AnalyticsFilters, today = analyticsToday()): Date {
+  return sp.range || (sp.from && sp.to) ? windowOf(f, today).to : today;
+}
+
+/** Human labels for the active filters (the AI digest gets names, never ids). */
+export function filterLabels(f: AnalyticsFilters, opts: FilterOptions): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const k of [...DIM_KEYS, ...POST_KEYS]) {
+    const vals = k in f.dims ? f.dims[k as DimKey] : f.post[k as PostKey];
+    if (!vals.length) continue;
+    out[FILTER_LABEL[k]] = vals.map((v) => (v === NONE ? "Unassigned" : opts[k].find((o) => o.value === v)?.label ?? "Unknown"));
+  }
+  return out;
+}

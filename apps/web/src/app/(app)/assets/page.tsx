@@ -1,583 +1,201 @@
 import Link from "next/link";
-import { prisma } from "@keka/db";
-import { PERMISSIONS, employeeScopeFilter, hasUnscopedPermission } from "@keka/rbac";
-import { formatDate, formatINRCompact } from "@keka/shared";
-import { requireAuth, can } from "@/lib/context";
-import {
-  PageHead, Card, Badge, Empty, Money, Person, Stat, Callout, Progress,
-} from "@/components/ui";
-import {
-  assignAsset, returnAsset, acknowledgeAsset, recoverAssetDamage,
-  decideAssetRequest, requestAsset,
-} from "@/app/actions/workplace";
+import { redirect } from "next/navigation";
+import { prisma, type Prisma } from "@keka/db";
+import { PERMISSIONS } from "@keka/rbac";
+import { assetSummary, ASSET_CONDITIONS, ASSET_CONDITION_LABEL, ASSET_STATUS_LABEL, type AssetConditionKey, type AssetStatusKey } from "@keka/services";
+import { requireViewer } from "@/lib/context";
+import { scopedEmployeeWhere } from "@/lib/scope";
+import { ConditionChart } from "./_chart";
+import { AutoSelect, CategorySelect } from "./_summary-controls";
+import { FilterForm, UrlSheet } from "./_ui";
+import { FSelect, FSearch, Pager, pageOf, PAGE_SIZE, Toolbar, fmt, qs } from "./_parts";
+import s from "./assets.module.css";
+
+/**
+ * Asset summary (Keka 03/05): four counts with drill-down drawers, and the
+ * two "by condition" charts. Old `/assets?tab=` links redirect to their new
+ * homes.
+ */
 
 const P = PERMISSIONS;
-const n = (v: unknown) => Number(v ?? 0);
-
-const TABS = ["inventory", "assigned", "requests", "recovery", "mine"] as const;
-type Tab = (typeof TABS)[number];
-const TAB_LABEL: Record<Tab, string> = {
-  inventory: "Inventory",
-  assigned: "Assignments",
-  requests: "Requests",
-  recovery: "Damage recovery",
-  mine: "My assets",
+const OLD_TABS: Record<string, string> = {
+  inventory: "/assets/list", assigned: "/assets/assigned", requests: "/assets/requests", recovery: "/assets/recovery", mine: "/me/assets",
 };
 
-const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "info" | "neutral" | "brand"> = {
-  AVAILABLE: "success", ASSIGNED: "brand", IN_REPAIR: "warning",
-  RETIRED: "neutral", LOST: "danger", UNAVAILABLE: "neutral",
-};
-const CONDITION_TONE: Record<string, "success" | "warning" | "danger" | "neutral"> = {
-  NEW: "success", GOOD: "success", FAIR: "warning", DAMAGED: "danger", UNUSABLE: "danger",
-};
+type SP = Record<string, string | undefined>;
 
-export default async function AssetsPage({
-  searchParams,
-}: { searchParams: Promise<{ tab?: string; status?: string }> }) {
-  const viewer = await requireAuth(P.ASSET_VIEW);
+export default async function AssetSummaryPage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
-  const canManage = can(viewer, P.ASSET_MANAGE);
-  const canAssign = can(viewer, P.ASSET_ASSIGN);
-  const canRecover = can(viewer, P.PAYROLL_RUN);
-  // Someone with self-access only lands on their own assets.
-  const defaultTab: Tab = canManage || canAssign ? "inventory" : "mine";
-  const tab = (TABS.includes(sp.tab as Tab) ? sp.tab : defaultTab) as Tab;
-  const myId = viewer.employee?.id;
+  if (sp.tab && OLD_TABS[sp.tab]) redirect(OLD_TABS[sp.tab]);
+  const viewer = await requireViewer();
+  const tenantId = viewer.tenantId;
 
-  // Assignment visibility follows the same scoping as the employee list.
-  const scopeFilter = employeeScopeFilter(viewer, P.ASSET_VIEW);
-  const isUnscoped = hasUnscopedPermission(viewer, P.ASSET_VIEW);
-
-  const [assets, byStatus, assignments, requests, damaged, assetTypes, employees, openRun, myAssignments] =
-    await Promise.all([
-      canManage || canAssign
-        ? prisma.asset.findMany({
-            where: {
-              tenantId: viewer.tenantId,
-              ...(sp.status ? { status: sp.status as never } : {}),
-            },
-            orderBy: { assetTag: "asc" },
-            take: 200,
-            include: {
-              assetType: { include: { category: true } },
-              assignments: {
-                where: { returnedOn: null },
-                include: { employee: { select: { id: true, displayName: true, employeeNumber: true } } },
-                take: 1,
-              },
-            },
-          })
-        : Promise.resolve([]),
-      canManage || canAssign
-        ? prisma.asset.groupBy({
-            by: ["status"],
-            where: { tenantId: viewer.tenantId },
-            _count: true,
-            _sum: { currentValue: true },
-          })
-        : Promise.resolve([] as Array<{ status: string; _count: number; _sum: { currentValue: unknown } }>),
-      canManage || canAssign
-        ? prisma.assetAssignment.findMany({
-            where: {
-              returnedOn: null,
-              asset: { tenantId: viewer.tenantId },
-              ...(scopeFilter ? { employee: scopeFilter as never } : {}),
-            },
-            orderBy: { assignedOn: "desc" },
-            take: 200,
-            include: {
-              asset: { include: { assetType: { select: { name: true } } } },
-              employee: {
-                select: {
-                  id: true, displayName: true, employeeNumber: true, status: true,
-                  department: { select: { name: true } },
-                },
-              },
-            },
-          })
-        : Promise.resolve([]),
-      canManage
-        ? prisma.assetRequest.findMany({
-            where: { tenantId: viewer.tenantId },
-            orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-            include: {
-              employee: { select: { id: true, displayName: true, employeeNumber: true } },
-            },
-          })
-        : Promise.resolve([]),
-      canManage || canAssign
-        ? prisma.assetAssignment.findMany({
-            where: {
-              asset: { tenantId: viewer.tenantId },
-              damageCharge: { not: null },
-            },
-            orderBy: { returnedOn: "desc" },
-            include: {
-              asset: { include: { assetType: { select: { name: true } } } },
-              employee: {
-                select: { id: true, displayName: true, employeeNumber: true, status: true },
-              },
-            },
-          })
-        : Promise.resolve([]),
-      prisma.assetType.findMany({
-        where: { category: { tenantId: viewer.tenantId } },
-        include: { category: { select: { name: true } } },
-        orderBy: { name: "asc" },
-      }),
-      canAssign
-        ? prisma.employee.findMany({
-            where: { tenantId: viewer.tenantId, status: { notIn: ["EXITED"] } },
-            select: { id: true, displayName: true, employeeNumber: true },
-            orderBy: { firstName: "asc" },
-          })
-        : Promise.resolve([]),
-      canRecover
-        ? prisma.payrollRun.findFirst({
-            where: { tenantId: viewer.tenantId, status: { in: ["DRAFT", "IN_PROGRESS"] } },
-            orderBy: [{ year: "desc" }, { month: "desc" }],
-            select: { id: true },
-          })
-        : Promise.resolve(null),
-      myId
-        ? prisma.assetAssignment.findMany({
-            where: { employeeId: myId },
-            orderBy: [{ returnedOn: "asc" }, { assignedOn: "desc" }],
-            include: { asset: { include: { assetType: { include: { category: true } } } } },
-          })
-        : Promise.resolve([]),
-    ]);
-
-  const count = (s: string) => byStatus.find((b) => b.status === s)?._count ?? 0;
-  const bookValue = byStatus.reduce((sum, b) => sum + n(b._sum.currentValue), 0);
-  const pendingAck = assignments.filter((a) => !a.acknowledgedAt);
-  const pendingRecovery = damaged.filter((d) => !d.chargeRecovered);
-  const myPendingAck = myAssignments.filter((a) => !a.returnedOn && !a.acknowledgedAt);
-  const available = assets.filter((a) => a.status === "AVAILABLE");
-
-  const visibleTabs = TABS.filter((t) => {
-    if (t === "mine") return !!myId;
-    if (t === "requests") return canManage;
-    if (t === "recovery") return canManage || canAssign;
-    return canManage || canAssign;
-  });
+  const [cats, depts, locs] = await Promise.all([
+    prisma.assetCategory.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.department.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.location.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+  ]);
+  const category = cats.some((c) => c.id === sp.category) ? sp.category : undefined;
+  const avail = sp.avail === "unavailable" ? "unavailable" : "available";
+  const summary = await assetSummary(tenantId, { categoryId: category, departmentId: sp.dept, locationId: sp.loc });
+  const base = { category, avail: sp.avail, dept: sp.dept, loc: sp.loc };
+  const kpi = (label: string, value: number, link?: { text: string; list: string }) => (
+    <div className={s.kpi}>
+      <div className={s.kpiLabel}>{label}</div>
+      <div className={s.kpiRow}>
+        <span className={s.kpiValue}>{value}</span>
+        {link ? <Link className={s.kpiLink} href={qs(base, { list: link.list })} scroll={false}>{link.text}</Link> : null}
+      </div>
+    </div>
+  );
 
   return (
     <>
-      <PageHead
-        title="Assets"
-        subtitle={
-          canManage || canAssign
-            ? `${byStatus.reduce((s, b) => s + b._count, 0)} items · ${formatINRCompact(bookValue)} book value after depreciation`
-            : "Equipment issued to you"
-        }
-      />
-
-      {myPendingAck.length > 0 ? (
-        <div style={{ marginBottom: 16 }}>
-          <Callout tone="warning" title={`${myPendingAck.length} asset(s) awaiting your acknowledgement`}>
-            Confirm you have received these. Acknowledgement is the record that the item was
-            handed over, and it matters if a damage charge is ever raised.
-            <div className="row gap-2 wrap" style={{ marginTop: 10 }}>
-              {myPendingAck.map((a) => (
-                <form action={acknowledgeAsset} key={a.id}>
-                  <input type="hidden" name="assignmentId" value={a.id} />
-                  <button className="btn primary sm" type="submit">
-                    Acknowledge {a.asset.assetType.name} ({a.asset.assetTag})
-                  </button>
-                </form>
-              ))}
-            </div>
-          </Callout>
-        </div>
-      ) : null}
-
-      {canManage || canAssign ? (
-        <div className="grid grid-4" style={{ marginBottom: 18 }}>
-          <Stat label="Available" value={count("AVAILABLE")} meta="Ready to assign" />
-          <Stat label="Assigned" value={count("ASSIGNED")} meta={`${pendingAck.length} unacknowledged`} />
-          <Stat label="In repair" value={count("IN_REPAIR")} meta={`${count("LOST")} lost, ${count("RETIRED")} retired`} />
-          <Stat
-            label="Damage recovery"
-            value={<Money value={pendingRecovery.reduce((s, d) => s + n(d.damageCharge), 0)} compact />}
-            meta={`${pendingRecovery.length} pending`}
-          />
-        </div>
-      ) : null}
-
-      {!isUnscoped && (canManage || canAssign) ? (
-        <div style={{ marginBottom: 16 }}>
-          <Callout tone="info" title="Assignments are scoped to you">
-            You see assignments for the employees your roles reach. Inventory is not scoped,
-            because an asset is not an employee record.
-          </Callout>
-        </div>
-      ) : null}
-
-      <div className="tabs">
-        {visibleTabs.map((t) => (
-          <Link key={t} href={`/assets?tab=${t}`} className={`tab${tab === t ? " active" : ""}`}>
-            {TAB_LABEL[t]}
-            {t === "requests" && requests.filter((r) => r.status === "PENDING").length > 0
-              ? ` (${requests.filter((r) => r.status === "PENDING").length})`
-              : ""}
-            {t === "recovery" && pendingRecovery.length > 0 ? ` (${pendingRecovery.length})` : ""}
-          </Link>
-        ))}
+      <div className={s.pageHead}>
+        <h1 className={s.pageTitle}>Asset summary</h1>
+        <form method="get" className="row gap-2">
+          {Object.entries({ avail: sp.avail, dept: sp.dept, loc: sp.loc }).map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
+          <CategorySelect value={category} options={cats} />
+        </form>
       </div>
 
-      {/* ---------------- Inventory ---------------- */}
-      {tab === "inventory" && (canManage || canAssign) ? (
-        <div className="stack gap-4">
-          {canAssign && available.length > 0 ? (
-            <Card title="Assign an asset" description="Only available items can be assigned.">
-              <form action={assignAsset} className="row gap-2 wrap">
-                <select className="select" name="assetId" required style={{ maxWidth: 300 }}>
-                  <option value="">Select an available asset…</option>
-                  {available.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.assetTag} — {a.assetType.name}
-                      {a.serialNumber ? ` (${a.serialNumber})` : ""}
-                    </option>
-                  ))}
-                </select>
-                <select className="select" name="employeeId" required style={{ maxWidth: 230 }}>
-                  <option value="">Assign to…</option>
-                  {employees.map((e) => (
-                    <option key={e.id} value={e.id}>{e.displayName} ({e.employeeNumber})</option>
-                  ))}
-                </select>
-                <select className="select" name="conditionOut" style={{ maxWidth: 130 }}>
-                  <option value="NEW">New</option>
-                  <option value="GOOD" selected>Good</option>
-                  <option value="FAIR">Fair</option>
-                </select>
-                <input className="input" name="notes" placeholder="Notes" style={{ maxWidth: 180 }} />
-                <button className="btn primary" type="submit">Assign</button>
-              </form>
-            </Card>
-          ) : null}
+      <div className={s.kpis}>
+        {kpi("Total Assets", summary.total)}
+        {kpi("Assets Available", summary.available, { text: "View Assets", list: "available" })}
+        {kpi("Assets Assigned", summary.assigned, { text: "View Employees", list: "assigned" })}
+        {kpi("Assets Not Available", summary.notAvailable, { text: "View Assets", list: "unavailable" })}
+      </div>
 
-          <Card
-            title={`Inventory (${assets.length})`}
-            action={
-              <form className="row gap-2">
-                <input type="hidden" name="tab" value="inventory" />
-                <select className="select" name="status" defaultValue={sp.status ?? ""} style={{ maxWidth: 160 }}>
-                  <option value="">All statuses</option>
-                  {["AVAILABLE", "ASSIGNED", "IN_REPAIR", "RETIRED", "LOST", "UNAVAILABLE"].map((s) => (
-                    <option key={s} value={s}>{s.replace(/_/g, " ").toLowerCase()}</option>
-                  ))}
-                </select>
-                <button className="btn sm" type="submit">Filter</button>
-              </form>
-            }
-            tight
-          >
-            {assets.length === 0 ? <Empty title="No assets match" /> : (
-              <div className="table-wrap">
-                <table className="data">
-                  <thead>
-                    <tr>
-                      <th>Tag</th><th>Item</th><th>Category</th><th>Serial</th>
-                      <th className="num">Purchase cost</th><th className="num">Book value</th>
-                      <th>Condition</th><th>Status</th><th>Held by</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {assets.map((a) => {
-                      const holder = a.assignments[0];
-                      const depreciated = n(a.purchaseCost) > 0
-                        ? (1 - n(a.currentValue) / n(a.purchaseCost)) * 100
-                        : 0;
-                      return (
-                        <tr key={a.id}>
-                          <td className="mono text-xs">{a.assetTag}</td>
-                          <td>
-                            <span className="strong">{a.assetType.name}</span>
-                            <div className="text-xs subtle">
-                              {a.assetType.make} {a.assetType.model}
-                            </div>
-                          </td>
-                          <td className="text-sm">{a.assetType.category.name}</td>
-                          <td className="mono text-xs subtle">{a.serialNumber ?? "—"}</td>
-                          <td className="num"><Money value={a.purchaseCost} showZero={false} /></td>
-                          <td className="num">
-                            <Money value={a.currentValue} showZero={false} />
-                            {depreciated > 0 ? (
-                              <div style={{ marginTop: 3 }}>
-                                <Progress value={100 - depreciated} max={100} tone={depreciated > 80 ? "warning" : undefined} />
-                              </div>
-                            ) : null}
-                          </td>
-                          <td><Badge tone={CONDITION_TONE[a.condition] ?? "neutral"}>{a.condition.toLowerCase()}</Badge></td>
-                          <td><Badge tone={STATUS_TONE[a.status] ?? "neutral"} dot>{a.status.replace(/_/g, " ").toLowerCase()}</Badge></td>
-                          <td>
-                            {holder ? (
-                              <Link href={`/employees/${holder.employee.id}`} className="text-sm">
-                                {holder.employee.displayName}
-                                {!holder.acknowledgedAt ? <Badge tone="warning">unack</Badge> : null}
-                              </Link>
-                            ) : <span className="subtle">—</span>}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
+      <section className={s.chartPanel} aria-labelledby="avail-h">
+        <div className={s.chartHead}>
+          <h2 id="avail-h" className={s.chartTitle}>Asset availability by condition</h2>
+          <div className={s.toggle}>
+            <Link href={qs(base, { avail: undefined })} className={avail === "available" ? s.on : undefined} scroll={false}>Available</Link>
+            <Link href={qs(base, { avail: "unavailable" })} className={avail === "unavailable" ? s.on : undefined} scroll={false}>Not Available</Link>
+          </div>
         </div>
-      ) : null}
-
-      {/* ---------------- Assignments ---------------- */}
-      {tab === "assigned" && (canManage || canAssign) ? (
-        <Card title={`Open assignments (${assignments.length})`} tight>
-          {assignments.length === 0 ? <Empty title="Nothing is currently assigned" /> : (
-            <div className="table-wrap">
-              <table className="data">
-                <thead>
-                  <tr>
-                    <th>Employee</th><th>Asset</th><th>Assigned</th>
-                    <th>Condition out</th><th>Acknowledged</th>
-                    {canAssign ? <th>Record return</th> : null}
-                  </tr>
-                </thead>
-                <tbody>
-                  {assignments.map((a) => (
-                    <tr key={a.id}>
-                      <td>
-                        <Link href={`/employees/${a.employee.id}`}>
-                          <Person
-                            name={a.employee.displayName ?? ""}
-                            meta={`${a.employee.employeeNumber} · ${a.employee.department?.name ?? "—"}`}
-                          />
-                        </Link>
-                        {a.employee.status === "NOTICE_PERIOD" ? (
-                          <Badge tone="danger">on notice — recover before exit</Badge>
-                        ) : null}
-                      </td>
-                      <td>
-                        <span className="strong text-sm">{a.asset.assetType.name}</span>
-                        <div className="mono text-xs subtle">{a.asset.assetTag}</div>
-                      </td>
-                      <td className="text-sm nowrap">{formatDate(a.assignedOn)}</td>
-                      <td><Badge tone={CONDITION_TONE[a.conditionOut] ?? "neutral"}>{a.conditionOut.toLowerCase()}</Badge></td>
-                      <td>
-                        {a.acknowledgedAt
-                          ? <Badge tone="success" dot>{formatDate(a.acknowledgedAt)}</Badge>
-                          : <Badge tone="warning">Pending</Badge>}
-                      </td>
-                      {canAssign ? (
-                        <td>
-                          <form action={returnAsset} className="row gap-1">
-                            <input type="hidden" name="assignmentId" value={a.id} />
-                            <select className="select" name="conditionIn" style={{ width: 106, padding: "3px 6px", fontSize: 12 }}>
-                              <option value="GOOD">Good</option>
-                              <option value="FAIR">Fair</option>
-                              <option value="DAMAGED">Damaged</option>
-                              <option value="UNUSABLE">Unusable</option>
-                            </select>
-                            <input
-                              className="input num" name="damageCharge" type="number" step="0.01" min="0"
-                              placeholder="Charge"
-                              style={{ width: 84, padding: "3px 7px", fontSize: 12 }}
-                            />
-                            <button className="btn sm" type="submit">Return</button>
-                          </form>
-                        </td>
-                      ) : null}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-      ) : null}
-
-      {/* ---------------- Requests ---------------- */}
-      {tab === "requests" && canManage ? (
-        <Card title={`Asset requests (${requests.length})`} tight>
-          {requests.length === 0 ? <Empty title="No requests raised" /> : (
-            <div className="table-wrap">
-              <table className="data">
-                <thead>
-                  <tr><th>Employee</th><th>Reason</th><th>Needed by</th><th>Status</th><th>Decision</th></tr>
-                </thead>
-                <tbody>
-                  {requests.map((r) => (
-                    <tr key={r.id}>
-                      <td>
-                        <Link href={`/employees/${r.employee.id}`}>
-                          <Person name={r.employee.displayName ?? ""} meta={r.employee.employeeNumber} />
-                        </Link>
-                      </td>
-                      <td className="text-sm" style={{ maxWidth: 340 }}>{r.reason}</td>
-                      <td className="text-sm nowrap">{formatDate(r.neededBy)}</td>
-                      <td>
-                        <Badge tone={
-                          r.status === "APPROVED" ? "success"
-                          : r.status === "REJECTED" ? "danger"
-                          : r.status === "FULFILLED" ? "brand" : "warning"
-                        }>
-                          {r.status.toLowerCase()}
-                        </Badge>
-                        {r.rejectReason ? <div className="text-xs subtle">{r.rejectReason}</div> : null}
-                      </td>
-                      <td>
-                        {r.status === "PENDING" ? (
-                          <div className="row gap-1">
-                            <form action={decideAssetRequest}>
-                              <input type="hidden" name="id" value={r.id} />
-                              <input type="hidden" name="decision" value="approve" />
-                              <button className="btn primary sm" type="submit">Approve</button>
-                            </form>
-                            <form action={decideAssetRequest} className="row gap-1">
-                              <input type="hidden" name="id" value={r.id} />
-                              <input type="hidden" name="decision" value="reject" />
-                              <input className="input" name="reason" placeholder="Reason" style={{ width: 110, padding: "3px 7px", fontSize: 12 }} />
-                              <button className="btn sm" type="submit">Reject</button>
-                            </form>
-                          </div>
-                        ) : <span className="subtle">—</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-      ) : null}
-
-      {/* ---------------- Damage recovery ---------------- */}
-      {tab === "recovery" && (canManage || canAssign) ? (
-        <div className="stack gap-4">
-          <Callout tone="info" title="Where a damage charge ends up">
-            For a serving employee the charge is pushed into the open payroll run as an
-            ad-hoc deduction. For a leaver it belongs in the full-and-final settlement, which
-            reads the charge straight off the assignment — so do not push it to payroll too,
-            or it will be recovered twice.
-          </Callout>
-
-          <Card title={`Damage charges (${damaged.length})`} tight>
-            {damaged.length === 0 ? <Empty title="No damage charges recorded" /> : (
-              <div className="table-wrap">
-                <table className="data">
-                  <thead>
-                    <tr>
-                      <th>Employee</th><th>Asset</th><th>Returned</th>
-                      <th>Condition in</th><th className="num">Charge</th><th>Note</th><th>Recovery</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {damaged.map((d) => {
-                      const isLeaver = d.employee.status === "EXITED" || d.employee.status === "NOTICE_PERIOD";
-                      return (
-                        <tr key={d.id}>
-                          <td>
-                            <Link href={`/employees/${d.employee.id}`}>
-                              <Person name={d.employee.displayName ?? ""} meta={d.employee.employeeNumber} />
-                            </Link>
-                          </td>
-                          <td>
-                            <span className="text-sm">{d.asset.assetType.name}</span>
-                            <div className="mono text-xs subtle">{d.asset.assetTag}</div>
-                          </td>
-                          <td className="text-sm nowrap">{formatDate(d.returnedOn)}</td>
-                          <td><Badge tone={CONDITION_TONE[d.conditionIn ?? "GOOD"] ?? "neutral"}>{(d.conditionIn ?? "").toLowerCase()}</Badge></td>
-                          <td className="num strong"><Money value={d.damageCharge} /></td>
-                          <td className="text-sm muted" style={{ maxWidth: 260 }}>{d.damageNote ?? "—"}</td>
-                          <td>
-                            {d.chargeRecovered ? (
-                              <Badge tone="success">Recovered</Badge>
-                            ) : isLeaver ? (
-                              <Badge tone="info">Via final settlement</Badge>
-                            ) : canRecover && openRun ? (
-                              <form action={recoverAssetDamage}>
-                                <input type="hidden" name="assignmentId" value={d.id} />
-                                <button className="btn sm" type="submit">Deduct in payroll</button>
-                              </form>
-                            ) : (
-                              <Badge tone="warning">Pending</Badge>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
+        <div className={s.chartBody}>
+          <ConditionChart categories={summary.categories} data={avail === "available" ? summary.availableByCondition : summary.notAvailableByCondition} empty="No assets yet." />
         </div>
-      ) : null}
+      </section>
 
-      {/* ---------------- My assets ---------------- */}
-      {tab === "mine" && myId ? (
-        <div className="stack gap-4">
-          <Card title={`Assets issued to me (${myAssignments.filter((a) => !a.returnedOn).length} open)`} tight>
-            {myAssignments.length === 0 ? (
-              <Empty title="Nothing issued to you yet" />
-            ) : (
-              <div className="table-wrap">
-                <table className="data">
-                  <thead>
-                    <tr><th>Asset</th><th>Category</th><th>Assigned</th><th>Returned</th><th>Status</th></tr>
-                  </thead>
-                  <tbody>
-                    {myAssignments.map((a) => (
-                      <tr key={a.id}>
-                        <td>
-                          <span className="strong">{a.asset.assetType.name}</span>
-                          <div className="mono text-xs subtle">
-                            {a.asset.assetTag}
-                            {a.asset.serialNumber ? ` · ${a.asset.serialNumber}` : ""}
-                          </div>
-                        </td>
-                        <td className="text-sm">{a.asset.assetType.category.name}</td>
-                        <td className="text-sm nowrap">{formatDate(a.assignedOn)}</td>
-                        <td className="text-sm nowrap">
-                          {a.returnedOn ? formatDate(a.returnedOn) : <span className="subtle">In use</span>}
-                        </td>
-                        <td>
-                          {a.returnedOn ? (
-                            <Badge tone="neutral">Returned</Badge>
-                          ) : a.acknowledgedAt ? (
-                            <Badge tone="success" dot>Acknowledged</Badge>
-                          ) : (
-                            <form action={acknowledgeAsset}>
-                              <input type="hidden" name="assignmentId" value={a.id} />
-                              <button className="btn primary sm" type="submit">Acknowledge receipt</button>
-                            </form>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-
-          <Card title="Request an asset">
-            <form action={requestAsset} className="row gap-2 wrap">
-              <select className="select" name="assetTypeId" style={{ maxWidth: 260 }}>
-                <option value="">Any suitable item</option>
-                {assetTypes.map((t) => (
-                  <option key={t.id} value={t.id}>{t.category.name} — {t.name}</option>
-                ))}
-              </select>
-              <input className="input" name="reason" placeholder="Why do you need it?" required style={{ maxWidth: 300 }} />
-              <input className="input" name="neededBy" type="date" style={{ maxWidth: 160 }} />
-              <button className="btn primary" type="submit">Raise request</button>
-            </form>
-          </Card>
+      <section className={s.chartPanel} aria-labelledby="assign-h">
+        <div className={s.chartHead}>
+          <h2 id="assign-h" className={s.chartTitle}>Asset assignment by condition</h2>
+          <form method="get" className={s.chartSelects}>
+            {Object.entries({ category, avail: sp.avail }).map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
+            <AutoSelect name="dept" value={sp.dept} all="All Departments" options={depts} />
+            <AutoSelect name="loc" value={sp.loc} all="All Locations" options={locs} />
+          </form>
         </div>
-      ) : null}
+        <div className={s.chartBody}>
+          <ConditionChart categories={summary.categories} data={summary.assignedByCondition} empty="Nothing is assigned yet." />
+        </div>
+      </section>
+
+      {sp.list === "assigned" || sp.list === "available" || sp.list === "unavailable"
+        ? <ListDrawer viewer={viewer} list={sp.list} sp={sp} base={base} cats={cats} depts={depts} locs={locs} />
+        : null}
     </>
+  );
+}
+
+
+async function ListDrawer({ viewer, list, sp, base, cats, depts, locs }: {
+  viewer: Awaited<ReturnType<typeof requireViewer>>; list: "assigned" | "available" | "unavailable"; sp: SP; base: SP;
+  cats: Array<{ id: string; name: string }>; depts: Array<{ id: string; name: string }>; locs: Array<{ id: string; name: string }>;
+}) {
+  const tenantId = viewer.tenantId;
+  const [types, units, centres, entities] = await Promise.all([
+    prisma.assetType.findMany({ where: { category: { tenantId }, ...(sp.dcat ? { categoryId: sp.dcat } : {}) }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.businessUnit.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.costCenter.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.legalEntity.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+  ]);
+  const holder: Prisma.EmployeeWhereInput = {
+    ...(scopedEmployeeWhere(viewer, P.ASSET_VIEW) as Prisma.EmployeeWhereInput),
+    ...(sp.dbu ? { businessUnitId: sp.dbu } : {}), ...(sp.ddept ? { departmentId: sp.ddept } : {}),
+    ...(sp.dcc ? { costCenterId: sp.dcc } : {}), ...(sp.dle ? { legalEntityId: sp.dle } : {}),
+  };
+  const statusWhere: Prisma.AssetWhereInput = list === "assigned" ? { status: "ASSIGNED" } : list === "available" ? { status: "AVAILABLE" } : { status: { in: ["IN_REPAIR", "LOST", "UNAVAILABLE"] } };
+  const where: Prisma.AssetWhereInput = {
+    tenantId, ...statusWhere,
+    ...(sp.dcat ? { assetType: { categoryId: sp.dcat } } : {}), ...(sp.dtype ? { assetTypeId: sp.dtype } : {}),
+    ...(sp.dcond ? { condition: sp.dcond as AssetConditionKey } : {}), ...(sp.dloc ? { locationId: sp.dloc } : {}),
+    ...(list === "assigned" ? { assignments: { some: { returnedOn: null, employee: holder } } } : {}),
+    ...(sp.q ? { OR: [{ name: { contains: sp.q, mode: "insensitive" } }, { assetTag: { contains: sp.q, mode: "insensitive" } }, ...(list === "assigned" ? [{ assignments: { some: { returnedOn: null, employee: { displayName: { contains: sp.q, mode: "insensitive" as const } } } } }] : [])] } : {}),
+  };
+  const total = await prisma.asset.count({ where });
+  const page = pageOf(sp.page, total);
+  const rows = await prisma.asset.findMany({
+    where, orderBy: { assetTag: "asc" }, skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE,
+    include: {
+      assetType: { include: { category: true } }, location: true,
+      assignments: { where: { returnedOn: null }, take: 1, include: { employee: { select: { id: true, displayName: true, jobTitleName: true, department: { select: { name: true } }, businessUnit: { select: { name: true } }, location: { select: { name: true } } } } } },
+    },
+  });
+  const filters = { list, dcat: sp.dcat, dtype: sp.dtype, dcond: sp.dcond, dbu: sp.dbu, ddept: sp.ddept, dloc: sp.dloc, dcc: sp.dcc, dle: sp.dle, q: sp.q };
+  const keep = { ...base, ...filters };
+  const title = list === "assigned" ? "List of Assets Assigned" : list === "available" ? "List of Assets Available" : "List of Assets Not Available";
+  const opt = (r: Array<{ id: string; name: string }>) => r.map((x) => ({ value: x.id, label: x.name }));
+  return (
+    <UrlSheet title={title} closeHref={`/assets${qs(base)}`}>
+      <FilterForm>
+        {Object.entries(base).map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
+        <input type="hidden" name="list" value={list} />
+        <FSelect name="dcat" label="Asset Category" value={sp.dcat} options={opt(cats)} />
+        <FSelect name="dtype" label="Asset Type" value={sp.dtype} options={opt(types)} />
+        <FSelect name="dcond" label="Condition" value={sp.dcond} options={ASSET_CONDITIONS.map((c) => ({ value: c, label: ASSET_CONDITION_LABEL[c] }))} />
+        {list === "assigned" ? <FSelect name="dbu" label="Business Unit" value={sp.dbu} options={opt(units)} /> : null}
+        {list === "assigned" ? <FSelect name="ddept" label="Department" value={sp.ddept} options={opt(depts)} /> : null}
+        <FSelect name="dloc" label="Location" value={sp.dloc} options={opt(locs)} />
+        {list === "assigned" ? <FSelect name="dcc" label="Cost Center" value={sp.dcc} options={opt(centres)} /> : null}
+        {list === "assigned" ? <FSelect name="dle" label="Legal Entity" value={sp.dle} options={opt(entities)} /> : null}
+        <FSearch value={sp.q} clearHref={`/assets${qs(base, { list })}`} />
+      </FilterForm>
+      <div className={s.tableCard}>
+        <Toolbar total={total} exportHref={`/assets/export${qs({ view: `summary-${list}`, ...filters })}`} />
+        <div className={s.tableWrap}>
+          <table className={s.table}>
+            <thead>
+              <tr>
+                <th>Asset Name</th><th>Category</th><th>Asset Type</th><th>Condition</th>
+                {list === "assigned" ? <><th>Assigned To</th><th>Assigned On</th><th>Department</th><th>Business Unit</th><th>Location</th></>
+                  : <><th>Status</th><th>Location</th>{list === "unavailable" ? <th>Reason</th> : null}</>}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? <tr><td colSpan={9} className="muted" style={{ textAlign: "center", padding: 30 }}>No assets match these filters.</td></tr> : rows.map((a) => {
+                const h = a.assignments[0];
+                return (
+                  <tr key={a.id}>
+                    <td><Link className={s.link} href={`/assets/${a.id}`}>{a.name ?? a.assetType.name}</Link><span className="sub">{a.assetTag}</span></td>
+                    <td><span className={s.clip} style={{ display: "block" }}>{a.assetType.category.name}</span></td>
+                    <td>{a.assetType.name}</td>
+                    <td>{ASSET_CONDITION_LABEL[a.condition as AssetConditionKey]}</td>
+                    {list === "assigned" ? (
+                      <>
+                        <td>{h ? <><Link className={s.link} href={`/employees/${h.employee.id}?tab=assets`}>{h.employee.displayName}</Link><span className="sub">{h.employee.jobTitleName}</span></> : "—"}</td>
+                        <td className="nowrap">{h ? fmt(h.assignedOn) : "—"}</td>
+                        <td>{h?.employee.department?.name ?? "Not Available"}</td>
+                        <td>{h?.employee.businessUnit?.name ?? "Not Available"}</td>
+                        <td>{a.location?.name ?? h?.employee.location?.name ?? "—"}</td>
+                      </>
+                    ) : (
+                      <>
+                        <td>{ASSET_STATUS_LABEL[a.status as AssetStatusKey]}</td>
+                        <td>{a.location?.name ?? "—"}</td>
+                        {list === "unavailable" ? <td className="text-sm">{a.unavailableReason ?? "—"}</td> : null}
+                      </>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <Pager total={total} page={page} href={(p) => `/assets${qs(keep, { page: String(p) })}`} />
+      </div>
+    </UrlSheet>
   );
 }

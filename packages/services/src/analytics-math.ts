@@ -1,5 +1,4 @@
 /**
-<<<<<<< HEAD
  * Pure workforce arithmetic — no database. Headcount over time, joiners and
  * leavers, attrition, and the tenure and age bands the dashboards group by.
  *
@@ -62,7 +61,69 @@ export function monthlySeries(rows: WorkforceRow[], asOf: Date, months = 12): Mo
       headcount, joiners, leavers,
       attritionPct: avg === 0 ? 0 : r1((leavers / avg) * 100),
     });
-=======
+  }
+  return out;
+}
+
+/**
+ * Trailing-twelve-month attrition: leavers in the window over the average
+ * month-end headcount across it. The figure HR quotes as "annual attrition".
+ */
+export function annualAttrition(series: MonthPoint[]): number {
+  if (series.length === 0) return 0;
+  const leavers = series.reduce((s, p) => s + p.leavers, 0);
+  const avg = series.reduce((s, p) => s + p.headcount, 0) / series.length;
+  return avg === 0 ? 0 : r1((leavers / avg) * 100 * (12 / series.length));
+}
+
+export const TENURE_BANDS = ["< 6 months", "6–12 months", "1–2 years", "2–5 years", "5+ years"] as const;
+export const AGE_BANDS = ["Under 25", "25–34", "35–44", "45–54", "55+", "Not recorded"] as const;
+
+export function yearsBetween(from: Date, to: Date): number {
+  return (to.getTime() - from.getTime()) / (365.25 * 86_400_000);
+}
+
+export function tenureBand(doj: Date, asOf: Date): (typeof TENURE_BANDS)[number] {
+  const y = yearsBetween(doj, asOf);
+  if (y < 0.5) return "< 6 months";
+  if (y < 1) return "6–12 months";
+  if (y < 2) return "1–2 years";
+  if (y < 5) return "2–5 years";
+  return "5+ years";
+}
+
+export function ageBand(dob: Date | null | undefined, asOf: Date): (typeof AGE_BANDS)[number] {
+  if (!dob) return "Not recorded";
+  const y = Math.floor(yearsBetween(dob, asOf));
+  if (y < 25) return "Under 25";
+  if (y < 35) return "25–34";
+  if (y < 45) return "35–44";
+  if (y < 55) return "45–54";
+  return "55+";
+}
+
+/** Count rows into named groups, keeping a fixed order where one is given. */
+export function tally<T>(rows: T[], key: (r: T) => string, order?: readonly string[]): Array<{ label: string; value: number }> {
+  const m = new Map<string, number>();
+  for (const k of order ?? []) m.set(k, 0);
+  for (const r of rows) m.set(key(r), (m.get(key(r)) ?? 0) + 1);
+  const list = [...m.entries()].map(([label, value]) => ({ label, value }));
+  return order ? list : list.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+}
+
+/** Average tenure in years, one decimal. */
+export function averageTenure(rows: WorkforceRow[], asOf: Date): number {
+  const active = rows.filter((e) => activeOn(e, asOf));
+  if (active.length === 0) return 0;
+  return r1(active.reduce((s, e) => s + yearsBetween(e.dateOfJoining, asOf), 0) / active.length);
+}
+
+/** Percentage change from one figure to the next; null when there is no base. */
+export function pctChange(from: number, to: number): number | null {
+  return from === 0 ? null : r1(((to - from) / from) * 100);
+}
+
+/**
  * Org analytics, pure: who counts as a leaver and when, headcount at a date,
  * rates over a window, the bands every chart groups by, the attrition-risk
  * model (risk-v1) and the guards around what an AI model is shown.
@@ -86,11 +147,6 @@ export function monthsBetween(from: Date, to: Date): number {
   return Math.max(0, m);
 }
 
-export function yearsBetween(from: Date, to: Date): number {
-  return monthsBetween(from, to) / 12;
-}
-
-const r1 = (n: number) => Math.round(n * 10) / 10;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 // ---------------------------------------------------------------------------
@@ -154,69 +210,10 @@ export function monthsIn(w: Window): Array<{ year: number; month: number; start:
       label: `${MONTH_ABBR[m - 1]}-${y}`,
     });
     m++; if (m > 12) { m = 1; y++; }
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
   }
   return out;
 }
 
-<<<<<<< HEAD
-/**
- * Trailing-twelve-month attrition: leavers in the window over the average
- * month-end headcount across it. The figure HR quotes as "annual attrition".
- */
-export function annualAttrition(series: MonthPoint[]): number {
-  if (series.length === 0) return 0;
-  const leavers = series.reduce((s, p) => s + p.leavers, 0);
-  const avg = series.reduce((s, p) => s + p.headcount, 0) / series.length;
-  return avg === 0 ? 0 : r1((leavers / avg) * 100 * (12 / series.length));
-}
-
-export const TENURE_BANDS = ["< 6 months", "6–12 months", "1–2 years", "2–5 years", "5+ years"] as const;
-export const AGE_BANDS = ["Under 25", "25–34", "35–44", "45–54", "55+", "Not recorded"] as const;
-
-export function yearsBetween(from: Date, to: Date): number {
-  return (to.getTime() - from.getTime()) / (365.25 * 86_400_000);
-}
-
-export function tenureBand(doj: Date, asOf: Date): (typeof TENURE_BANDS)[number] {
-  const y = yearsBetween(doj, asOf);
-  if (y < 0.5) return "< 6 months";
-  if (y < 1) return "6–12 months";
-  if (y < 2) return "1–2 years";
-  if (y < 5) return "2–5 years";
-  return "5+ years";
-}
-
-export function ageBand(dob: Date | null | undefined, asOf: Date): (typeof AGE_BANDS)[number] {
-  if (!dob) return "Not recorded";
-  const y = Math.floor(yearsBetween(dob, asOf));
-  if (y < 25) return "Under 25";
-  if (y < 35) return "25–34";
-  if (y < 45) return "35–44";
-  if (y < 55) return "45–54";
-  return "55+";
-}
-
-/** Count rows into named groups, keeping a fixed order where one is given. */
-export function tally<T>(rows: T[], key: (r: T) => string, order?: readonly string[]): Array<{ label: string; value: number }> {
-  const m = new Map<string, number>();
-  for (const k of order ?? []) m.set(k, 0);
-  for (const r of rows) m.set(key(r), (m.get(key(r)) ?? 0) + 1);
-  const list = [...m.entries()].map(([label, value]) => ({ label, value }));
-  return order ? list : list.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
-}
-
-/** Average tenure in years, one decimal. */
-export function averageTenure(rows: WorkforceRow[], asOf: Date): number {
-  const active = rows.filter((e) => activeOn(e, asOf));
-  if (active.length === 0) return 0;
-  return r1(active.reduce((s, e) => s + yearsBetween(e.dateOfJoining, asOf), 0) / active.length);
-}
-
-/** Percentage change from one figure to the next; null when there is no base. */
-export function pctChange(from: number, to: number): number | null {
-  return from === 0 ? null : r1(((to - from) / from) * 100);
-=======
 /** Mean of the opening headcount and every month-end headcount in the window. */
 export function averageHeadcount(pop: PopMember[], w: Window): number {
   const points = [headcountAt(pop, w.from), ...monthsIn(w).map((mo) => headcountAt(pop, mo.end))];
@@ -289,8 +286,8 @@ export function previousWindow(w: Window): Window {
 //  Bands
 // ---------------------------------------------------------------------------
 
-export const TENURE_BANDS = ["<1", "1-2", "2-3", "3-5", "5-10", "10+"] as const;
-export function tenureBand(years: number): (typeof TENURE_BANDS)[number] {
+export const ATTRITION_TENURE_BANDS = ["<1", "1-2", "2-3", "3-5", "5-10", "10+"] as const;
+export function attritionTenureBand(years: number): (typeof ATTRITION_TENURE_BANDS)[number] {
   if (years < 1) return "<1";
   if (years < 2) return "1-2";
   if (years < 3) return "2-3";
@@ -299,8 +296,8 @@ export function tenureBand(years: number): (typeof TENURE_BANDS)[number] {
   return "10+";
 }
 
-export const AGE_BANDS = ["<22", "22-25", "26-30", "31-40", "41-55", "55+"] as const;
-export function ageBand(age: number): (typeof AGE_BANDS)[number] {
+export const ATTRITION_AGE_BANDS = ["<22", "22-25", "26-30", "31-40", "41-55", "55+"] as const;
+export function attritionAgeBand(age: number): (typeof ATTRITION_AGE_BANDS)[number] {
   if (age < 22) return "<22";
   if (age <= 25) return "22-25";
   if (age <= 30) return "26-30";
@@ -632,5 +629,4 @@ export function namesSomeone(q: string, names: string[]): boolean {
     const k = n.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
     return k.includes(" ") && low.includes(` ${k} `);
   });
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
 }

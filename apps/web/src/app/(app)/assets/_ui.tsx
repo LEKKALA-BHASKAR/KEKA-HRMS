@@ -189,7 +189,8 @@ export function ModalButton({ label, className = "btn primary", ...rest }: {
   const { navigateTo, ...modal } = rest;
   return (
     <>
-      <button type="button" className={className} onClick={() => setOpen(true)} aria-haspopup="dialog">{label}</button>
+      <button type="button" className={className} onClick={() => setOpen(true)} aria-haspopup="dialog"
+        title={typeof label === "string" ? undefined : modal.title} aria-label={typeof label === "string" ? undefined : modal.title}>{label}</button>
       {open ? <ModalForm {...modal} onClose={() => setOpen(false)} onOk={(st) => { if (navigateTo) router.push(navigateTo.replace("{id}", st.values?.id ?? "")); }} /> : null}
     </>
   );

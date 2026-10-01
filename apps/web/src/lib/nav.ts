@@ -50,12 +50,12 @@ export interface NavCounts {
   acks: number;
   sheets: number;
   notifications: number;
-<<<<<<< HEAD
-  surveys: number;
-  learning: number;
+  /** Survey invitations this viewer hasn't answered. */
+  surveys?: number;
+  /** Courses assigned to this viewer and not finished. */
+  learning?: number;
   /** Probations past their end or in review, waiting on HR. */
-  probation: number;
-=======
+  probation?: number;
   /** Asset requests and acknowledgements this viewer can act on. */
   assets?: number;
   /** Requisitions waiting for this viewer's decision. */
@@ -77,7 +77,6 @@ export interface NavOptions {
   sharedBoards?: number;
   /** The Welcome page still has something for the viewer to fill in. */
   welcomeDot?: boolean;
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
 }
 
 const path = (href: string) => href.split("?")[0];
@@ -105,8 +104,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
       tabs: [
         { label: "Attendance", href: "/me/attendance" },
         { label: "Leave", href: "/me/leave" },
-        { label: "Performance", href: "/me/performance" },
-        { label: "Skills & Career", href: "/me/career" },
+        { label: "Performance", href: "/me/performance", paths: ["/me/performance", "/me/career"] },
         { label: "Expenses & Travel", href: "/me/expenses" },
         { label: "Helpdesk", href: "/me/helpdesk" },
         { label: "Apps", href: "/me/apps", paths: ["/me/apps", "/me/assets"] },
@@ -166,6 +164,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         : { label: "Employees", href: "/directory" },
       can(viewer, P.ORG_MANAGE) && { label: "Org Structure", href: "/org" },
       can(viewer, P.ONBOARDING_VIEW) && { label: "Onboarding", href: "/onboarding" },
+      can(viewer, P.PROBATION_MANAGE) && { label: "Probation", href: "/probation", count: counts.probation },
       canAny(viewer, [P.EXIT_MANAGE, P.EXIT_APPROVE, P.FNF_MANAGE]) && { label: "Exits", href: "/exits", count: counts.exits },
       can(viewer, P.HR_ACTIVITY_MANAGE) && { label: "HR Activities", href: "/activities" },
       canAny(viewer, [P.EXPENSE_MANAGE, P.TRAVEL_MANAGE, P.ADVANCE_APPROVE]) && { label: "Expenses & Travel", href: "/expenses" },
@@ -181,40 +180,16 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     can(viewer, P.ANNOUNCEMENT_VIEW) && { label: "Announcements", href: "/announcements", count: counts.acks },
     (me || can(viewer, P.ANNOUNCEMENT_VIEW)) && { label: "Wall", href: "/wall" },
     can(viewer, P.AWARD_VIEW) && { label: "Praise & Awards", href: "/awards" },
-<<<<<<< HEAD
     (me || canAny(viewer, [P.SURVEY_MANAGE, P.SURVEY_RESULTS])) && { label: "Surveys & Polls", href: "/engage/surveys", count: counts.surveys },
-    can(viewer, P.TRAINING_VIEW) && { label: "Training", href: "/training" },
-=======
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
     can(viewer, P.MEETING_VIEW) && { label: "Meetings", href: "/meetings" },
   ]);
   if (engage.length) sections.push({ key: "engage", label: "Engage", icon: "engage", href: engage[0].href, tabs: engage });
 
-<<<<<<< HEAD
-  if (can(viewer, P.LEARNING_VIEW)) {
-    sections.push({ key: "learn", label: "Learn", icon: "learn", href: "/learn", count: counts.learning, tabs: [{ label: "Learning", href: "/learn", count: counts.learning }] });
-  }
-
-  // ---- Admin workspaces ----------------------------------------------------
-  const people = tabs([
-    canAny(viewer, [P.EMPLOYEE_VIEW_ALL, P.EMPLOYEE_CREATE, P.EMPLOYEE_UPDATE]) && { label: "Employees", href: "/employees" },
-    can(viewer, P.ORG_MANAGE) && { label: "Organisation", href: "/org" },
-    can(viewer, P.ONBOARDING_VIEW) && { label: "Journeys", href: "/onboarding" },
-    can(viewer, P.PROBATION_MANAGE) && { label: "Probation", href: "/probation", count: counts.probation },
-    canAny(viewer, [P.EXIT_MANAGE, P.EXIT_APPROVE, P.FNF_MANAGE]) && { label: "Exits", href: "/exits", count: counts.exits },
-    hrLeave && { label: "Leave", href: "/leave", count: counts.leave },
-    hrAttendance && { label: "Attendance", href: "/attendance", count: counts.attendance },
-    can(viewer, P.HR_ACTIVITY_MANAGE) && { label: "HR Activities", href: "/activities" },
-    canAny(viewer, [P.ASSET_MANAGE, P.ASSET_ASSIGN]) && { label: "Assets", href: "/assets" },
-    can(viewer, P.HELPDESK_MANAGE) && { label: "Helpdesk", href: "/helpdesk" },
-    can(viewer, P.REPORT_VIEW) && canAny(viewer, [P.EMPLOYEE_VIEW_ALL, P.PAYROLL_VIEW, P.LEAVE_MANAGE]) && { label: "Reports", href: "/reports" },
-=======
   const learn = tabs([
-    me && { label: "My Courses", href: "/learn/my-courses", paths: ["/learn/my-courses", "/learn/courses", "/learn"] },
-    me && { label: "Course Library", href: "/learn/library" },
-    can(viewer, P.TRAINING_MANAGE) && { label: "Manage Courses", href: "/learn/manage-courses" },
+    (me || can(viewer, P.LEARNING_VIEW)) && { label: "My Courses", href: "/learn/my-courses", paths: ["/learn/my-courses", "/learn/courses", "/learn"], count: counts.learning },
+    (me || can(viewer, P.LEARNING_VIEW)) && { label: "Course Library", href: "/learn/library" },
+    canAny(viewer, [P.TRAINING_MANAGE, P.COURSE_MANAGE]) && { label: "Manage Courses", href: "/learn/manage-courses" },
     can(viewer, P.TRAINING_VIEW) && { label: "Programmes", href: "/training" },
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
   ]);
   if (learn.length) sections.push({ key: "learn", label: "Learn", icon: "learn", href: learn[0].href, tabs: learn });
 
@@ -232,21 +207,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     if (hire.length) sections.push({ key: "hire", label: "Hire", icon: "hire", href: hire[0].href, tabs: hire, admin: true });
   }
 
-<<<<<<< HEAD
   if (isManager || canAny(viewer, [P.PERFORMANCE_MANAGE, P.PERFORMANCE_CALIBRATE, P.GOALS_MANAGE, P.PIP_MANAGE, P.CAREER_PATH_MANAGE, P.SKILL_MANAGE])) {
-    sections.push({
-      key: "performance", label: "Performance", icon: "performance", href: "/performance", admin: true,
-      tabs: tabs([
-        { label: "Goals & Reviews", href: "/performance" },
-        (isManager || canAny(viewer, [P.CAREER_PATH_MANAGE, P.SKILL_MANAGE])) && { label: "Skills & Career Paths", href: "/performance/careers" },
-      ]),
-    });
-  }
-
-  if (can(viewer, P.ANALYTICS_VIEW)) {
-    sections.push({ key: "analytics", label: "Analytics", icon: "analytics", href: "/analytics", tabs: [{ label: "Workforce Insights", href: "/analytics" }], admin: true });
-=======
-  if (isManager || canAny(viewer, [P.PERFORMANCE_MANAGE, P.PERFORMANCE_CALIBRATE, P.GOALS_MANAGE, P.PIP_MANAGE])) {
     sections.push({
       key: "performance", label: "Performance", icon: "performance", href: "/performance/goals", admin: true,
       tabs: tabs([
@@ -254,9 +215,9 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         { label: "1:1 Meetings", href: "/performance/one-on-ones" },
         { label: "Reviews", href: "/performance/reviews", paths: ["/performance/reviews", "/performance/cycles"] },
         canAny(viewer, [P.PIP_MANAGE, P.PERFORMANCE_MANAGE]) || isManager ? { label: "Improvement Plans", href: "/performance/plans" } : false,
+        (isManager || canAny(viewer, [P.CAREER_PATH_MANAGE, P.SKILL_MANAGE])) && { label: "Skills & Career Paths", href: "/performance/careers" },
       ]),
     });
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
   }
 
   // Line managers approve timesheets from the inbox; the workspace is for project people.
@@ -317,7 +278,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     const expenses = meSection.tabs.find((t) => t.href === "/me/expenses")!;
     if (!owned.has("/expenses")) expenses.paths = ["/me/expenses", "/expenses"];
     const perf = meSection.tabs.find((t) => t.href === "/me/performance")!;
-    if (!owned.has("/performance")) perf.paths = ["/me/performance", "/performance"];
+    if (!owned.has("/performance")) perf.paths!.push("/performance");
     if (opts.hasExit) apps.paths!.push("/me/exit");
   }
   const teamSection = sections.find((s) => s.key === "team");
@@ -353,20 +314,12 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     me && { label: "Create a poll", href: "/?compose=poll", keywords: "wall poll vote survey" },
     me && { label: "View holidays", href: `/?holidays=${new Date().getFullYear()}`, keywords: "holiday calendar" },
     me && { label: "Schedule a 1:1", href: "/performance/one-on-ones?new=1", keywords: "one on one meeting manager" },
-    me && { label: "My courses", href: "/learn/my-courses", keywords: "learning course training" },
+    me && { label: "My courses", href: "/learn/my-courses", keywords: "learning course training lms quiz" },
     { label: "Employee directory", href: "/directory", keywords: "people colleagues search" },
     { label: "Organisation tree", href: "/directory/tree", keywords: "org chart hierarchy reporting" },
     can(viewer, P.PAYROLL_VIEW) && { label: "Run payroll", href: "/payroll/runs", keywords: "payroll process month" },
     can(viewer, P.EMPLOYEE_CREATE) && { label: "Add an employee", href: "/employees/new", keywords: "hire onboard new joinee" },
     can(viewer, P.LEDGER_VIEW) && { label: "Accounting", href: "/accounting", keywords: "ledger books journal trial balance" },
-<<<<<<< HEAD
-    can(viewer, P.REPORT_VIEW) && { label: "Reports", href: "/reports", keywords: "analytics headcount attrition" },
-    can(viewer, P.ANALYTICS_VIEW) && { label: "Workforce analytics", href: "/analytics", keywords: "dashboard headcount attrition diversity cost insights" },
-    me && { label: "Take a survey", href: "/engage/surveys", keywords: "survey poll pulse feedback enps" },
-    me && { label: "My learning", href: "/learn", keywords: "course training lms learn quiz" },
-    me && { label: "Claim comp-off", href: "/me/leave?compoff=1", keywords: "comp off compensatory weekend holiday worked" },
-    me && { label: "Encash leave", href: "/me/leave?encash=1", keywords: "encash encashment sell leave" },
-=======
     can(viewer, P.REPORT_VIEW) && { label: "Reports", href: "/reports", keywords: "employee reports export" },
     can(viewer, P.ANALYTICS_VIEW) && { label: "Org analytics", href: "/analytics", keywords: "analytics headcount attrition dashboard" },
     can(viewer, P.ANALYTICS_VIEW) && { label: "Attrition storyboard", href: "/storyboards/attrition", keywords: "attrition storyboard exits" },
@@ -375,7 +328,7 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     can(viewer, P.ATTENDANCE_APPROVE) && { label: "Attendance approvals", href: "/team/attendance", keywords: "attendance regularize approve" },
     can(viewer, P.OPPORTUNITY_MANAGE) && { label: "Add opportunity", href: "/projects/opportunities?new=1", keywords: "opportunity pipeline deal" },
     can(viewer, P.RESOURCE_VIEW) && { label: "Resource planner", href: "/projects/resources", keywords: "resource allocation bench planner" },
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
+    me && { label: "Take a survey", href: "/engage/surveys", keywords: "survey poll pulse feedback enps" },
   ];
   return list.filter((x): x is { label: string; href: string; keywords: string } => !!x);
 }

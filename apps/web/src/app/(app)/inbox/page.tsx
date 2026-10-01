@@ -5,7 +5,8 @@ import { IconCheck } from "@/components/icons";
 import { EmptyState } from "@/components/keka";
 import { CategoryPane, DetailEmpty, InboxFrame, ListPane, hrefFor, readNav, sortByDate } from "./_ui/panes";
 import { matches } from "./_ui/format";
-import { takeActionSources } from "./_take/sources";
+import { takeActionSources } from "./_take/registry";
+import { BulkScope, BulkSwap } from "./_ui/bulk";
 
 /**
  * Inbox → Take Action. Everything waiting on the viewer, by category, in
@@ -58,11 +59,23 @@ export default async function TakeActionPage({ searchParams }: { searchParams: P
     );
   }
 
-  return (
-    <InboxFrame categories={<CategoryPane heading="Take action" nav={view}
-      categories={visible.map((x) => ({ key: x.src.key, label: x.src.label, icon: x.src.icon, count: x.count, hot: x.count > 0 }))} />}>
-      <ListPane label={active.src.label} nav={view} items={items} activeId={detail ? selectedId : nav.id}
-        empty={`Nothing in ${active.src.label.toLowerCase()} is waiting on you.`} />
+  const categories = <CategoryPane heading="Pending tasks" nav={view}
+    categories={visible.map((x) => ({ key: x.src.key, label: x.src.label, icon: x.src.icon, count: x.count, hot: x.count > 0 }))} />;
+  const list = (
+    <ListPane label={active.src.label} nav={view} items={items} activeId={detail ? selectedId : nav.id}
+      empty={`Nothing in ${active.src.label.toLowerCase()} is waiting on you.`} selectable={!!active.src.bulk && items.length > 0} />
+  );
+  // Categories that support Approve all get Keka's checkboxes and bulk card.
+  return active.src.bulk ? (
+    <InboxFrame categories={categories}>
+      <BulkScope entity={active.src.bulk.entity} noun={active.src.bulk.noun} ids={items.map((it) => it.id)}>
+        {list}
+        <BulkSwap>{right}</BulkSwap>
+      </BulkScope>
+    </InboxFrame>
+  ) : (
+    <InboxFrame categories={categories}>
+      {list}
       {right}
     </InboxFrame>
   );

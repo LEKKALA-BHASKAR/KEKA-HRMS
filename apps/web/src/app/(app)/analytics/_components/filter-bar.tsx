@@ -100,11 +100,13 @@ function DateRange({ value, label, ranges }: { value: string; label: string; ran
   useOutside(ref, () => setOpen(false));
   return (
     <div className={s.fcell} ref={ref}>
-      <button type="button" className={`${s.fbtn} ${s.fbtnOn}`} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <span style={{ minWidth: 0 }}>
-          <span className={s.fsmall}>Date Range</span>
-          <span className={s.fval} title={label}>{label}</span>
-        </span>
+      <button type="button" className={`${s.fbtn}${value ? ` ${s.fbtnOn}` : ""}`} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        {value ? (
+          <span style={{ minWidth: 0 }}>
+            <span className={s.fsmall}>Date Range</span>
+            <span className={s.fval} title={label}>{label}</span>
+          </span>
+        ) : <span>{label}</span>}
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className={s.chev} aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M8 3v4M16 3v4M4 10h16" /></svg>
       </button>
       {open ? (

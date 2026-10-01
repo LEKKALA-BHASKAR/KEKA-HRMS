@@ -126,6 +126,7 @@ export const PERMISSIONS = {
 
   // --- People analytics ---------------------------------------------------
   ANALYTICS_VIEW: "analytics.dashboard.view",
+  ATTRITION_RISK_VIEW: "analytics.risk.view",
 
   // --- Contracts and letters ---------------------------------------------
   CONTRACT_VIEW: "document.contract.view",
@@ -187,8 +188,6 @@ export const PERMISSIONS = {
   AUTH_SETTINGS_MANAGE: "admin.auth.manage",
   AUDIT_LOG_VIEW: "admin.audit.view",
   REPORT_VIEW: "admin.report.view",
-  ANALYTICS_VIEW: "analytics.org.view",
-  ATTRITION_RISK_VIEW: "analytics.risk.view",
   REPORT_BUILD: "admin.report.build",
   API_KEY_MANAGE: "admin.apikey.manage",
   WEBHOOK_MANAGE: "admin.webhook.manage",
@@ -416,6 +415,7 @@ export const PERMISSION_GROUPS: Array<{
     label: "People Analytics",
     permissions: [
       { key: PERMISSIONS.ANALYTICS_VIEW, label: "View workforce dashboards" },
+      { key: PERMISSIONS.ATTRITION_RISK_VIEW, label: "View attrition risk" },
     ],
   },
   {
@@ -449,8 +449,6 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.AUTH_SETTINGS_MANAGE, label: "Manage authentication" },
       { key: PERMISSIONS.AUDIT_LOG_VIEW, label: "View audit logs" },
       { key: PERMISSIONS.REPORT_VIEW, label: "View reports" },
-      { key: PERMISSIONS.ANALYTICS_VIEW, label: "View organisation analytics" },
-      { key: PERMISSIONS.ATTRITION_RISK_VIEW, label: "View attrition risk" },
       { key: PERMISSIONS.REPORT_BUILD, label: "Build custom reports" },
       { key: PERMISSIONS.API_KEY_MANAGE, label: "Manage API keys" },
       { key: PERMISSIONS.WEBHOOK_MANAGE, label: "Manage webhooks" },

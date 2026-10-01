@@ -214,14 +214,12 @@ model Tenant {
   analyticsComments   AnalyticsComment[]
   storyboardShares    StoryboardShare[]
 
-  surveys Survey[]
-  courses Course[]
-  courseEnrolments CourseEnrolment[]
-  careerPaths CareerPath[]
-  compOffRequests CompOffRequest[]
-  leaveEncashmentRequests LeaveEncashmentRequest[]
+  surveys           Survey[]
+  courses           Course[]
+  courseEnrolments  CourseEnrolment[]
+  careerPaths       CareerPath[]
   probationPolicies ProbationPolicy[]
-  probations EmployeeProbation[]
+  probations        EmployeeProbation[]
 
   @@index([subdomain])
   @@map("tenants")

@@ -201,17 +201,15 @@ model Employee {
   journeys           Journey[]
   helpdeskTickets    HelpdeskTicket[]
 
-<<<<<<< HEAD
+  // --- Engagement, learning, careers (14-engage-learn) and probation (15) ---
   surveyParticipations SurveyParticipant[]
-  surveyResponses    SurveyResponse[]
-  courseEnrolments   CourseEnrolment[]
-  careerAspiration   CareerAspiration?
-  compOffRequests    CompOffRequest[]
-  leaveEncashments   LeaveEncashmentRequest[]
+  surveyResponses      SurveyResponse[]
+  courseEnrolments     CourseEnrolment[]
+  careerAspiration     CareerAspiration?
 
-  probation          EmployeeProbation?
-  probationReviews   ProbationEvaluation[] @relation("ProbationEvaluator")
-=======
+  probation        EmployeeProbation?
+  probationReviews ProbationEvaluation[] @relation("ProbationEvaluator")
+
   // --- Keka parity: Home, Wall and profile (15-engage) ---
   wallPosts      WallPost[]      @relation("WallPostAuthor")
   wishesReceived WallPost[]      @relation("WallWishFor")
@@ -240,7 +238,6 @@ model Employee {
 
   // --- Keka parity: Analytics (22-analytics) ---
   attritionRiskScores AttritionRiskScore[]
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])

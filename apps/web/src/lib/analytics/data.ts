@@ -418,3 +418,25 @@ export function computedSummary(d: Digest): string[] {
 }
 
 export function dayString(d: Date): string { return utcDay(d).toISOString().slice(0, 10); }
+
+/** Any chart by its key, for the raw-data drawer and the export route. */
+export function chartByKey(key: string, pop: PopEmployee[], w: Window, f: AnalyticsFilters, opts: { measure?: "count" | "pct"; groupBy?: Dimension | null; asOf?: Date } = {}): ChartData | null {
+  if (key.startsWith("hc-")) return headcountChart(key, pop, opts.asOf ? { from: opts.asOf, to: opts.asOf } : w);
+  if (key === "gr-growth" || key === "gr-flow" || key === "gr-retained" || key === "gr-leavers") {
+    const g = growthData(pop, w);
+    if (key === "gr-growth") return g.growthChart;
+    if (key === "gr-flow") return g.flowChart;
+    const base = { info: "", kind: "bar" as ChartKind, rows: [] as ChartRow[] };
+    return key === "gr-retained"
+      ? { ...base, key, title: "Retained employees", raw: g.retained, rawLabel: "Department" }
+      : { ...base, key, title: "Employees who left", raw: g.leaversRaw, rawLabel: "Last working day" };
+  }
+  if (key.startsWith("at-")) return attritionChart(key.slice(3), pop, w, f, opts.measure ?? "count");
+  if (key.startsWith("sb-")) return attritionWidget(key.slice(3), pop, w, f, opts.groupBy ?? null);
+  if (key.startsWith("hb-")) return headcountWidget(key.slice(3), pop, w, f, opts.groupBy ?? null);
+  return null;
+}
+
+export function parseGroupBy(v: unknown): Dimension | null {
+  return typeof v === "string" && GROUP_BYS.some((g) => g.value === v) ? (v as Dimension) : null;
+}
