@@ -108,7 +108,9 @@ export async function ipLimited(ip: string | null): Promise<boolean> {
 export async function emailLocked(tenantId: string, email: string, policy: SecurityPolicy): Promise<{ locked: boolean; minutesLeft: number }> {
   const since = new Date(Date.now() - policy.lockoutMinutes * 60_000);
   const recent = await prisma.loginEvent.findMany({
-    where: { tenantId, email, createdAt: { gte: since } },
+    // Only wrong passwords and successes decide a lock: attempts refused while
+    // locked must not push the failures out of the window and reopen it.
+    where: { tenantId, email, createdAt: { gte: since }, OR: [{ success: true }, { outcome: "BAD_CREDENTIALS" }] },
     orderBy: { createdAt: "desc" }, take: policy.maxFailedAttempts,
     select: { success: true, outcome: true, createdAt: true },
   });

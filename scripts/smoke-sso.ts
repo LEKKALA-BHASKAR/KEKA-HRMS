@@ -60,7 +60,12 @@ async function main() {
     const res = await callback.GET(req(`/auth/sso/callback?code=${code}&state=${state}`));
     return res.headers.get("location") ?? "";
   };
-  const cleanup = () => prisma.ssoConnection.deleteMany({ where: { tenantId: tenant.id } });
+  const started = new Date();
+  const cleanup = async () => {
+    await prisma.ssoConnection.deleteMany({ where: { tenantId: tenant.id } });
+    // Sign-in events from this run would count toward other suites' lockouts.
+    await prisma.loginEvent.deleteMany({ where: { tenantId: tenant.id, createdAt: { gte: started } } });
+  };
   await cleanup();
   try {
     section("Setup");
