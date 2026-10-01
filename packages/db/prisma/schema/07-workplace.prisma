@@ -594,15 +594,33 @@ model GeneratedDocument {
   /// not rewrite history.
   renderedBody String
   fileUrl      String?
-  /// DRAFT | PENDING_APPROVAL | PENDING_SIGNATURE | ISSUED | ACKNOWLEDGED
+  /// PENDING_APPROVAL | PENDING_ACKNOWLEDGEMENT | PENDING_SIGNATURE | ISSUED |
+  /// ACKNOWLEDGED | SIGNED | REJECTED | VOID
   status       String  @default("ISSUED")
+  /// The template's workflow when this letter was generated, e.g. "APPROVE,SIGN".
+  workflow     String?
+  /// SHA-256 of renderedBody, checked again when the letter is signed.
+  contentHash  String?
 
-  issuedOn       DateTime  @default(now())
-  issuedBy       String?
-  acknowledgedAt DateTime?
-  signedAt       DateTime?
+  issuedOn        DateTime  @default(now())
+  issuedBy        String?
+  /// User who generated it; an approver must be someone else.
+  issuedByUserId  String?
+  approvedBy      String?
+  approvedAt      DateTime?
+  decisionNote    String?
+  acknowledgedAt  DateTime?
+  signedAt        DateTime?
+  /// What the employee typed as their name, and the drawn signature file.
+  signerName      String?
+  signatureFileId String?
+  signedIp        String?
+  signedUserAgent String?
+  voidedAt        DateTime?
+  voidReason      String?
 
   @@index([employeeId])
+  @@index([status])
   @@index([templateId])
   @@map("generated_documents")
 }

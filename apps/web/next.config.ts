@@ -48,7 +48,15 @@ const config: NextConfig = {
         ? [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" }]
         : []),
     ];
-    return [{ source: "/:path*", headers }];
+    return [
+      { source: "/:path*", headers },
+      // Printable letters carry template HTML: no scripts at all. Later
+      // entries win for the same header key.
+      {
+        source: "/documents/letters/:id/print",
+        headers: [{ key: "Content-Security-Policy", value: "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" }],
+      },
+    ];
   },
 };
 

@@ -2,7 +2,7 @@
 
 import { prisma } from "@keka/db";
 import { PERMISSIONS as P, canAccessEmployee, type Permission } from "@keka/rbac";
-import { markJoined, markNoShow, initiateBgv, updateBgv, type BgvStatus } from "@keka/services";
+import { markJoined, markNoShow, initiateBgv, updateBgv, usersWithPermission, type BgvStatus } from "@keka/services";
 import { requireAuth } from "@/lib/context";
 import { saveFile, sniffUpload } from "@/lib/storage";
 import { actionDone as done, writeAudit, type ActionState } from "@/lib/forms";
@@ -60,10 +60,10 @@ export async function updateBgvAction(_prev: ActionState, formData: FormData): P
     const stored = await saveFile({ tenantId: viewer.tenantId, filename: file.name || "bgv-report.pdf", mimeType: sniff.mimeType, data, relatedType: "BgvReport", employeeId: row.employeeId, uploadedBy: viewer.user.id });
     reportUrl = `/files/${stored.id}`;
   }
-  const hr = await prisma.userRoleAssignment.findMany({ where: { role: { tenantId: viewer.tenantId, permissions: { some: { permission: P.BGV_MANAGE } } } }, select: { userId: true }, take: 20 }).catch(() => [] as { userId: string }[]);
+  const hr = await usersWithPermission(viewer.tenantId, P.BGV_MANAGE);
   const res = await updateBgv({
     tenantId: viewer.tenantId, id: row.id, status: String(formData.get("status") ?? "") as BgvStatus,
-    findings: String(formData.get("findings") ?? "") || null, reportUrl, notifyUserIds: hr.map((h) => h.userId).filter((u) => u !== viewer.user.id),
+    findings: String(formData.get("findings") ?? "") || null, reportUrl, notifyUserIds: hr.filter((u) => u !== viewer.user.id),
   });
   if (!res.ok) return res;
   await writeAudit(viewer, { module: "LIFECYCLE", action: "UPDATE", entityType: "BgvCheck", entityId: row.id, summary: res.message });
