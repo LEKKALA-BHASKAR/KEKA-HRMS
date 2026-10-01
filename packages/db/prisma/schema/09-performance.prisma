@@ -224,6 +224,8 @@ model ReviewCycle {
   anonymousFeedback Boolean @default(true)
   /// Most peers one employee can have giving feedback.
   maxPeers          Int     @default(3)
+  /// Review-to-pay: [{ bandId, incrementPercent, bonusPercent }].
+  meritMatrix       Json?
 
   /// Eligibility filters for who is included.
   eligibility Json?
@@ -232,8 +234,9 @@ model ReviewCycle {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  reviews EmployeeReview[]
-  bands   PerformanceBand[]
+  reviews       EmployeeReview[]
+  bands         PerformanceBand[]
+  compProposals CompensationProposal[]
 
   @@unique([tenantId, name])
   @@index([tenantId, status])
@@ -469,4 +472,41 @@ model Feedback {
   @@index([tenantId, aboutEmployeeId])
   @@index([fromEmployeeId])
   @@map("feedback")
+}
+
+/// A salary increase and bonus proposed for one employee from their
+/// calibrated review. Applying it creates the salary revision (through the
+/// pay group's compensation approval chain) and schedules the bonus.
+model CompensationProposal {
+  id         String      @id @default(cuid())
+  tenantId   String
+  cycleId    String
+  cycle      ReviewCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  reviewId   String      @unique
+  employeeId String
+  employee   Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  bandName           String?
+  currentCtc         Decimal @db.Decimal(18, 2)
+  recommendedPercent Decimal @db.Decimal(9, 2)
+  proposedPercent    Decimal @db.Decimal(9, 2)
+  proposedCtc        Decimal @db.Decimal(18, 2)
+  bonusAmount        Decimal @default(0) @db.Decimal(18, 2)
+  /// Needed when the proposal departs from the merit matrix.
+  note               String?
+  /// DRAFT | APPLIED | SKIPPED
+  status             String  @default("DRAFT")
+
+  proposedBy       String?
+  appliedAt        DateTime?
+  appliedBy        String?
+  salaryRevisionId String?
+  bonusId          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([cycleId, status])
+  @@index([tenantId])
+  @@map("compensation_proposals")
 }

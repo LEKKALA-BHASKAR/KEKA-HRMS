@@ -180,6 +180,7 @@ model Employee {
   referredCandidates   Candidate[]         @relation("CandidateReferral")
   interviewPanels      InterviewPanelist[]
   bgvChecks            BgvCheck[]
+  compProposals        CompensationProposal[]
 
   // --- Performance (09) ---
   goals            Goal[]

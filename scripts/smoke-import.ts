@@ -92,6 +92,10 @@ async function main() {
   } finally {
     const created = await ours();
     const userIds = created.map((e) => e.userId).filter((x): x is string => !!x);
+    // Salary imports can open approval requests; they hold no foreign key, so remove them with the employees.
+    const ids = new Set(created.map((e) => e.id));
+    const reqs = await prisma.payrollApprovalRequest.findMany({ where: { action: "COMPENSATION_CHANGE", runId: null }, select: { id: true, payload: true } });
+    await prisma.payrollApprovalRequest.deleteMany({ where: { id: { in: reqs.filter((r) => ids.has(String((r.payload as { employeeId?: string } | null)?.employeeId))).map((r) => r.id) } } });
     await prisma.employee.updateMany({ where: { id: { in: created.map((e) => e.id) } }, data: { reportingManagerId: null } });
     await prisma.employee.deleteMany({ where: { id: { in: created.map((e) => e.id) } } });
     await prisma.user.deleteMany({ where: { id: { in: userIds } } });
