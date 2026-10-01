@@ -55,16 +55,18 @@ export async function applyCandidate(input: {
   currentAnnualCtc?: number | null; expectedAnnualCtc?: number | null; noticePeriodDays?: number | null;
   source?: "CAREER_PORTAL" | "REFERRAL" | "INTERNAL" | "JOB_BOARD" | "AGENCY" | "DIRECT_SOURCING" | "WALK_IN";
   referredById?: string | null; byUserId?: string | null;
+  /** False from the public careers site: an applicant cannot edit someone else's record by typing their email. */
+  updateExisting?: boolean;
 }): Promise<Result & { applicationId?: string }> {
   const job = await prisma.job.findFirst({ where: { id: input.jobId, tenantId: input.tenantId }, include: { flow: { include: { stages: { orderBy: { sequence: "asc" } } } } } });
   if (!job) return { ok: false, message: "Job not found." };
   if (job.status !== "OPEN") return { ok: false, message: "This job is not open." };
   const email = input.email.trim().toLowerCase();
-  const { tenantId, jobId, byUserId, ...fields } = input;
+  const { tenantId, jobId, byUserId, updateExisting = true, ...fields } = input;
   const candidate = await prisma.candidate.upsert({
     where: { tenantId_email: { tenantId, email } },
     create: { ...fields, email, tenantId },
-    update: { phone: fields.phone ?? undefined, currentEmployer: fields.currentEmployer ?? undefined, currentTitle: fields.currentTitle ?? undefined, expectedAnnualCtc: fields.expectedAnnualCtc ?? undefined },
+    update: updateExisting ? { phone: fields.phone ?? undefined, currentEmployer: fields.currentEmployer ?? undefined, currentTitle: fields.currentTitle ?? undefined, expectedAnnualCtc: fields.expectedAnnualCtc ?? undefined } : {},
   });
   if (candidate.convertedEmployeeId) return { ok: false, message: "This person is already an employee; use internal mobility instead." };
   const existing = await prisma.application.findUnique({ where: { jobId_candidateId: { jobId, candidateId: candidate.id } } });

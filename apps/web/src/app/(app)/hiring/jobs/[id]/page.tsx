@@ -39,7 +39,7 @@ export default async function JobPage({ params, searchParams }: { params: Promis
         <div>
           <div className={s.crumbs}><Link href="/hiring/jobs">Jobs</Link><span className="subtle">›</span><span className={s.crumbStage}>{job.code}</span></div>
           <h1 className={s.h1} style={{ marginTop: 6 }}>{job.title}</h1>
-          <p className={s.sub}>{job.openings} opening{job.openings === 1 ? "" : "s"}{job.maxAnnualCtc ? ` · budget up to ${rupees(job.maxAnnualCtc)}` : ""}{job.requisition ? <> · from <Link className={s.reqLink} href={`/hiring/requisitions?req=${job.requisition.id}`}>{job.requisition.code}</Link></> : null}</p>
+          <p className={s.sub}>{job.openings} opening{job.openings === 1 ? "" : "s"}{job.maxAnnualCtc ? ` · budget up to ${rupees(job.maxAnnualCtc)}` : ""}{job.requisition ? <> · from <Link className={s.reqLink} href={`/hiring/requisitions?req=${job.requisition.id}`}>{job.requisition.code}</Link></> : null}{job.status === "OPEN" && job.isPublished ? <> · <a className={s.reqLink} href={`/careers/${job.id}`} target="_blank" rel="noreferrer">on the careers site</a></> : null}</p>
         </div>
         <div className={s.headActions}>
           <span className={`${s.statusChip} ${job.status === "OPEN" ? s.good : ""}`}>{job.status.toLowerCase().replace("_", " ")}</span>
