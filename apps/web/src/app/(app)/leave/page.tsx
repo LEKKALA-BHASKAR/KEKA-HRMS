@@ -4,10 +4,11 @@ import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatDate, utcDate, fyStartYear } from "@keka/shared";
 import { requireAuth, can, canAny } from "@/lib/context";
+import { runLeaveYearEnd } from "@keka/services";
 import { scopedEmployeeIds, scopedEmployeeWhere, inScope, parseMonth, monthKey, shiftMonth } from "@/lib/scope";
 import { PageHead, Card, Badge, Empty, Person, Stat, Callout } from "@/components/ui";
 import {
-  ApplyLeaveForm, DecisionForm, CancelLeaveButton, AdjustBalanceForm, AccrualForm,
+  ApplyLeaveForm, DecisionForm, CancelLeaveButton, AdjustBalanceForm, AccrualForm, YearEndButton,
   LeaveTypeForm, DeleteLeaveTypeButton, LeavePlanForm, AssignPlanForm,
   AddHolidayForm, DeleteHolidayButton, AddCalendarForm, type LeaveTypeValues,
 } from "../_time/leave-forms";
@@ -15,11 +16,11 @@ import { Disclosure } from "../org/forms";
 
 const P = PERMISSIONS;
 const n = (v: unknown) => Number(v ?? 0);
-const TABS = ["requests", "balances", "calendar", "types", "plans", "holidays", "accrual"] as const;
+const TABS = ["requests", "balances", "calendar", "types", "plans", "holidays", "accrual", "yearend"] as const;
 type Tab = (typeof TABS)[number];
 const LABEL: Record<Tab, string> = {
   requests: "Requests", balances: "Balances", calendar: "Team calendar", types: "Leave types",
-  plans: "Leave plans", holidays: "Holidays", accrual: "Accrual & ledger",
+  plans: "Leave plans", holidays: "Holidays", accrual: "Accrual & ledger", yearend: "Year end",
 };
 
 export default async function LeaveAdminPage({
@@ -31,7 +32,7 @@ export default async function LeaveAdminPage({
 
   const sp = await searchParams;
   const manage = can(viewer, P.LEAVE_MANAGE);
-  const visible = TABS.filter((t) => manage || !["types", "plans", "accrual"].includes(t));
+  const visible = TABS.filter((t) => manage || !["types", "plans", "accrual", "yearend"].includes(t));
   const tab: Tab = visible.includes(sp.tab as Tab) ? (sp.tab as Tab) : "requests";
 
   const scopeIds = await scopedEmployeeIds(viewer, P.LEAVE_VIEW);
@@ -62,6 +63,7 @@ export default async function LeaveAdminPage({
       {tab === "plans" ? <PlansTab viewer={viewer} /> : null}
       {tab === "holidays" ? <HolidaysTab tenantId={viewer.tenantId} cal={sp.cal} canEdit={can(viewer, P.HOLIDAY_MANAGE)} /> : null}
       {tab === "accrual" ? <AccrualTab tenantId={viewer.tenantId} fyStartMonth={viewer.tenant.fyStartMonth} /> : null}
+      {tab === "yearend" ? <YearEndTab tenantId={viewer.tenantId} /> : null}
     </>
   );
 }
@@ -526,6 +528,79 @@ async function HolidaysTab({ tenantId, cal, canEdit }: { tenantId: string; cal?:
           </div>
         )}
         {canEdit && selected ? <AddHolidayForm calendarId={selected.id} year={selected.year} /> : null}
+      </Card>
+    </div>
+  );
+}
+
+const ACTION_LABEL: Record<string, string> = {
+  RESET: "Lapses", PAY_ALL: "Paid out", CARRY_FORWARD_ALL: "Carries forward",
+  PAY_THEN_CARRY_FORWARD: "Paid out, then carried", CARRY_FORWARD_THEN_PAY: "Carried, then paid out",
+};
+
+async function YearEndTab({ tenantId }: { tenantId: string }) {
+  // A dry run: exactly what the nightly job would post today.
+  const [preview, types, recent] = await Promise.all([
+    runLeaveYearEnd({ tenantId, apply: false }),
+    prisma.leaveType.findMany({ where: { tenantId, isUnlimited: false, category: { not: "COMP_OFF" } }, orderBy: { name: "asc" } }),
+    prisma.leaveLedgerEntry.groupBy({ by: ["kind"], where: { tenantId, periodKey: { startsWith: "YEAREND:" }, createdAt: { gte: new Date(Date.now() - 400 * 86_400_000) } }, _sum: { days: true }, _count: { _all: true } }),
+  ]);
+  const emps = preview.rows.length;
+  const tot = (f: (r: (typeof preview.rows)[number]) => number) => Math.round(preview.rows.reduce((s, r) => s + f(r), 0) * 100) / 100;
+  const done = (k: string) => Math.abs(n(recent.find((r) => r.kind === k)?._sum.days));
+  return (
+    <div className="stack gap-4">
+      <div className="grid grid-4">
+        <Stat label="Balances to close" value={String(emps)} meta="leave years that have ended" />
+        <Stat label="Would carry forward" value={tot((r) => Math.max(0, r.carry)).toFixed(1)} meta="days" />
+        <Stat label="Would pay out" value={tot((r) => r.pay).toFixed(1)} meta={`₹${tot((r) => r.amount).toLocaleString("en-IN")} through payroll`} />
+        <Stat label="Would lapse" value={(tot((r) => r.lapse) + preview.expiredDays).toFixed(1)} meta={preview.expired ? `incl. ${preview.expiredDays} expired carry-forward` : "days"} />
+      </div>
+      <div className="grid grid-2" style={{ alignItems: "start" }}>
+        <Card title="Close ended leave years" description="Each leave type's year-end rule decides what happens to unused days. Carried days land in the new year's balance, payouts are added to the next open payroll as taxable leave encashment, and every movement is on the ledger.">
+          <YearEndButton pending={emps} />
+        </Card>
+        <Card tight title="Year-end rule by leave type">
+          <div className="table-wrap">
+            <table className="data">
+              <thead><tr><th>Leave type</th><th>At year end</th><th className="num">Carry cap</th><th className="num">Pay cap</th><th className="num">Carried days expire</th></tr></thead>
+              <tbody>
+                {types.map((t) => (
+                  <tr key={t.id}>
+                    <td className="strong">{t.name}</td>
+                    <td>{ACTION_LABEL[t.yearEndAction] ?? t.yearEndAction}{t.yearEndAction.includes("PAY") && !t.encashmentEnabled ? <div className="text-xs subtle">encashment off, so nothing is paid</div> : null}</td>
+                    <td className="num">{t.carryForwardMax === null ? "—" : n(t.carryForwardMax)}</td>
+                    <td className="num">{t.encashmentMaxDaysPerYear === null ? "—" : n(t.encashmentMaxDaysPerYear)}</td>
+                    <td className="num">{t.carryForwardExpiryDays ? `after ${t.carryForwardExpiryDays} days` : "never"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+      <Card tight title="What closing would do" description={recent.length ? `Closed in the last year: ${done("ENCASHMENT")} day(s) paid out and ${done("LAPSE")} lapsed.` : "Nothing has been closed yet."}>
+        {preview.rows.length === 0 ? <Empty title="Every ended leave year is already closed" /> : (
+          <div className="table-wrap">
+            <table className="data">
+              <thead><tr><th>Employee</th><th>Leave type</th><th>Year</th><th className="num">Unused</th><th className="num">Carry</th><th className="num">Pay</th><th className="num">Lapse</th><th className="num">Amount</th></tr></thead>
+              <tbody>
+                {preview.rows.slice(0, 200).map((r) => (
+                  <tr key={`${r.employeeId}:${r.leaveTypeId}:${r.yearStart.toISOString()}`}>
+                    <td>{r.employeeName} <span className="subtle text-xs">{r.employeeNumber}</span></td>
+                    <td>{r.leaveType}</td>
+                    <td className="nowrap">{formatDate(r.yearStart)} – {formatDate(new Date(r.nextYear.getTime() - 86_400_000))}</td>
+                    <td className="num">{r.available}</td>
+                    <td className="num">{r.carry || "—"}</td>
+                    <td className="num">{r.pay || "—"}</td>
+                    <td className="num">{r.lapse || "—"}</td>
+                    <td className="num">{r.amount ? `₹${r.amount.toLocaleString("en-IN")}` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </div>
   );

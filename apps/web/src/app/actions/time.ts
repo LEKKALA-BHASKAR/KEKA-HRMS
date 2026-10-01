@@ -6,7 +6,7 @@ import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import {
   applyLeave, previewLeave, decideLeave, cancelLeave, adjustBalance, runAccrual,
   recordPunch, raiseAttendanceRequest, decideAttendanceRequest, processAttendance,
-  notifyTimeRequest, lapseExpiredCompOffs,
+  notifyTimeRequest, lapseExpiredCompOffs, runLeaveYearEnd,
 } from "@keka/services";
 import { formatDate } from "@keka/shared";
 import { foreignReference } from "@/lib/ownership";
@@ -767,4 +767,19 @@ export async function assignTimePolicy(_prev: ActionState, formData: FormData): 
     summary: `Assigned a time policy to ${employeeIds.length} employee(s) from ${effectiveFrom.toISOString().slice(0, 10)}`,
   });
   return done(["/attendance"], `Assigned to ${employeeIds.length} employee(s) from ${effectiveFrom.toISOString().slice(0, 10)}.`);
+}
+
+/** Close every ended leave year now: carry forward, pay out or lapse, per each type's year-end rule. */
+export async function runLeaveYearEndAction(_prev: ActionState, _formData: FormData): Promise<ActionState> {
+  const viewer = await requireAuth(P.LEAVE_MANAGE);
+  const r = await runLeaveYearEnd({ tenantId: viewer.tenantId, apply: true, byUserId: viewer.user.id });
+  const carried = r.rows.reduce((s, x) => s + Math.max(0, x.carry), 0);
+  const paid = r.rows.reduce((s, x) => s + x.pay, 0);
+  const lapsed = r.rows.reduce((s, x) => s + x.lapse, 0) + r.expiredDays;
+  if (r.closed === 0 && r.expired === 0) return { ok: true, message: "Nothing to close — every ended leave year is already settled." };
+  await writeAudit(viewer, {
+    module: "LEAVE", action: "UPDATE", entityType: "LeaveYearEnd",
+    summary: `Closed ${r.closed} leave balance(s): ${carried} day(s) carried forward, ${paid} paid out, ${Math.round(lapsed * 100) / 100} lapsed`,
+  });
+  return done(["/leave", "/me/leave"], `Closed ${r.closed} balance(s): ${carried} day(s) carried forward, ${paid} paid out (${r.paid} payment(s) added to payroll), ${Math.round(lapsed * 100) / 100} lapsed.`);
 }
