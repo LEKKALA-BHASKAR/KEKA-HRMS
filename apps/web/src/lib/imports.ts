@@ -9,7 +9,7 @@ import type { ImportColumn } from "@keka/services";
 
 const P = PERMISSIONS;
 
-export type ImportKind = "employees" | "leave-balances" | "salaries" | "bank-accounts";
+export type ImportKind = "employees" | "leave-balances" | "salaries" | "bank-accounts" | "bonuses";
 
 export const IMPORTS: Record<ImportKind, { label: string; description: string; permission: Permission; columns: ImportColumn[] }> = {
   employees: {
@@ -72,6 +72,18 @@ export const IMPORTS: Record<ImportKind, { label: string; description: string; p
       { key: "branch", label: "Branch", example: "Koramangala" },
       { key: "account_holder", label: "Account holder", example: "Asha Pillai" },
       { key: "primary", label: "Primary", hint: "yes or no; defaults to yes", example: "yes" },
+    ],
+  },
+  bonuses: {
+    label: "Bonuses",
+    description: "Bonuses for a payout month, for example after an appraisal cycle. Each row is scheduled as a single bonus would be, and that month's payroll run pays it.",
+    permission: P.PAYROLL_RUN,
+    columns: [
+      { key: "employee_number", label: "Employee number", required: true, example: "ACM0007" },
+      { key: "bonus_type", label: "Bonus type", required: true, hint: "Name as set up under Payroll › Bonuses", example: "Performance Bonus" },
+      { key: "amount", label: "Amount", required: true, example: "50000" },
+      { key: "payout_month", label: "Payout month", required: true, hint: "yyyy-mm, or any date in that month", example: "2026-11" },
+      { key: "note", label: "Note", example: "FY26 appraisal" },
     ],
   },
 };

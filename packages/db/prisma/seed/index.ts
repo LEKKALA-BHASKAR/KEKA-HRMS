@@ -19,6 +19,7 @@ import { seedHiring } from "./hiring";
 import { seedExpenses } from "./expenses";
 import { seedProjects } from "./projects";
 import { seedSelfService } from "./self-service";
+import { seedFinances } from "./finances";
 import { seedToday } from "./today";
 import { seedEngageLearn } from "./engage-learn";
 import { seedProbation } from "./probation";
@@ -872,6 +873,9 @@ async function main() {
 
   const ss = await seedSelfService(prisma, { tenantId: tenant.id });
   log("Self-service", `${ss.about} profiles introduced, ${ss.praise} praises and ${ss.feedback} feedback notes, ${ss.declarations} tax declarations`);
+
+  const fin = await seedFinances(prisma, { tenantId: tenant.id });
+  log("My finances", `${fin.bonuses} bonuses, ${fin.categories} loan categories and ${fin.loans} loans, ${fin.claims} benefit claims, ${fin.held} payslip held back`);
 
   const el = await seedEngageLearn(prisma, { tenantId: tenant.id, empIdByNumber });
   log("Engagement & learning", `${el.surveys} surveys and polls (${el.responses} responses), ${el.skills} skills on ${el.skillRows} profiles, ${el.paths} career paths, ${el.courses} courses with ${el.enrolments} enrolments; comp-off and ${el.encash} encashment awaiting a decision`);

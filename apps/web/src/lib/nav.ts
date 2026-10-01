@@ -261,6 +261,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     can(viewer, P.SALARY_STRUCTURE_MANAGE) && { label: "Salary Structures", href: "/payroll/structures" },
     can(viewer, P.STATUTORY_MANAGE) && { label: "Statutory", href: "/payroll/statutory" },
     can(viewer, P.STATUTORY_MANAGE) && { label: "Filings", href: "/payroll/filings" },
+    can(viewer, P.PAYROLL_RUN) && { label: "Bonuses", href: "/payroll/bonuses" },
     can(viewer, P.LOAN_MANAGE) && { label: "Loans", href: "/payroll/loans" },
     can(viewer, P.TAX_DECLARATION_APPROVE) && { label: "Tax Proofs", href: "/payroll/tax-proofs" },
     can(viewer, P.LEDGER_VIEW) && { label: "Accounting", href: "/accounting" },

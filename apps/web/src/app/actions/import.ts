@@ -7,6 +7,7 @@ import { writeAudit, actionDone as done, type ActionState } from "@/lib/forms";
 import { IMPORTS, IMPORT_KINDS, type ImportKind } from "@/lib/imports";
 import { createEmployee, reviseSalary, saveEmployeeBank } from "./employee";
 import { adjustBalanceAction } from "./time";
+import { scheduleBonusAction } from "./bonuses";
 
 /**
  * Bulk import from CSV.
@@ -39,7 +40,7 @@ function form(fields: Record<string, string | null | undefined | boolean>): Form
 
 /** Look records up by name (or code) without a query per row. */
 async function lookups(tenantId: string) {
-  const [entities, locations, departments, titles, payGroups, plans, leaveTypes, employees] = await Promise.all([
+  const [entities, locations, departments, titles, payGroups, plans, leaveTypes, employees, bonusTypes] = await Promise.all([
     prisma.legalEntity.findMany({ where: { tenantId }, select: { id: true, name: true } }),
     prisma.location.findMany({ where: { tenantId }, select: { id: true, name: true } }),
     prisma.department.findMany({ where: { tenantId }, select: { id: true, name: true } }),
@@ -48,13 +49,14 @@ async function lookups(tenantId: string) {
     prisma.leavePlan.findMany({ where: { tenantId }, select: { id: true, name: true } }),
     prisma.leaveType.findMany({ where: { tenantId }, select: { id: true, name: true, code: true } }),
     prisma.employee.findMany({ where: { tenantId }, select: { id: true, employeeNumber: true, workEmail: true } }),
+    prisma.bonusType.findMany({ where: { tenantId, isActive: true }, select: { id: true, name: true } }),
   ]);
   const byName = (rows: Array<{ id: string; name: string }>) => new Map(rows.map((r) => [lower(r.name), r.id]));
   const types = new Map<string, string>();
   for (const t of leaveTypes) { types.set(lower(t.name), t.id); types.set(lower(t.code), t.id); }
   return {
     entity: byName(entities), location: byName(locations), department: byName(departments), title: byName(titles),
-    payGroup: byName(payGroups), plan: byName(plans), leaveType: types,
+    payGroup: byName(payGroups), plan: byName(plans), leaveType: types, bonusType: byName(bonusTypes),
     employee: new Map(employees.map((e) => [lower(e.employeeNumber), e.id])),
     emails: new Set(employees.map((e) => e.workEmail ? lower(e.workEmail) : "").filter(Boolean)),
   };
@@ -171,6 +173,21 @@ function builders(l: Lookups): Record<ImportKind, Builder> {
         form: form({ employeeId: emp, bankName: v.bank_name, accountNumber: v.account_number.replace(/\s/g, ""), ifsc, branch: v.branch, accountHolder: v.account_holder, isPrimary: !!primary }),
       };
     },
+
+    async bonuses(v) {
+      const problems: string[] = [];
+      const emp = employeeId(v.employee_number ?? "");
+      if (!emp) problems.push(v.employee_number ? `No employee ${v.employee_number}` : "Employee number is required");
+      const type = ref(l.bonusType, v.bonus_type ?? "", "Bonus type", true);
+      if (type.error) problems.push(type.error);
+      const amount = normaliseAmount(v.amount ?? "");
+      if (!amount || Number(amount) <= 0) problems.push(v.amount ? `Amount “${v.amount}” must be a positive number` : "Amount is required");
+      const raw = (v.payout_month ?? "").trim();
+      const payout = /^\d{4}-\d{1,2}$/.test(raw) ? `${raw.slice(0, 4)}-${raw.slice(5).padStart(2, "0")}` : normaliseDate(raw)?.slice(0, 7) ?? null;
+      if (!payout || Number(payout.slice(5)) < 1 || Number(payout.slice(5)) > 12) problems.push(raw ? `Payout month “${raw}” should look like 2026-11` : "Payout month is required");
+      if (problems.length) return { error: problems.join("; ") };
+      return { label: `${v.employee_number} ${v.bonus_type}`, form: form({ employeeId: emp, bonusTypeId: type.id, amount, payout, note: v.note }) };
+    },
   };
 }
 
@@ -179,6 +196,7 @@ const RUN: Record<ImportKind, (prev: ActionState, f: FormData) => Promise<Action
   "leave-balances": adjustBalanceAction,
   salaries: reviseSalary,
   "bank-accounts": saveEmployeeBank,
+  bonuses: scheduleBonusAction,
 };
 
 async function readFile(formData: FormData): Promise<{ text?: string; error?: string }> {
@@ -245,11 +263,11 @@ export async function runImportAction(_prev: ImportResult, formData: FormData): 
     }
   }
   await writeAudit(viewer, {
-    module: kind === "leave-balances" ? "LEAVE" : kind === "employees" ? "EMPLOYEE" : "FINANCE",
+    module: kind === "leave-balances" ? "LEAVE" : kind === "employees" ? "EMPLOYEE" : kind === "bonuses" ? "PAYROLL" : "FINANCE",
     action: "CREATE", entityType: "BulkImport",
     summary: `Imported ${imported} of ${built.length} ${spec.label.toLowerCase()} row(s) from CSV${failures.length ? `; ${failures.length} refused` : ""}`,
   });
-  const result = done(["/admin/import", "/employees", "/leave"], failures.length
+  const result = done(["/admin/import", "/employees", "/leave", "/payroll/bonuses"], failures.length
     ? `Imported ${imported} of ${built.length} row(s). ${failures.length} were refused; fix those rows and import them again.`
     : `Imported all ${imported} row(s).`);
   return { ...result, ok: failures.length === 0, checked: built.length, imported, rowErrors: failures };

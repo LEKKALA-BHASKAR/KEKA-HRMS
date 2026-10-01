@@ -6,6 +6,8 @@ import {
   setPayAction, setLopAdjustment, addAdhoc, deleteAdhoc, setStatutoryOverride,
 } from "@/app/actions/payroll";
 import type { Viewer } from "@/lib/context";
+import { bonusesForRun } from "@keka/services";
+import { BonusDecision, ClaimDecision } from "../../_forms/bonuses";
 
 /**
  * The six run steps.
@@ -378,13 +380,7 @@ export async function Step3({ run, lines, editable }: StepProps) {
   const employeeIds = lines.map((l) => l.employeeId);
 
   const [bonuses, revisions, overtime, shiftAllowances] = await Promise.all([
-    prisma.employeeBonus.findMany({
-      where: { employeeId: { in: employeeIds }, payoutYear: run.year, payoutMonth: run.month },
-      include: {
-        bonusType: { select: { name: true, isTaxable: true } },
-        employee: { select: { displayName: true, employeeNumber: true } },
-      },
-    }),
+    bonusesForRun(run, employeeIds),
     prisma.salaryRevision.findMany({
       where: {
         employeeId: { in: employeeIds },
@@ -428,17 +424,24 @@ export async function Step3({ run, lines, editable }: StepProps) {
           <div className="table-wrap">
             <table className="data">
               <thead>
-                <tr><th>Employee</th><th>Type</th><th className="num">Amount</th><th className="num">Paying</th><th>Taxable</th><th>Action</th></tr>
+                <tr><th>Employee</th><th>Type</th><th className="num">Amount</th><th className="num">Paying</th><th>Taxable</th><th className="right">Action</th></tr>
               </thead>
               <tbody>
                 {bonuses.map((b) => (
                   <tr key={b.id}>
                     <td>{b.employee.displayName} <span className="mono text-xs subtle">{b.employee.employeeNumber}</span></td>
-                    <td>{b.bonusType.name}</td>
+                    <td>
+                      {b.bonusType.name}
+                      {b.payoutYear !== run.year || b.payoutMonth !== run.month ? <div className="text-xs subtle">Held since {formatPeriod(b.payoutYear, b.payoutMonth)}</div> : null}
+                    </td>
                     <td className="num"><Money value={b.amount} /></td>
-                    <td className="num strong"><Money value={b.paidAmount ?? b.amount} /></td>
+                    <td className="num strong">{["PAY", "PARTIALLY_PAY"].includes(b.payAction) && (b.payoutYear === run.year && b.payoutMonth === run.month) ? <Money value={b.paidAmount ?? b.amount} /> : "—"}</td>
                     <td>{b.bonusType.isTaxable ? <Badge tone="warning">Taxable</Badge> : <Badge tone="success">Exempt</Badge>}</td>
-                    <td><Badge tone="neutral">{b.payAction.replace(/_/g, " ").toLowerCase()}</Badge></td>
+                    <td className="right">
+                      {editable && !b.isProcessed
+                        ? <BonusDecision runId={run.id} bonusId={b.id} amount={Number(b.amount)} current={b.payAction} />
+                        : <Badge tone="neutral">{b.payAction.replace(/_/g, " ").toLowerCase()}</Badge>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -540,7 +543,7 @@ export async function Step3({ run, lines, editable }: StepProps) {
 //  Step 4 — Reimbursements, Ad-hoc Payments, Deductions
 // ===========================================================================
 
-export async function Step4({ run, lines, editable }: StepProps) {
+export async function Step4({ run, lines, editable, viewer }: StepProps & { viewer?: Viewer }) {
   const employeeIds = lines.map((l) => l.employeeId);
 
   const [claims, adhoc] = await Promise.all([
@@ -643,7 +646,7 @@ export async function Step4({ run, lines, editable }: StepProps) {
           <div className="table-wrap">
             <table className="data">
               <thead>
-                <tr><th>Employee</th><th>Component</th><th className="num">Claimed</th><th className="num">Payable</th><th>Tax treatment</th><th>Status</th></tr>
+                <tr><th>Employee</th><th>Component</th><th className="num">Claimed</th><th className="num">Payable</th><th>Tax treatment</th><th>Status</th>{editable ? <th /> : null}</tr>
               </thead>
               <tbody>
                 {claims.map((c) => (
@@ -657,7 +660,15 @@ export async function Step4({ run, lines, editable }: StepProps) {
                         ? <Badge tone="success">Exempt — segregated payslip</Badge>
                         : <Badge tone="warning">Taxable</Badge>}
                     </td>
-                    <td><Badge tone={c.status === "APPROVED" ? "success" : "info"}>{c.status.toLowerCase()}</Badge></td>
+                    <td>
+                      <Badge tone={c.status === "APPROVED" ? "success" : "info"}>{c.status.toLowerCase()}</Badge>
+                      {c.reviewerNote ? <div className="text-xs muted">{c.reviewerNote}</div> : null}
+                    </td>
+                    {editable ? (
+                      <td className="right">
+                        {c.status === "SUBMITTED" && c.employeeId !== viewer?.employee?.id ? <ClaimDecision runId={run.id} claimId={c.id} claimed={Number(c.claimedAmount)} /> : null}
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>

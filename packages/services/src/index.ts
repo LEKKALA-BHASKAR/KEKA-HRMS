@@ -38,3 +38,4 @@ export * from "./document-requests";
 export * from "./leave-year-end-math";
 export * from "./leave-year-end";
 export * from "./proof-review";
+export * from "./bonuses";

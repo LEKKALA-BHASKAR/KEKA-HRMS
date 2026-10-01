@@ -241,7 +241,7 @@ export default async function PayrollRunPage({
       {step === 1 ? <Step1 run={run} lines={lines} editable={editable && canRun} /> : null}
       {step === 2 ? <Step2 run={run} lines={lines} editable={editable && canRun} /> : null}
       {step === 3 ? <Step3 run={run} lines={lines} editable={editable && canRun} /> : null}
-      {step === 4 ? <Step4 run={run} lines={lines} editable={editable && canRun} /> : null}
+      {step === 4 ? <Step4 run={run} lines={lines} editable={editable && canRun} viewer={viewer} /> : null}
       {step === 5 ? <Step5 run={run} lines={lines} editable={editable && canRun} /> : null}
       {step === 6 ? <Step6 run={run} lines={lines} editable={editable && canRun} viewer={viewer} /> : null}
 
