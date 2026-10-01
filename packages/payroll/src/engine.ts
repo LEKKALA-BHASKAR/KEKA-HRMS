@@ -260,7 +260,11 @@ export function calculatePayroll(input: CalculatePayrollInput): CalculatePayroll
 
     proratedByCode.set(c.code, amount);
 
-    if (!isStatutoryEmployerRow) {
+    // A flexible-benefit reimbursement is carved out of the CTC but paid
+    // only when claimed (as a component claim), never as a monthly line.
+    const isClaimOnly = c.type === "REIMBURSEMENT" && c.isPartOfFbp;
+
+    if (!isStatutoryEmployerRow && !isClaimOnly) {
       lines.push({
         code: c.code,
         name: c.name,

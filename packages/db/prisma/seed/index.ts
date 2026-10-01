@@ -413,6 +413,7 @@ async function main() {
         name: s.name, type: s.type,
         minAnnualCtc: s.minAnnualCtc, maxAnnualCtc: s.maxAnnualCtc,
         isDefault: s.isDefault ?? false,
+        isPartOfFbp: s.isPartOfFbp ?? false,
         pfEnabled: true, esiEnabled: true, tdsMethod: "AVERAGE",
         roundComponents: true,
         components: {

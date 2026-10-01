@@ -148,6 +148,7 @@ model Employee {
   adhocTransactions AdhocTransaction[]
   bonuses           EmployeeBonus[]
   componentClaims   ComponentClaim[]
+  fbpDeclarations   FbpDeclaration[]
   arrears           Arrear[]
   fnfSettlement     FnfSettlement?
   exitRecord        ExitRecord?

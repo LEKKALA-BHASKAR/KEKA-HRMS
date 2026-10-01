@@ -6,7 +6,8 @@ import {
 } from "@keka/payroll";
 import { daysInMonth, fyStartYear, endOfMonth, startOfMonth } from "@keka/shared";
 import { cappedDeductions } from "./declarations";
-import { previousIncomeApplies } from "./finances-math";
+import { claimEntitlement, previousIncomeApplies } from "./finances-math";
+import { fbpCarveSpecs, unclaimedFbp } from "./fbp-math";
 
 /**
  * The bridge between the database and the pure payroll engine.
@@ -280,6 +281,21 @@ export async function calculateRun(runId: string): Promise<{
   });
   const declarationOf = new Map(declarations.map((d) => [d.employeeId, d]));
 
+  // Flexible benefit declarations: carved out of salary each month, claimed
+  // back against bills, and what is left unclaimed paid in the year's last month.
+  const fbpDeclarations = await prisma.fbpDeclaration.findMany({
+    where: { employeeId: { in: employeeIds }, fyStartYear: fyStart },
+    include: { lines: { include: { component: { select: { code: true, name: true } } } } },
+  });
+  const fbpOf = new Map(fbpDeclarations.map((d) => [d.employeeId, d]));
+  const lastMonthOfFy = run.month === 3;
+  const fbpClaimed = lastMonthOfFy && fbpDeclarations.length
+    ? await prisma.componentClaim.findMany({
+        where: { employeeId: { in: fbpDeclarations.map((d) => d.employeeId) }, fyStartYear: fyStart, status: { in: ["APPROVED", "PAID"] } },
+        select: { employeeId: true, componentId: true, payableAmount: true, claimedAmount: true },
+      })
+    : [];
+
   const [lopAdjustments, arrears, bonuses, adhoc, claims, loanInstallments, overtime, shiftAllowances, priorRuns] =
     await Promise.all([
       prisma.lopAdjustment.findMany({
@@ -436,7 +452,23 @@ export async function calculateRun(runId: string): Promise<{
     }
 
     const revision = emp.salaryRevisions[0];
-    const specs = toStructureSpecs(revision);
+    const fbp = revision?.structure?.isPartOfFbp ? fbpOf.get(emp.id) : undefined;
+    const specs = fbp
+      ? [
+          ...toStructureSpecs(revision).filter((sc) => !(sc.type === "REIMBURSEMENT" && sc.isPartOfFbp)),
+          ...fbpCarveSpecs(fbp.lines.map((l) => ({ code: l.component.code, name: l.component.name, annual: Number(l.annualAmount) }))),
+        ]
+      : toStructureSpecs(revision);
+    let fbpUnclaimed = 0;
+    if (fbp && lastMonthOfFy) {
+      fbpUnclaimed = unclaimedFbp(fbp.lines.map((l) => {
+        const claimed = fbpClaimed
+          .filter((c) => c.employeeId === emp.id && c.componentId === l.componentId)
+          .reduce((t, c) => t + Number(c.payableAmount ?? c.claimedAmount), 0);
+        const ent = claimEntitlement({ annualLimit: Number(l.annualAmount), joinedOn: emp.dateOfJoining, lastWorkingDay: emp.lastWorkingDay, fy: fyStart, fyStartMonth: 4, today: run.periodEnd });
+        return { accrued: ent.accrued, claimed };
+      }));
+    }
     if (specs.length === 0) {
       allWarnings.push(`${emp.employeeNumber} ${emp.firstName} ${emp.lastName}: no salary structure assigned`);
     }
@@ -482,9 +514,12 @@ export async function calculateRun(runId: string): Promise<{
           (s, b) => s + Number(b.paidAmount ?? b.amount), 0),
         overtimeAmount: (otByEmp.get(emp.id) ?? []).reduce((s, o) => s + Number(o.amount), 0),
         shiftAllowance: (shiftByEmp.get(emp.id) ?? []).reduce((s, o) => s + Number(o.amount), 0),
-        adhocPayments: (adhocByEmp.get(emp.id) ?? [])
-          .filter((a) => a.type === "PAYMENT")
-          .map((a) => ({ name: a.name, amount: Number(a.amount), isTaxable: a.taxTreatment !== "NON_TAXABLE" })),
+        adhocPayments: [
+          ...(adhocByEmp.get(emp.id) ?? [])
+            .filter((a) => a.type === "PAYMENT")
+            .map((a) => ({ name: a.name, amount: Number(a.amount), isTaxable: a.taxTreatment !== "NON_TAXABLE" })),
+          ...(fbpUnclaimed > 0 ? [{ name: "Unclaimed flexible benefits", amount: fbpUnclaimed, isTaxable: true }] : []),
+        ],
         adhocDeductions: (adhocByEmp.get(emp.id) ?? [])
           .filter((a) => a.type === "DEDUCTION")
           .map((a) => ({ name: a.name, amount: Number(a.amount) })),

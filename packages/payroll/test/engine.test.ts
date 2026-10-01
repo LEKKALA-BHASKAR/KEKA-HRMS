@@ -135,6 +135,18 @@ const baseInput = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("Payroll engine", () => {
+  test("a flexible-benefit reimbursement shrinks the balance but is not paid monthly", () => {
+    const plain = calculatePayroll(baseInput() as never);
+    const fbp = calculatePayroll(baseInput({
+      structureComponents: [...STANDARD_STRUCTURE, {
+        code: "FUEL_REIMB", name: "Fuel", type: "REIMBURSEMENT", calculationType: "FIXED", fixedAmount: 2000,
+        isLopApplicable: false, affectsEsiGross: false, isPartOfFbp: true,
+      }],
+    }) as never);
+    assert.ok(!fbp.lines.some((l) => l.code === "FUEL_REIMB"));
+    assert.equal(plain.grossEarnings.minus(fbp.grossEarnings).toNumber(), 2000);
+  });
+
   test("full month, no LOP: gross, deductions and net all tie up", () => {
     const r = calculatePayroll(baseInput() as never);
 
