@@ -208,6 +208,12 @@ export async function eligibleEmployees(payGroupId: string, periodStart: Date, p
   });
 }
 
+function byEmployeeId<T extends { employeeId: string }>(rows: T[]): Map<string, T[]> {
+  const m = new Map<string, T[]>();
+  for (const r of rows) m.set(r.employeeId, [...(m.get(r.employeeId) ?? []), r]);
+  return m;
+}
+
 type EligibleEmployee = Awaited<ReturnType<typeof eligibleEmployees>>[number];
 
 function toStructureSpecs(
@@ -288,6 +294,26 @@ export async function calculateRun(runId: string): Promise<{
     include: { lines: { include: { component: { select: { code: true, name: true } } } } },
   });
   const fbpOf = new Map(fbpDeclarations.map((d) => [d.employeeId, d]));
+
+  // Perquisites active in the period, and those already taxed earlier in the
+  // year (their payslip lines), which count towards year-to-date income.
+  const [perkAssignments, taxablePerks, priorPerkLines] = await Promise.all([
+    prisma.employeePerk.findMany({
+      where: { employeeId: { in: employeeIds }, startDate: { lte: run.periodEnd }, OR: [{ endDate: null }, { endDate: { gte: run.periodStart } }] },
+      include: { perk: { include: { component: { select: { code: true, name: true, isActive: true } } } } },
+      orderBy: { startDate: "asc" },
+    }),
+    prisma.perk.findMany({ where: { component: { tenantId: run.tenantId }, isTaxable: true, taxBorneByEmployer: false }, select: { component: { select: { code: true } } } }),
+    prisma.payslipLine.findMany({
+      where: {
+        type: "PERK",
+        runEmployee: { employeeId: { in: employeeIds }, run: { payGroupId: payGroup.id, status: "FINALIZED", periodEnd: { lt: run.periodStart, gte: startOfMonth(fyStart, 4) } } },
+      },
+      select: { code: true, amount: true, runEmployee: { select: { employeeId: true } } },
+    }),
+  ]);
+  const taxablePerkCodes = new Set(taxablePerks.map((p) => p.component.code));
+  const perksByEmp = byEmployeeId(perkAssignments.filter((a) => a.perk.component.isActive));
   const lastMonthOfFy = run.month === 3;
   const fbpClaimed = lastMonthOfFy && fbpDeclarations.length
     ? await prisma.componentClaim.findMany({
@@ -394,6 +420,12 @@ export async function calculateRun(runId: string): Promise<{
     cur.tds += Number(row.tds);
     cur.pt += Number(row.professionalTax);
     ytdByEmp.set(row.employeeId, cur);
+  }
+  for (const line of priorPerkLines) {
+    if (!taxablePerkCodes.has(line.code)) continue;
+    const cur = ytdByEmp.get(line.runEmployee.employeeId) ?? { gross: 0, tds: 0, pt: 0 };
+    cur.gross += Number(line.amount);
+    ytdByEmp.set(line.runEmployee.employeeId, cur);
   }
 
   // Attendance-driven LOP for the period.
@@ -528,6 +560,14 @@ export async function calculateRun(runId: string): Promise<{
           name: c.component.name,
           amount: Number(c.payableAmount ?? c.claimedAmount),
           isTaxable: c.component.taxTreatment === "FULLY_TAXABLE",
+        })),
+        perquisites: (perksByEmp.get(emp.id) ?? []).map((a) => ({
+          code: a.perk.component.code,
+          name: a.perk.component.name,
+          amount: a.perk.valuationMethod === "PER_EMPLOYEE" ? Number(a.monthlyValue ?? 0) : a.perk.valuationMethod === "FIXED_FOR_ALL" ? Number(a.perk.fixedAmount ?? 0) : null,
+          formula: a.perk.valuationMethod === "FORMULA" ? a.perk.formula : null,
+          employerBearsTax: a.perk.taxBorneByEmployer,
+          isTaxable: a.perk.isTaxable,
         })),
         loanEmis: (emiByEmp.get(emp.id) ?? []).map((i) => ({
           name: `${i.loan.category.name} EMI`,

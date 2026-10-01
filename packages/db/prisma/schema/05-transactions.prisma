@@ -250,7 +250,30 @@ model Perk {
 
   createdAt DateTime @default(now())
 
+  assignments EmployeePerk[]
+
   @@map("perks")
+}
+
+/// A perquisite given to one employee from a date. Its monthly value counts
+/// as taxable salary for TDS (unless the employer bears the tax) but is not
+/// paid in cash.
+model EmployeePerk {
+  id           String    @id @default(cuid())
+  employeeId   String
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  perkId       String
+  perk         Perk      @relation(fields: [perkId], references: [id], onDelete: Cascade)
+  /// The value a month, for perks valued per employee.
+  monthlyValue Decimal?  @db.Decimal(18, 2)
+  startDate    DateTime  @db.Date
+  endDate      DateTime? @db.Date
+  note         String?
+  createdAt    DateTime  @default(now())
+
+  @@index([employeeId])
+  @@index([perkId])
+  @@map("employee_perks")
 }
 
 // ---------------------------------------------------------------------------

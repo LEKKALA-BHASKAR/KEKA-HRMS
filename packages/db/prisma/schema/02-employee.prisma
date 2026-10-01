@@ -149,6 +149,7 @@ model Employee {
   bonuses           EmployeeBonus[]
   componentClaims   ComponentClaim[]
   fbpDeclarations   FbpDeclaration[]
+  perks             EmployeePerk[]
   arrears           Arrear[]
   fnfSettlement     FnfSettlement?
   exitRecord        ExitRecord?
