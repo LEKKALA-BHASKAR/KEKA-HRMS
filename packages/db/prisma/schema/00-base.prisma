@@ -141,6 +141,7 @@ model Tenant {
   rosterPatterns        RosterPattern[]
   apiKeys               ApiKey[]
   webhookEndpoints      WebhookEndpoint[]
+  savedReports          SavedReport[]
   attendanceDevices     AttendanceDevice[]
   skills                Skill[]
   statutoryFilings      StatutoryFiling[]
