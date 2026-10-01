@@ -3,55 +3,12 @@
 import { useState } from "react";
 import { ActionForm, InlineForm, Field, TextInput, SelectInput, TextArea, FormBanner, useForm } from "@/components/form";
 import {
-  raiseRequisitionAction, decideRequisitionAction, openJobAction, jobStatusAction, addCandidateAction, referAction,
-  moveStageAction, rejectApplicationAction, scheduleInterviewAction, scorecardAction, draftOfferAction, offerOpAction, hireAction,
+  openJobAction, jobStatusAction, addCandidateAction, referAction,
+  moveStageAction, rejectApplicationAction, scheduleInterviewAction, draftOfferAction, offerOpAction, hireAction,
 } from "@/app/actions/hiring";
 
 export interface Option { value: string; label: string }
 const plus = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
-
-export function RequisitionForm({ departments, locations, employees }: { departments: Option[]; locations: Option[]; employees: Option[] }) {
-  const [type, setType] = useState("NEW_HIRE");
-  return (
-    <ActionForm action={raiseRequisitionAction} submitLabel="Raise for approval">
-      {(state) => (
-        <>
-          <div className="grid grid-3">
-            <Field label="Role" name="title" state={state} required><TextInput name="title" state={state} required placeholder="Senior Backend Engineer" /></Field>
-            <Field label="Type" name="type" state={state}>
-              <select name="type" className="select" value={type} onChange={(e) => setType(e.target.value)}><option value="NEW_HIRE">New position</option><option value="BACKFILL">Backfill</option></select>
-            </Field>
-            {type === "BACKFILL" ? <Field label="Replacing" name="replacingEmployeeId" state={state} required><SelectInput name="replacingEmployeeId" state={state} options={employees} placeholder="Select…" /></Field> : <Field label="Positions" name="positions" state={state} required><TextInput name="positions" type="number" state={state} defaultValue={1} required /></Field>}
-            {type === "BACKFILL" ? <input type="hidden" name="positions" value="1" /> : null}
-            <Field label="Department" name="departmentId" state={state}><SelectInput name="departmentId" state={state} options={departments} placeholder="Select…" /></Field>
-            <Field label="Location" name="locationId" state={state}><SelectInput name="locationId" state={state} options={locations} placeholder="Select…" /></Field>
-            <Field label="Target start" name="targetStartDate" state={state}><TextInput name="targetStartDate" type="date" state={state} defaultValue={plus(60)} /></Field>
-            <Field label="Budget — min CTC" name="minAnnualCtc" state={state}><TextInput name="minAnnualCtc" type="number" state={state} /></Field>
-            <Field label="Budget — max CTC" name="maxAnnualCtc" state={state} hint="Offers above this need approval"><TextInput name="maxAnnualCtc" type="number" state={state} /></Field>
-          </div>
-          <Field label="Why we need this role" name="justification" state={state} required><TextArea name="justification" state={state} rows={2} required /></Field>
-        </>
-      )}
-    </ActionForm>
-  );
-}
-
-export function RequisitionDecision({ id }: { id: string }) {
-  const [state, action, pending] = useForm(decideRequisitionAction);
-  const [rejecting, setRejecting] = useState(false);
-  if (state.ok) return <span className="text-xs pos">{state.message}</span>;
-  return (
-    <form action={action} className="stack gap-2" style={{ alignItems: "flex-end" }}>
-      <input type="hidden" name="id" value={id} />
-      {rejecting ? <input className="input" name="reason" placeholder="Reason" required style={{ width: 200 }} /> : null}
-      <div className="row gap-2">
-        {rejecting ? <button className="btn sm danger" name="decision" value="reject" disabled={pending}>Reject</button>
-          : <><button className="btn sm primary" name="decision" value="approve" disabled={pending}>Approve</button><button type="button" className="btn sm" onClick={() => setRejecting(true)}>Reject</button></>}
-      </div>
-      {state.message ? <div className="text-xs neg">{state.message}</div> : null}
-    </form>
-  );
-}
 
 export function OpenJob({ requisitionId, managers }: { requisitionId: string; managers: Option[] }) {
   return (
@@ -159,24 +116,6 @@ export function InterviewForm({ applicationId, employees, round }: { application
         </>
       )}
     </ActionForm>
-  );
-}
-
-export function ScorecardForm({ interviewId }: { interviewId: string }) {
-  const [state, action, pending] = useForm(scorecardAction);
-  if (state.ok) return <span className="text-sm pos">{state.message}</span>;
-  return (
-    <form action={action} className="stack gap-2">
-      <FormBanner state={state} />
-      <input type="hidden" name="interviewId" value={interviewId} />
-      <div className="row gap-3 wrap">
-        <label className="text-sm">Score <select name="overallScore" className="select" style={{ width: 80 }} required defaultValue=""><option value="" disabled>–</option>{[5, 4, 3, 2, 1].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
-        <label className="text-sm">Recommendation <select name="recommendation" className="select" style={{ width: 150 }} required defaultValue=""><option value="" disabled>Choose…</option><option value="STRONG_YES">Strong yes</option><option value="YES">Yes</option><option value="NO">No</option><option value="STRONG_NO">Strong no</option></select></label>
-      </div>
-      <TextArea name="strengths" placeholder="Strengths, with evidence from the interview" rows={2} />
-      <TextArea name="concerns" placeholder="Concerns" rows={2} />
-      <button className="btn sm primary" disabled={pending} style={{ alignSelf: "flex-start" }}>Submit feedback</button>
-    </form>
   );
 }
 
