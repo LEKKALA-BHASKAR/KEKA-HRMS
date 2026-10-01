@@ -232,6 +232,7 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     can(viewer, P.PAYROLL_VIEW) && { label: "Run payroll", href: "/payroll/runs", keywords: "payroll process month" },
     can(viewer, P.EMPLOYEE_CREATE) && { label: "Add an employee", href: "/employees/new", keywords: "hire onboard new joinee" },
     canAny(viewer, [P.EMPLOYEE_CREATE, P.LEAVE_MANAGE, P.SALARY_REVISE, P.EMPLOYEE_MANAGE_FINANCIALS]) && { label: "Bulk import", href: "/admin/import", keywords: "import csv upload spreadsheet migrate employees balances salary bank" },
+    can(viewer, P.ORG_SETTINGS_MANAGE) && { label: "Custom fields", href: "/admin/settings?tab=fields", keywords: "custom field profile extra attribute dropdown" },
     can(viewer, P.LEDGER_VIEW) && { label: "Accounting", href: "/accounting", keywords: "ledger books journal trial balance" },
     can(viewer, P.REPORT_VIEW) && { label: "Reports", href: "/reports", keywords: "analytics headcount attrition" },
     can(viewer, P.ANALYTICS_VIEW) && { label: "Workforce analytics", href: "/analytics", keywords: "dashboard headcount attrition diversity cost insights" },

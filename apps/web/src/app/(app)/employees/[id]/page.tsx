@@ -15,6 +15,8 @@ import {
   AddressForm, IdentityForm, BankForm, EducationForm, ExperienceForm,
   DependentForm, EmergencyForm, RemoveSubRecord, AccessControls,
 } from "./forms";
+import { CustomFieldsForm } from "./custom-fields";
+import { displayCustomValue, type CustomFieldKind } from "@keka/services";
 
 const P = PERMISSIONS;
 
@@ -90,6 +92,20 @@ export default async function EmployeePage({
   const canEditFinancials = canAccessEmployee(viewer, target, P.EMPLOYEE_MANAGE_FINANCIALS);
   const canRevise = can(viewer, P.SALARY_REVISE) && showFinancials;
   const canManageAccess = can(viewer, P.EMPLOYEE_DISABLE_LOGIN) || can(viewer, P.EMPLOYEE_INVITE);
+
+  // Custom fields the organisation added under Settings; inactive ones stay hidden but keep their values.
+  const customDefs = tab === "profile"
+    ? await prisma.customFieldDefinition.findMany({
+        where: { tenantId: viewer.tenantId, entity: "EMPLOYEE", isActive: true },
+        orderBy: [{ displayOrder: "asc" }, { label: "asc" }],
+        include: { values: { where: { ownerId: employee.id } } },
+      })
+    : [];
+  const customFields = customDefs.map((d) => ({
+    id: d.id, label: d.label, section: d.section ?? "Additional details", type: d.type,
+    options: (d.options as string[] | null) ?? [], isMandatory: d.isMandatory, value: d.values[0]?.value ?? null,
+  }));
+  const customSections = [...new Set(customFields.map((f) => f.section))];
 
   // Option lists for the edit forms. Only loaded when an edit form will render.
   const needsJobOptions = canEdit && tab === "job";
@@ -372,6 +388,29 @@ export default async function EmployeePage({
               </div>
             )}
             {canEdit ? <EmergencyForm employeeId={employee.id} /> : null}
+          </Card>
+        </div>
+      ) : null}
+
+      {tab === "profile" && customFields.length ? (
+        <div style={{ marginTop: 16 }}>
+          <Card title="Additional details" description={customSections.length > 1 ? customSections.join(" · ") : undefined}>
+            <div className="stack gap-4">
+              {customSections.map((section) => (
+                <div key={section}>
+                  {customSections.length > 1 ? <div className="text-xs strong subtle" style={{ marginBottom: 6 }}>{section.toUpperCase()}</div> : null}
+                  <KeyValue items={customFields.filter((f) => f.section === section).map((f) => [
+                    <>{f.label}{f.isMandatory && !f.value ? <Badge tone="warning">missing</Badge> : null}</>,
+                    f.value ? displayCustomValue(f.type as CustomFieldKind, f.value) : <span className="subtle">—</span>,
+                  ])} />
+                </div>
+              ))}
+              {canEdit ? (
+                <EditToggle label="Edit details">
+                  <CustomFieldsForm employeeId={employee.id} fields={customFields} />
+                </EditToggle>
+              ) : null}
+            </div>
           </Card>
         </div>
       ) : null}

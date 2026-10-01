@@ -6,9 +6,10 @@ import { securityPolicy } from "@/lib/auth-policy";
 import { MAIL_DIR } from "@/lib/mail";
 import { PageHead, Card, Badge, Empty, Stat } from "@/components/ui";
 import { ProfileForm, VisibilityForm, SecurityForm, UserSecurityForm, DeliverMailButton } from "./forms";
+import { CustomFieldForm, CustomFieldRow } from "./custom-fields";
 
 const P = PERMISSIONS;
-const TABS = { org: "Organisation", security: "Security", log: "Sign-in log", mail: "Email", jobs: "Scheduled jobs" } as const;
+const TABS = { org: "Organisation", fields: "Custom fields", security: "Security", log: "Sign-in log", mail: "Email", jobs: "Scheduled jobs" } as const;
 type Tab = keyof typeof TABS;
 const when = (d: Date) => d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
@@ -26,6 +27,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         {tabs.map((t) => <Link key={t} href={`/admin/settings?tab=${t}`} className={`tab${tab === t ? " active" : ""}`}>{TABS[t]}</Link>)}
       </div>
       {tab === "org" ? <Org tenantId={viewer.tenantId} /> : null}
+      {tab === "fields" ? <Fields tenantId={viewer.tenantId} /> : null}
       {tab === "security" ? <Security tenantId={viewer.tenantId} /> : null}
       {tab === "log" ? <Log tenantId={viewer.tenantId} /> : null}
       {tab === "mail" ? <Mail tenantId={viewer.tenantId} /> : null}
@@ -48,6 +50,35 @@ async function Org({ tenantId }: { tenantId: string }) {
       <Card title="Directory visibility" description="Who can find whom in the employee directory and org chart.">
         <VisibilityForm v={vis ?? { restrictByLegalEntity: false, restrictByBusinessUnit: false, managerReporteeOverride: true }} />
       </Card>
+    </div>
+  );
+}
+
+async function Fields({ tenantId }: { tenantId: string }) {
+  const defs = await prisma.customFieldDefinition.findMany({
+    where: { tenantId, entity: "EMPLOYEE" }, orderBy: [{ isActive: "desc" }, { displayOrder: "asc" }, { label: "asc" }],
+    include: { _count: { select: { values: { where: { value: { not: null } } } } } },
+  });
+  return (
+    <div className="stack gap-4">
+      <Card tight title={`Employee fields (${defs.length})`} description="Extra details your organisation records about each person, shown on the Profile tab and edited by anyone who can edit the profile.">
+        {defs.length === 0 ? <Empty title="No custom fields yet">Add one below, for example T-shirt size or a previous employee ID.</Empty> : (
+          <div className="table-wrap">
+            <table className="data">
+              <thead><tr><th>Label</th><th>Type</th><th>Profile card</th><th className="num">Filled in</th><th>Status</th><th /></tr></thead>
+              <tbody>
+                {defs.map((d) => (
+                  <CustomFieldRow key={d.id} used={d._count.values} def={{
+                    id: d.id, label: d.label, section: d.section, type: d.type, options: (d.options as string[] | null) ?? [],
+                    isMandatory: d.isMandatory, isActive: d.isActive, displayOrder: d.displayOrder,
+                  }} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      <Card title="Add a field"><CustomFieldForm /></Card>
     </div>
   );
 }
