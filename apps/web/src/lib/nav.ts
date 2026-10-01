@@ -144,6 +144,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: { hasExit: boo
     canAny(viewer, [P.ASSET_MANAGE, P.ASSET_ASSIGN]) && { label: "Assets", href: "/assets" },
     can(viewer, P.HELPDESK_MANAGE) && { label: "Helpdesk", href: "/helpdesk" },
     can(viewer, P.REPORT_VIEW) && canAny(viewer, [P.EMPLOYEE_VIEW_ALL, P.PAYROLL_VIEW, P.LEAVE_MANAGE]) && { label: "Reports", href: "/reports" },
+    canAny(viewer, [P.EMPLOYEE_CREATE, P.LEAVE_MANAGE, P.SALARY_REVISE, P.EMPLOYEE_MANAGE_FINANCIALS]) && { label: "Bulk Import", href: "/admin/import" },
   ]);
   if (people.length) sections.push({ key: "people", label: "People", icon: "people", href: people[0].href, tabs: people, admin: true });
 
@@ -230,6 +231,7 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     { label: "Organisation tree", href: "/directory/tree", keywords: "org chart hierarchy reporting" },
     can(viewer, P.PAYROLL_VIEW) && { label: "Run payroll", href: "/payroll/runs", keywords: "payroll process month" },
     can(viewer, P.EMPLOYEE_CREATE) && { label: "Add an employee", href: "/employees/new", keywords: "hire onboard new joinee" },
+    canAny(viewer, [P.EMPLOYEE_CREATE, P.LEAVE_MANAGE, P.SALARY_REVISE, P.EMPLOYEE_MANAGE_FINANCIALS]) && { label: "Bulk import", href: "/admin/import", keywords: "import csv upload spreadsheet migrate employees balances salary bank" },
     can(viewer, P.LEDGER_VIEW) && { label: "Accounting", href: "/accounting", keywords: "ledger books journal trial balance" },
     can(viewer, P.REPORT_VIEW) && { label: "Reports", href: "/reports", keywords: "analytics headcount attrition" },
     can(viewer, P.ANALYTICS_VIEW) && { label: "Workforce analytics", href: "/analytics", keywords: "dashboard headcount attrition diversity cost insights" },
