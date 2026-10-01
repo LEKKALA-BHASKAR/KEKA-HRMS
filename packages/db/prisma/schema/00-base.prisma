@@ -139,6 +139,8 @@ model Tenant {
   shiftAllowanceEntries ShiftAllowanceEntry[]
   shifts                Shift[]
   rosterPatterns        RosterPattern[]
+  apiKeys               ApiKey[]
+  attendanceDevices     AttendanceDevice[]
   skills                Skill[]
   statutoryFilings      StatutoryFiling[]
   storedFiles           StoredFile[]

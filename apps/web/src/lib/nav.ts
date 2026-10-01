@@ -329,6 +329,7 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     can(viewer, P.TAX_DECLARATION_APPROVE) && { label: "Review tax proofs", href: "/payroll/tax-proofs", keywords: "investment declaration proof 80c verify" },
     can(viewer, P.EMPLOYEE_CREATE) && { label: "Add an employee", href: "/employees/new", keywords: "hire onboard new joinee" },
     canAny(viewer, [P.EMPLOYEE_CREATE, P.LEAVE_MANAGE, P.SALARY_REVISE, P.EMPLOYEE_MANAGE_FINANCIALS]) && { label: "Bulk import", href: "/admin/import", keywords: "import csv upload spreadsheet migrate employees balances salary bank" },
+    canAny(viewer, [P.API_KEY_MANAGE, P.ATTENDANCE_MANAGE]) && { label: "Integrations", href: "/admin/integrations", keywords: "api key biometric device punch integration token webhook" },
     can(viewer, P.ORG_SETTINGS_MANAGE) && { label: "Custom fields", href: "/admin/settings?tab=fields", keywords: "custom field profile extra attribute dropdown" },
     can(viewer, P.DOCUMENT_MANAGE) && { label: "Document types", href: "/admin/settings?tab=documents", keywords: "document folder type mandatory request upload settings" },
     can(viewer, P.EXIT_MANAGE) && { label: "Notice periods and exit reasons", href: "/admin/settings?tab=exits", keywords: "notice period policy exit reason resignation settings" },

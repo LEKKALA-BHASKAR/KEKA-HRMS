@@ -176,6 +176,7 @@ model Location {
   employees Employee[]
   ptLinks   PtStateRegistrationLocation[]
   lwfLinks  LwfStateRegistrationLocation[]
+  attendanceDevices AttendanceDevice[]
   /// Assets kept at this location (07-workplace Asset.locationId).
   assets    Asset[]
 

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
-import { requireViewer, can } from "@/lib/context";
+import { requireViewer, can, canAny } from "@/lib/context";
 import { forbidden } from "next/navigation";
 import { securityPolicy } from "@/lib/auth-policy";
 import { MAIL_DIR } from "@/lib/mail";
@@ -34,6 +34,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       <PageHead title="Settings" subtitle="Organisation, access and security" />
       <div className="tabs">
         {tabs.map((t) => <Link key={t} href={`/admin/settings?tab=${t}`} className={`tab${tab === t ? " active" : ""}`}>{TABS[t]}</Link>)}
+        {canAny(viewer, [P.API_KEY_MANAGE, P.ATTENDANCE_MANAGE]) ? <Link href="/admin/integrations" className="tab">Integrations</Link> : null}
       </div>
       {tab === "org" ? <Org tenantId={viewer.tenantId} /> : null}
       {tab === "fields" ? <Fields tenantId={viewer.tenantId} /> : null}

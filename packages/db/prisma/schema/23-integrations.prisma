@@ -1,0 +1,46 @@
+// ============================================================================
+//  KEKA — Integrations: API keys and attendance devices
+// ============================================================================
+//  ApiKey authenticates machine clients of /api/v1 (biometric bridges, payroll
+//  exports, HRIS syncs). Only a SHA-256 hash of the secret is stored; the full
+//  key is shown once when created. Scopes limit what a key may call.
+//  AttendanceDevice registers a biometric or kiosk device by serial number so
+//  punches it pushes can be attributed and switched off with the device.
+// ============================================================================
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  /// The non-secret lookup part shown in lists, e.g. "kk_3f9a1c2b".
+  prefix     String    @unique
+  keyHash    String
+  /// e.g. ["attendance:write"].
+  scopes     String[]
+  createdBy  String?
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([tenantId])
+  @@map("api_keys")
+}
+
+model AttendanceDevice {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  serialNumber String
+  locationId   String?
+  location     Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  isActive     Boolean   @default(true)
+  lastSeenAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@unique([tenantId, serialNumber])
+  @@index([tenantId])
+  @@map("attendance_devices")
+}
