@@ -236,6 +236,37 @@ export async function utilisationSeries(tenantId: string, from: Date, to: Date, 
   });
 }
 
+/**
+ * The same figures per person over one window, for everyone on a hard
+ * allocation or with time logged in it, with their target utilisation.
+ */
+export async function utilisationByPerson(tenantId: string, from: Date, to: Date) {
+  const a = utc(from), b = utc(to);
+  const [allocs, entries, leaves] = await Promise.all([
+    prisma.resourceAllocation.findMany({ where: { project: { tenantId }, kind: "HARD", startDate: { lte: b }, OR: [{ endDate: null }, { endDate: { gte: a } }] }, select: { employeeId: true, startDate: true, endDate: true, allocationPercent: true } }),
+    prisma.timeEntry.findMany({ where: { tenantId, date: { gte: a, lte: b } }, select: { employeeId: true, hours: true, isBillable: true } }),
+    prisma.leaveRequestDay.findMany({ where: { request: { tenantId, status: "APPROVED" }, date: { gte: a, lte: b } }, select: { dayValue: true, request: { select: { employeeId: true } } } }),
+  ]);
+  const ids = [...new Set([...allocs.map((x) => x.employeeId), ...entries.map((e) => e.employeeId)])];
+  const people = await prisma.employee.findMany({
+    where: { tenantId, id: { in: ids } },
+    select: { id: true, employeeNumber: true, displayName: true, firstName: true, lastName: true, department: { select: { name: true } }, resourceProfile: { select: { capacity: true, targetUtilization: true } } },
+  });
+  return people.map((p) => {
+    const cap = capacityOf(p.resourceProfile?.capacity);
+    const mine = allocs.filter((x) => x.employeeId === p.id);
+    const planned = mine.reduce((s, x) => s + plannedHours(cap, x.startDate > a ? x.startDate : a, x.endDate && x.endDate < b ? x.endDate : b, Number(x.allocationPercent)), 0);
+    const logs = entries.filter((e) => e.employeeId === p.id);
+    const u = utilisationBreakdown({
+      capacity: r2(plannedHours(cap, a, b, 100)), planned: r2(planned),
+      billable: r2(logs.filter((e) => e.isBillable).reduce((s, e) => s + Number(e.hours), 0)),
+      nonBillable: r2(logs.filter((e) => !e.isBillable).reduce((s, e) => s + Number(e.hours), 0)),
+      leave: r2(leaves.filter((l) => l.request.employeeId === p.id).reduce((s, l) => s + Number(l.dayValue) * 8, 0)),
+    });
+    return { id: p.id, number: p.employeeNumber, name: p.displayName ?? `${p.firstName} ${p.lastName}`, department: p.department?.name ?? null, target: p.resourceProfile?.targetUtilization ?? null, ...u };
+  }).sort((x, y) => y.pct - x.pct);
+}
+
 /** Billable and non-billable hours against the plan, per project or per client. */
 export async function utilisationByProject(tenantId: string, from: Date, to: Date, by: "PROJECT" | "CLIENT" = "PROJECT") {
   const entries = await prisma.timeEntry.findMany({ where: { tenantId, date: { gte: utc(from), lte: utc(to) } }, select: { hours: true, isBillable: true, project: { select: { name: true, client: { select: { name: true } } } } } });

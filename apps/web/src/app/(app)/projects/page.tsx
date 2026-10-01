@@ -34,7 +34,8 @@ export default async function ProjectsPage({ searchParams }: { searchParams: Pro
   const tab = tabs.includes(sp.tab ?? "") ? sp.tab! : tabs[0];
   return (
     <>
-      <PageHead title="Projects & time" subtitle="Log time against the projects you are on; approved billable time becomes the client's invoice" />
+      <PageHead title="Projects & time" subtitle="Log time against the projects you are on; approved billable time becomes the client's invoice"
+        actions={canAny(viewer, [P.RESOURCE_VIEW, P.RESOURCE_MANAGE]) ? <Link className="btn" href="/projects/resources">Resource planner</Link> : undefined} />
       <div className="tabs">
         {tabs.map((t) => <Link key={t} href={`/projects?tab=${t}`} className={`tab${tab === t ? " active" : ""}`}>{{ time: "My time", approvals: "Approvals", projects: "Projects", billing: "Clients & invoices" }[t]}</Link>)}
       </div>
