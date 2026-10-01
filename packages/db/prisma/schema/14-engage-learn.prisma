@@ -1,0 +1,415 @@
+// ===========================================================================
+//  ENGAGEMENT, LEARNING, CAREER, COMP-OFF AND LEAVE ENCASHMENT
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+//  SURVEYS AND POLLS
+// ---------------------------------------------------------------------------
+
+enum SurveyKind {
+  /// Short, frequent check on a few drivers.
+  PULSE
+  /// The long annual/half-yearly engagement survey.
+  ENGAGEMENT
+  /// "How likely are you to recommend working here?" on 0–10.
+  ENPS
+  /// One question, results visible to everyone who voted.
+  POLL
+}
+
+enum SurveyStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+}
+
+enum SurveyQuestionType {
+  /// 1–5 agreement scale.
+  RATING
+  /// 0–10, scored as promoters (9–10) minus detractors (0–6).
+  NPS
+  SINGLE_CHOICE
+  MULTI_CHOICE
+  TEXT
+}
+
+model Survey {
+  id          String       @id @default(cuid())
+  tenantId    String
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  kind        SurveyKind
+  status      SurveyStatus @default(DRAFT)
+
+  /// Anonymous responses carry no employee link. Who has responded is still
+  /// recorded (in SurveyParticipant) so nobody answers twice, but the answers
+  /// cannot be joined back to a person.
+  isAnonymous Boolean      @default(true)
+  /// Results for any group smaller than this are withheld, so a department of
+  /// two cannot be de-anonymised by its breakdown.
+  minGroupSize Int         @default(3)
+  /// Departments invited. Empty means everyone.
+  departmentIds String[]   @default([])
+
+  opensAt     DateTime?
+  closesAt    DateTime?
+  launchedAt  DateTime?
+  closedAt    DateTime?
+  createdBy   String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  questions    SurveyQuestion[]
+  participants SurveyParticipant[]
+  responses    SurveyResponse[]
+
+  @@index([tenantId, status])
+  @@map("surveys")
+}
+
+model SurveyQuestion {
+  id        String             @id @default(cuid())
+  surveyId  String
+  survey    Survey             @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  sequence  Int
+  prompt    String
+  type      SurveyQuestionType
+  /// Engagement driver this question measures: Recognition, Growth, Manager…
+  driver    String?
+  /// Choices for SINGLE_CHOICE and MULTI_CHOICE.
+  options   String[]           @default([])
+  required  Boolean            @default(true)
+
+  answers   SurveyAnswer[]
+
+  @@unique([surveyId, sequence])
+  @@map("survey_questions")
+}
+
+/// Who has responded — never what they said.
+model SurveyParticipant {
+  id          String   @id @default(cuid())
+  surveyId    String
+  survey      Survey   @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  submittedAt DateTime @default(now())
+
+  @@unique([surveyId, employeeId])
+  @@index([employeeId])
+  @@map("survey_participants")
+}
+
+model SurveyResponse {
+  id           String    @id @default(cuid())
+  surveyId     String
+  survey       Survey    @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  /// Null on an anonymous survey.
+  employeeId   String?
+  employee     Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  /// The respondent's department when they answered, for breakdowns that
+  /// respect the minimum group size.
+  departmentId String?
+  submittedAt  DateTime  @default(now())
+
+  answers      SurveyAnswer[]
+
+  @@index([surveyId])
+  @@map("survey_responses")
+}
+
+model SurveyAnswer {
+  id         String         @id @default(cuid())
+  responseId String
+  response   SurveyResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  questionId String
+  question   SurveyQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  /// RATING (1–5) or NPS (0–10).
+  score      Int?
+  /// Indexes into the question's options.
+  choices    Int[]          @default([])
+  text       String?
+
+  @@unique([responseId, questionId])
+  @@index([questionId])
+  @@map("survey_answers")
+}
+
+// ---------------------------------------------------------------------------
+//  LEARNING
+// ---------------------------------------------------------------------------
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum CourseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum LessonKind {
+  ARTICLE
+  VIDEO
+  DOCUMENT
+  QUIZ
+}
+
+enum CourseEnrolmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+}
+
+model Course {
+  id              String       @id @default(cuid())
+  tenantId        String
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title           String
+  summary         String?
+  category        String
+  level           CourseLevel  @default(BEGINNER)
+  status          CourseStatus @default(DRAFT)
+  /// Assigned to every active employee on publish and when someone joins.
+  isMandatory     Boolean      @default(false)
+  /// Days a learner has to finish once assigned.
+  dueInDays       Int?
+  /// Minimum quiz score, in percent, for a quiz lesson to count as passed.
+  passPercent     Int          @default(70)
+  /// Completing the course records this skill at this level.
+  skillId         String?
+  skill           Skill?       @relation(fields: [skillId], references: [id], onDelete: SetNull)
+  skillLevel      Int          @default(1)
+  coverColour     String?
+
+  createdBy       String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  lessons         CourseLesson[]
+  enrolments      CourseEnrolment[]
+
+  @@unique([tenantId, title])
+  @@index([tenantId, status])
+  @@map("courses")
+}
+
+model CourseLesson {
+  id              String     @id @default(cuid())
+  courseId        String
+  course          Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  sequence        Int
+  title           String
+  kind            LessonKind
+  /// Article body, or notes accompanying a video or document.
+  body            String?
+  url             String?
+  durationMinutes Int        @default(5)
+
+  questions       QuizQuestion[]
+  progress        LessonProgress[]
+
+  @@unique([courseId, sequence])
+  @@map("course_lessons")
+}
+
+model QuizQuestion {
+  id           String       @id @default(cuid())
+  lessonId     String
+  lesson       CourseLesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  sequence     Int
+  prompt       String
+  options      String[]
+  correctIndex Int
+
+  @@unique([lessonId, sequence])
+  @@map("quiz_questions")
+}
+
+model CourseEnrolment {
+  id              String                @id @default(cuid())
+  tenantId        String
+  tenant          Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId        String
+  course          Course                @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  employeeId      String
+  employee        Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  status          CourseEnrolmentStatus @default(ASSIGNED)
+  /// SELF when the learner enrolled themselves.
+  source          String                @default("ASSIGNED")
+  assignedBy      String?
+  assignedAt      DateTime              @default(now())
+  dueDate         DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  progressPercent Int                   @default(0)
+  /// Average of quiz lesson scores, in percent.
+  score           Int?
+
+  lessons         LessonProgress[]
+
+  @@unique([courseId, employeeId])
+  @@index([employeeId, status])
+  @@index([tenantId, status])
+  @@map("course_enrolments")
+}
+
+model LessonProgress {
+  id           String          @id @default(cuid())
+  enrolmentId  String
+  enrolment    CourseEnrolment @relation(fields: [enrolmentId], references: [id], onDelete: Cascade)
+  lessonId     String
+  lesson       CourseLesson    @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  /// Set once the lesson is done — for a quiz, once it is passed.
+  completedAt  DateTime?
+  /// Best quiz score so far, in percent.
+  score        Int?
+  attempts     Int             @default(0)
+
+  @@unique([enrolmentId, lessonId])
+  @@map("lesson_progress")
+}
+
+// ---------------------------------------------------------------------------
+//  CAREER PATHS
+// ---------------------------------------------------------------------------
+
+model CareerPath {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  /// The department this ladder belongs to, for filtering.
+  departmentId String?
+  createdAt   DateTime @default(now())
+
+  steps       CareerPathStep[]
+
+  @@unique([tenantId, name])
+  @@map("career_paths")
+}
+
+model CareerPathStep {
+  id          String     @id @default(cuid())
+  pathId      String
+  path        CareerPath @relation(fields: [pathId], references: [id], onDelete: Cascade)
+  sequence    Int
+  /// The role this rung represents. Matched against an employee's job title
+  /// to place them on the ladder.
+  title       String
+  description String?
+  /// Typical total experience before stepping up, in years.
+  minYears    Int        @default(0)
+
+  skills      CareerStepSkill[]
+  aspirants   CareerAspiration[]
+
+  @@unique([pathId, sequence])
+  @@map("career_path_steps")
+}
+
+model CareerStepSkill {
+  id      String         @id @default(cuid())
+  stepId  String
+  step    CareerPathStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  skillId String
+  skill   Skill          @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  /// Index into the skill's levels the role expects.
+  level   Int            @default(1)
+
+  @@unique([stepId, skillId])
+  @@map("career_step_skills")
+}
+
+/// The rung an employee is working towards.
+model CareerAspiration {
+  id         String         @id @default(cuid())
+  employeeId String         @unique
+  employee   Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  stepId     String
+  step       CareerPathStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  note       String?
+  updatedAt  DateTime       @updatedAt
+
+  @@map("career_aspirations")
+}
+
+// ---------------------------------------------------------------------------
+//  COMP-OFF AND LEAVE ENCASHMENT
+// ---------------------------------------------------------------------------
+
+enum TimeOffRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+/// A day worked on a weekly off or a holiday, claimed as compensatory leave.
+/// Approval credits the comp-off leave type through the ledger.
+model CompOffRequest {
+  id           String               @id @default(cuid())
+  tenantId     String
+  tenant       Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     Employee             @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  workedOn     DateTime             @db.Date
+  /// 0.5 or 1.
+  days         Decimal              @db.Decimal(4, 1)
+  reason       String
+  /// Why the day was not a working day — "Weekly off" or the holiday's name.
+  dayType      String
+  status       TimeOffRequestStatus @default(PENDING)
+  /// The credit lapses if unused by this date.
+  expiresOn    DateTime?            @db.Date
+
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
+  createdAt    DateTime             @default(now())
+
+  @@unique([employeeId, workedOn])
+  @@index([tenantId, status])
+  @@map("comp_off_requests")
+}
+
+/// Selling back leave in service. Approval debits the balance through the
+/// ledger and pays the amount as a taxable ad-hoc line in the open payroll run.
+model LeaveEncashmentRequest {
+  id           String               @id @default(cuid())
+  tenantId     String
+  tenant       Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     Employee             @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId  String
+
+  days         Decimal              @db.Decimal(9, 2)
+  /// Fixed when the request is raised so the employee sees what they will get.
+  perDayRate   Decimal              @db.Decimal(18, 2)
+  amount       Decimal              @db.Decimal(18, 2)
+  basis        String
+  reason       String?
+  status       TimeOffRequestStatus @default(PENDING)
+
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
+  /// The ad-hoc payment created on approval, and the run it landed in.
+  adhocId      String?
+  runId        String?
+  createdAt    DateTime             @default(now())
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("leave_encashment_requests")
+}

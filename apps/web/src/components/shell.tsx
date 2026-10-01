@@ -9,13 +9,13 @@ import { SearchPalette, type QuickAction } from "./search-palette";
 import { Avatar } from "./avatar";
 import {
   IconHome, IconUser, IconInbox, IconTeam, IconDollarCircle, IconOrg, IconEngage, IconUsers, IconUserPlus,
-  IconTarget, IconTimer, IconWallet, IconLedger, IconSettings, IconBell, IconMenu,
+  IconTarget, IconTimer, IconWallet, IconLedger, IconSettings, IconBell, IconMenu, IconBook, IconChart,
 } from "./icons";
 
 const ICONS: Record<string, (p: { className?: string }) => ReactNode> = {
   home: IconHome, user: IconUser, inbox: IconInbox, team: IconTeam, finance: IconDollarCircle, org: IconOrg,
   engage: IconEngage, people: IconUsers, hire: IconUserPlus, performance: IconTarget, projects: IconTimer,
-  payroll: IconWallet, ledger: IconLedger, settings: IconSettings,
+  payroll: IconWallet, ledger: IconLedger, settings: IconSettings, learn: IconBook, analytics: IconChart,
 };
 
 const pathOf = (href: string) => href.split("?")[0];

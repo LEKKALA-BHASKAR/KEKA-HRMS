@@ -387,6 +387,9 @@ model Skill {
 
   employeeSkills EmployeeSkill[]
 
+  courses        Course[]
+  careerSteps    CareerStepSkill[]
+
   @@unique([tenantId, name])
   @@index([tenantId])
   @@map("skills")

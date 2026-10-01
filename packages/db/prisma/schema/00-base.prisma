@@ -151,6 +151,13 @@ model Tenant {
   travelRequests TravelRequest[]
   weeklyOffPolicies WeeklyOffPolicy[]
 
+  surveys Survey[]
+  courses Course[]
+  courseEnrolments CourseEnrolment[]
+  careerPaths CareerPath[]
+  compOffRequests CompOffRequest[]
+  leaveEncashmentRequests LeaveEncashmentRequest[]
+
   @@index([subdomain])
   @@map("tenants")
 }

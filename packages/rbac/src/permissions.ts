@@ -116,6 +116,16 @@ export const PERMISSIONS = {
   AWARD_VIEW: "engagement.award.view",
   AWARD_MANAGE: "engagement.award.manage",
   PRAISE_GIVE: "engagement.praise.give",
+  SURVEY_MANAGE: "engagement.survey.manage",
+  SURVEY_RESULTS: "engagement.survey.results",
+
+  // --- Learning -----------------------------------------------------------
+  LEARNING_VIEW: "learning.course.view",
+  COURSE_MANAGE: "learning.course.manage",
+  COURSE_ASSIGN: "learning.course.assign",
+
+  // --- People analytics ---------------------------------------------------
+  ANALYTICS_VIEW: "analytics.dashboard.view",
 
   // --- Contracts and letters ---------------------------------------------
   CONTRACT_VIEW: "document.contract.view",
@@ -146,6 +156,7 @@ export const PERMISSIONS = {
   SKILL_VIEW: "performance.skill.view",
   SKILL_MANAGE: "performance.skill.manage",
   PIP_MANAGE: "performance.pip.manage",
+  CAREER_PATH_MANAGE: "performance.career.manage",
 
   // --- Projects, extended -------------------------------------------------
   CLIENT_VIEW: "psa.client.view",
@@ -321,6 +332,7 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.SKILL_VIEW, label: "View skills & matrix" },
       { key: PERMISSIONS.SKILL_MANAGE, label: "Manage skills" },
       { key: PERMISSIONS.PIP_MANAGE, label: "Manage improvement plans" },
+      { key: PERMISSIONS.CAREER_PATH_MANAGE, label: "Manage career paths" },
     ],
   },
   {
@@ -365,6 +377,8 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.AWARD_VIEW, label: "View awards" },
       { key: PERMISSIONS.AWARD_MANAGE, label: "Manage & grant awards" },
       { key: PERMISSIONS.PRAISE_GIVE, label: "Give praise" },
+      { key: PERMISSIONS.SURVEY_MANAGE, label: "Create & launch surveys and polls" },
+      { key: PERMISSIONS.SURVEY_RESULTS, label: "View survey results" },
     ],
   },
   {
@@ -374,6 +388,22 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.TRAINING_VIEW, label: "View programmes" },
       { key: PERMISSIONS.TRAINING_MANAGE, label: "Manage programmes" },
       { key: PERMISSIONS.TRAINING_ENROL, label: "Assign & track enrolment" },
+    ],
+  },
+  {
+    module: "learning",
+    label: "Learning",
+    permissions: [
+      { key: PERMISSIONS.LEARNING_VIEW, label: "Browse & take courses" },
+      { key: PERMISSIONS.COURSE_MANAGE, label: "Author courses" },
+      { key: PERMISSIONS.COURSE_ASSIGN, label: "Assign courses & track completion" },
+    ],
+  },
+  {
+    module: "analytics",
+    label: "People Analytics",
+    permissions: [
+      { key: PERMISSIONS.ANALYTICS_VIEW, label: "View workforce dashboards" },
     ],
   },
   {

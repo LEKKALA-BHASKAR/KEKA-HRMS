@@ -85,12 +85,47 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     viewer.employee ? prisma.timesheet.count({ where: timesheetsToApproveWhere(viewer) }) : Promise.resolve(0),
     viewer.employee ? prisma.project.count({ where: { tenantId: viewer.tenantId, projectManagerId: viewer.employee.id } }) : Promise.resolve(0),
   ]);
-  const pendingApprovals = pendingLeave + pendingAttendance + pendingPayroll + pendingExits + myTasks + pendingSheets;
+  const myDept = viewer.employee
+    ? (await prisma.employee.findUnique({ where: { id: viewer.employee.id }, select: { departmentId: true } }))?.departmentId ?? null
+    : null;
+  const [pendingSurveys, pendingCompOff, pendingEncash, myCourses] = await Promise.all([
+    viewer.employee
+      ? prisma.survey.count({
+          where: {
+            tenantId: viewer.tenantId, status: "ACTIVE",
+            participants: { none: { employeeId: viewer.employee.id } },
+            OR: [{ departmentIds: { isEmpty: true } }, { departmentIds: { has: myDept ?? "-" } }],
+          },
+        })
+      : Promise.resolve(0),
+    can(viewer, P.LEAVE_APPROVE)
+      ? prisma.compOffRequest.count({
+          where: {
+            tenantId: viewer.tenantId, status: "PENDING", ...inScope(leaveScope),
+            ...(viewer.employee ? { NOT: { employeeId: viewer.employee.id } } : {}),
+          },
+        })
+      : Promise.resolve(0),
+    can(viewer, P.LEAVE_MANAGE)
+      ? prisma.leaveEncashmentRequest.count({
+          where: {
+            tenantId: viewer.tenantId, status: "PENDING",
+            employee: scopedEmployeeWhere(viewer, P.LEAVE_MANAGE),
+            ...(viewer.employee ? { NOT: { employeeId: viewer.employee.id } } : {}),
+          },
+        })
+      : Promise.resolve(0),
+    viewer.employee
+      ? prisma.courseEnrolment.count({ where: { employeeId: viewer.employee.id, status: { not: "COMPLETED" }, course: { status: "PUBLISHED" } } })
+      : Promise.resolve(0),
+  ]);
+  const pendingApprovals = pendingLeave + pendingAttendance + pendingPayroll + pendingExits + myTasks + pendingSheets + pendingCompOff + pendingEncash;
 
   // The navigation is assembled from permissions, so a viewer never sees a
   // link to something they cannot open.
   const sections = buildNav(viewer, {
-    approvals: pendingApprovals, leave: pendingLeave, attendance: pendingAttendance, exits: pendingExits, runs: openRunCount,
+    approvals: pendingApprovals, leave: pendingLeave + pendingCompOff + pendingEncash, attendance: pendingAttendance,
+    surveys: pendingSurveys, learning: myCourses, exits: pendingExits, runs: openRunCount,
     documents: pendingDocuments, acks: pendingAcks, sheets: pendingSheets, notifications: unreadNotifications,
   }, { hasExit: !!myExit, managesProject: managedProjects > 0 });
 

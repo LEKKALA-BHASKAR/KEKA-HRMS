@@ -199,6 +199,13 @@ model Employee {
   journeys           Journey[]
   helpdeskTickets    HelpdeskTicket[]
 
+  surveyParticipations SurveyParticipant[]
+  surveyResponses    SurveyResponse[]
+  courseEnrolments   CourseEnrolment[]
+  careerAspiration   CareerAspiration?
+  compOffRequests    CompOffRequest[]
+  leaveEncashments   LeaveEncashmentRequest[]
+
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
   @@index([tenantId, departmentId])

@@ -20,6 +20,7 @@ import { seedExpenses } from "./expenses";
 import { seedProjects } from "./projects";
 import { seedSelfService } from "./self-service";
 import { seedToday } from "./today";
+import { seedEngageLearn } from "./engage-learn";
 import { seedAccountingOpening, seedAccountingActivity } from "./accounting";
 
 const prisma = new PrismaClient();
@@ -868,6 +869,9 @@ async function main() {
 
   const ss = await seedSelfService(prisma, { tenantId: tenant.id });
   log("Self-service", `${ss.about} profiles introduced, ${ss.praise} praises and ${ss.feedback} feedback notes, ${ss.declarations} tax declarations`);
+
+  const el = await seedEngageLearn(prisma, { tenantId: tenant.id, empIdByNumber });
+  log("Engagement & learning", `${el.surveys} surveys and polls (${el.responses} responses), ${el.skills} skills on ${el.skillRows} profiles, ${el.paths} career paths, ${el.courses} courses with ${el.enrolments} enrolments; comp-off and ${el.encash} encashment awaiting a decision`);
 
   const ac = await seedAccountingActivity(prisma, { tenantId: tenant.id, byUserId: finance.id });
   log("General ledger", `${ac.entries} ledger entries: opening, ${ac.paid} payroll accruals and payments, ${ac.remitted} statutory remittances, invoices and receipts; Apr–Jun closed; trial balance ₹${ac.total.toLocaleString("en-IN")} each side`);
