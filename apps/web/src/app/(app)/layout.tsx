@@ -119,7 +119,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       ? prisma.courseEnrolment.count({ where: { employeeId: viewer.employee.id, status: { not: "COMPLETED" }, course: { status: "PUBLISHED" } } })
       : Promise.resolve(0),
   ]);
-  const pendingApprovals = pendingLeave + pendingAttendance + pendingPayroll + pendingExits + myTasks + pendingSheets + pendingCompOff + pendingEncash;
+  const [myProbationReviews, probationsToDecide] = await Promise.all([
+    viewer.employee
+      ? prisma.probationEvaluation.count({ where: { evaluatorId: viewer.employee.id, status: "PENDING", probation: { tenantId: viewer.tenantId, status: "IN_REVIEW" } } })
+      : Promise.resolve(0),
+    can(viewer, P.PROBATION_MANAGE)
+      ? prisma.employeeProbation.count({
+          where: {
+            tenantId: viewer.tenantId,
+            OR: [{ status: "IN_REVIEW" }, { status: "ACTIVE", endDate: { lt: new Date() } }],
+            employee: { ...scopedEmployeeWhere(viewer, P.PROBATION_MANAGE), ...(viewer.employee ? { NOT: { id: viewer.employee.id } } : {}) },
+          },
+        })
+      : Promise.resolve(0),
+  ]);
+  const pendingApprovals = pendingLeave + pendingAttendance + pendingPayroll + pendingExits + myTasks + pendingSheets + pendingCompOff + pendingEncash + myProbationReviews;
 
   // The navigation is assembled from permissions, so a viewer never sees a
   // link to something they cannot open.
@@ -127,6 +141,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     approvals: pendingApprovals, leave: pendingLeave + pendingCompOff + pendingEncash, attendance: pendingAttendance,
     surveys: pendingSurveys, learning: myCourses, exits: pendingExits, runs: openRunCount,
     documents: pendingDocuments, acks: pendingAcks, sheets: pendingSheets, notifications: unreadNotifications,
+    probation: probationsToDecide,
   }, { hasExit: !!myExit, managesProject: managedProjects > 0 });
 
   const name = viewer.employee?.displayName ?? viewer.user.email;

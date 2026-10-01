@@ -148,6 +148,7 @@ through payroll's existing transaction tables rather than through direct couplin
 12-time-ops      attendance policies and requests, the leave ledger
 13-lifecycle     journeys, exits, helpdesk, notifications, outbox
 14-engage-learn  surveys, courses, career paths, comp-off and encashment requests
+15-probation     probation policies, employee probations, review rounds
 ```
 
 ### Why cross-module effects route through payroll transactions

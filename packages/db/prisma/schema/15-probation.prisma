@@ -1,0 +1,133 @@
+// ===========================================================================
+//  PROBATION AND CONFIRMATION
+// ===========================================================================
+//
+// A probation policy says how long probation runs, how many times it may be
+// extended, and whether it ends in an evaluation or confirms itself. Each
+// employee on probation carries one EmployeeProbation that follows the
+// policy; reviews are rounds of ProbationEvaluation (the manager's and the
+// employee's own), and HR's decision confirms, extends or does not confirm.
+
+enum ProbationCompletion {
+  /// A review opens before the end date and HR decides.
+  EVALUATION
+  /// The employee is confirmed on the day after probation ends.
+  AUTO_CONFIRM
+}
+
+enum ProbationStatus {
+  ACTIVE
+  /// Review round open; waiting for feedback and a decision.
+  IN_REVIEW
+  CONFIRMED
+  /// HR decided against confirmation. Any exit goes through Exits.
+  NOT_CONFIRMED
+}
+
+enum ProbationEvaluatorRole {
+  MANAGER
+  SELF
+}
+
+enum ProbationEvaluationStatus {
+  PENDING
+  SUBMITTED
+  /// The round ended (extension or decision) before this was submitted.
+  SKIPPED
+}
+
+enum ProbationRecommendation {
+  CONFIRM
+  EXTEND
+  NOT_CONFIRM
+}
+
+model ProbationPolicy {
+  id              String              @id @default(cuid())
+  tenantId        String
+  tenant          Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  description     String?
+  /// Length of probation from the date of joining, in calendar days.
+  durationDays    Int
+  /// How many times probation may be extended for one employee.
+  maxExtensions   Int                 @default(1)
+  /// Offered as the default length of an extension.
+  extensionDays   Int                 @default(30)
+  completion      ProbationCompletion @default(EVALUATION)
+  /// The review opens this many days before probation ends.
+  reviewLeadDays  Int                 @default(15)
+  /// Ask the employee for their own feedback alongside the manager's.
+  selfReview      Boolean             @default(true)
+  isDefault       Boolean             @default(false)
+  isActive        Boolean             @default(true)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  probations      EmployeeProbation[]
+
+  @@unique([tenantId, name])
+  @@map("probation_policies")
+}
+
+model EmployeeProbation {
+  id              String              @id @default(cuid())
+  tenantId        String
+  tenant          Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId      String              @unique
+  employee        Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  policyId        String
+  policy          ProbationPolicy     @relation(fields: [policyId], references: [id], onDelete: NoAction)
+
+  startDate       DateTime            @db.Date
+  /// The end date the policy first gave, kept when extensions move endDate.
+  originalEndDate DateTime            @db.Date
+  /// Last day of probation. Confirmation takes effect the day after.
+  endDate         DateTime            @db.Date
+  extensions      Int                 @default(0)
+  status          ProbationStatus     @default(ACTIVE)
+  /// Review round; bumps with each extension so feedback is asked again.
+  round           Int                 @default(1)
+  reviewOpenedAt  DateTime?
+
+  decision        ProbationRecommendation?
+  decidedBy       String?
+  decidedAt       DateTime?
+  decisionNote    String?
+  /// Effective confirmation date written to the employee record.
+  confirmedOn     DateTime?           @db.Date
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  evaluations     ProbationEvaluation[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, endDate])
+  @@map("employee_probations")
+}
+
+model ProbationEvaluation {
+  id              String                    @id @default(cuid())
+  probationId     String
+  probation       EmployeeProbation         @relation(fields: [probationId], references: [id], onDelete: Cascade)
+  round           Int
+  role            ProbationEvaluatorRole
+  evaluatorId     String
+  evaluator       Employee                  @relation("ProbationEvaluator", fields: [evaluatorId], references: [id], onDelete: Cascade)
+  status          ProbationEvaluationStatus @default(PENDING)
+  dueDate         DateTime                  @db.Date
+
+  /// 1–5.
+  rating          Int?
+  /// The manager's recommendation; a self review carries none.
+  recommendation  ProbationRecommendation?
+  strengths       String?
+  improvements    String?
+  comments        String?
+  submittedAt     DateTime?
+  createdAt       DateTime                  @default(now())
+
+  @@unique([probationId, round, role])
+  @@index([evaluatorId, status])
+  @@map("probation_evaluations")
+}

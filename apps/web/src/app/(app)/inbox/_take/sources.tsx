@@ -9,7 +9,7 @@ import { can, type Viewer } from "@/lib/context";
 import { scopedEmployeeIds, scopedEmployeeWhere, inScope, timesheetsToApproveWhere } from "@/lib/scope";
 import {
   IconCalendar, IconClock, IconTimer, IconReceipt, IconWallet, IconDollarCircle, IconLogout,
-  IconUserPlus, IconFile, IconHeadset, IconLedger,
+  IconUserPlus, IconFile, IconHeadset, IconLedger, IconCheck,
 } from "@/components/icons";
 import { DecisionForm } from "../../_time/leave-forms";
 import { TimeOffDecision } from "../../_time/timeoff-decision";
@@ -17,6 +17,7 @@ import { LoanDecision } from "../../payroll/_forms/loans";
 import { TimesheetDecision } from "../../projects/forms";
 import { ClaimDecision } from "../../expenses/forms";
 import { ExitDecisionForm, TaskControls, ReplyForm } from "../../_lifecycle/forms";
+import { EvaluationForm } from "../../probation/forms";
 import { DetailPane, Facts, Message, PersonStrip, type ActivityEntry, type ListItem } from "../_ui/panes";
 import { formatInstantDate, formatTime, humanise } from "../_ui/format";
 import { resolvePeople, who, type PersonRef } from "../_ui/people";
@@ -517,6 +518,47 @@ export async function takeActionSources(viewer: Viewer): Promise<TakeSource[]> {
               ["Category", humanise(t.category)],
               ["Required", t.isRequired ? "Yes" : "Optional"],
             ]} />
+          </DetailPane>
+        );
+      },
+    });
+  }
+
+  // ---- Probation reviews asked of the viewer (as manager, or about themselves)
+  if (me) {
+    const where: Prisma.ProbationEvaluationWhereInput = {
+      evaluatorId: me, status: "PENDING", probation: { tenantId, status: "IN_REVIEW" },
+    };
+    const include = { probation: { select: { endDate: true, startDate: true, reviewOpenedAt: true, createdAt: true, employee: { select: EMP_CARD } } } } as const;
+    sources.push({
+      key: "probation", label: "Probation reviews", icon: <IconCheck />, always: false,
+      count: () => prisma.probationEvaluation.count({ where }),
+      list: async () => (await prisma.probationEvaluation.findMany({ where, include, orderBy: { dueDate: "asc" }, take: 200 }))
+        .map((e) => ({
+          id: e.id, person: person(e.probation.employee), at: e.probation.reviewOpenedAt ?? e.createdAt,
+          title: `${e.role === "SELF" ? "Your probation review" : "Probation review"} · due ${formatDate(e.dueDate)}`,
+          tag: e.dueDate.getTime() < Date.now() - DAY ? "Overdue" : undefined,
+          tagTone: e.dueDate.getTime() < Date.now() - DAY ? "danger" as const : undefined,
+        })),
+      detail: async (id) => {
+        const e = await prisma.probationEvaluation.findFirst({ where: { ...where, id }, include });
+        if (!e) return null;
+        const p = person(e.probation.employee);
+        const self = e.role === "SELF";
+        const overdue = e.dueDate.getTime() < Date.now() - DAY;
+        return (
+          <DetailPane title={self ? "Your probation review" : `Probation review for ${p.name}`} sub={initiated(e.probation.reviewOpenedAt ?? e.createdAt)}
+            status={overdue ? { label: "Overdue", tone: "danger" } : PENDING}
+            activity={[{ who: null, text: self ? "Your probation review opened" : `${p.name}'s probation review opened; your feedback was requested`, at: e.probation.reviewOpenedAt ?? e.createdAt }]}>
+            <p>{self
+              ? "Your probation is coming to an end. Tell us how your first months have gone; HR reads this alongside your manager's review."
+              : `${p.name}'s probation ends on ${formatDate(e.probation.endDate)}. Rate their first months and recommend whether to confirm them. HR makes the decision.`}</p>
+            {self ? null : <PersonStrip person={p} meta={cardMeta(e.probation.employee)} />}
+            <Facts items={[
+              ["Probation", range(e.probation.startDate, e.probation.endDate)],
+              ["Feedback due", <span key="due" className={overdue ? "neg strong" : undefined}>{formatDate(e.dueDate)}</span>],
+            ]} />
+            <EvaluationForm evaluationId={e.id} role={e.role} name={p.name} />
           </DetailPane>
         );
       },
