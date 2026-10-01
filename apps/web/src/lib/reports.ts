@@ -393,7 +393,204 @@ const helpdeskSla: ReportDef = {
   },
 };
 
-export const REPORTS: ReportDef[] = [headcount, attrition, probation, payrollSummary, payrollByDept, loansOutstanding, attendanceSummary, leaveUtil, statutoryDues, dataQuality, helpdeskSla];
+// --- Payroll inputs and year-to-date -------------------------------------
+
+const fyRunWhere = (fy: number) => ({ rolledBackAt: null, status: "FINALIZED" as const, OR: [{ year: fy, month: { gte: 4 } }, { year: fy + 1, month: { lte: 3 } }] });
+const label = (s: string) => s.toLowerCase().replace(/_/g, " ");
+
+const payrollYtd: ReportDef = {
+  key: "payroll-ytd", title: "Year-to-date salary by employee", group: "Payroll", permission: P.PAY_REGISTER_VIEW,
+  description: "Everything paid and deducted in the financial year's finalised runs, regular and off-cycle, one row per employee.",
+  async run(viewer, { fy }) {
+    const lines = await prisma.payrollRunEmployee.findMany({
+      where: { run: { tenantId: viewer.tenantId, ...fyRunWhere(fy) }, employee: scopedEmployeeWhere(viewer, P.PAY_REGISTER_VIEW) },
+      select: {
+        grossEarnings: true, totalDeductions: true, netPay: true, pfEmployee: true, vpf: true, esiEmployee: true, professionalTax: true, lwfEmployee: true, tds: true,
+        run: { select: { year: true, month: true } },
+        employee: { select: { id: true, displayName: true, employeeNumber: true } },
+      },
+    });
+    type Row = { employee: string; number: string; months: Set<string>; gross: number; pf: number; esi: number; pt: number; tds: number; other: number; net: number; _href: string };
+    const by = new Map<string, Row>();
+    for (const l of lines) {
+      const r = by.get(l.employee.id) ?? { employee: l.employee.displayName ?? "", number: l.employee.employeeNumber, months: new Set<string>(), gross: 0, pf: 0, esi: 0, pt: 0, tds: 0, other: 0, net: 0, _href: `/employees/${l.employee.id}?tab=finances` };
+      const pf = Number(l.pfEmployee) + Number(l.vpf), esi = Number(l.esiEmployee), pt = Number(l.professionalTax), tds = Number(l.tds);
+      r.months.add(`${l.run.year}-${l.run.month}`);
+      r.gross += Number(l.grossEarnings); r.pf += pf; r.esi += esi; r.pt += pt; r.tds += tds; r.net += Number(l.netPay);
+      r.other += Number(l.totalDeductions) - pf - esi - pt - tds;
+      by.set(l.employee.id, r);
+    }
+    const rows = [...by.values()].sort((a, b) => a.number.localeCompare(b.number)).map(({ months, ...r }) => ({ ...r, months: months.size, other: r2(r.other) }));
+    const sum = (k: "gross" | "pf" | "esi" | "pt" | "tds" | "other" | "net") => rows.reduce((s, r) => s + r[k], 0);
+    return {
+      columns: [
+        { key: "employee", label: "Employee" }, { key: "number", label: "No." }, { key: "months", label: "Months paid", format: "int" },
+        { key: "gross", label: "Gross", format: "inr" }, { key: "pf", label: "PF + VPF", format: "inr" }, { key: "esi", label: "ESI", format: "inr" },
+        { key: "pt", label: "PT", format: "inr" }, { key: "tds", label: "TDS", format: "inr" }, { key: "other", label: "Other deductions", format: "inr" }, { key: "net", label: "Net paid", format: "inr" },
+      ],
+      rows,
+      totals: { employee: "All", gross: sum("gross"), pf: sum("pf"), esi: sum("esi"), pt: sum("pt"), tds: sum("tds"), other: sum("other"), net: sum("net") },
+      notes: rows.length ? [] : ["No finalised payroll in this financial year yet."],
+    };
+  },
+};
+
+const incomeTax: ReportDef = {
+  key: "income-tax", title: "Income tax deducted and projected", group: "Payroll", permission: P.PAY_REGISTER_VIEW,
+  description: "TDS deducted so far this year, the latest month's TDS, where the year is heading at that rate, and how far each employee's declaration and proofs have got.",
+  async run(viewer, { fy }) {
+    const emps = await prisma.employee.findMany({
+      where: { ...scopedEmployeeWhere(viewer, P.PAY_REGISTER_VIEW), status: { notIn: ["PREBOARDING"] }, payGroupId: { not: null } },
+      select: {
+        id: true, displayName: true, employeeNumber: true, status: true,
+        statutoryProfile: { select: { taxRegime: true } },
+        declarations: { where: { fyStartYear: fy }, select: { status: true, declaredTotal: true, approvedTotal: true, items: { select: { proofStatus: true } } } },
+        payrollLines: {
+          where: { run: { ...fyRunWhere(fy) } },
+          select: { tds: true, grossEarnings: true, run: { select: { year: true, month: true, type: true } } },
+        },
+      },
+      orderBy: { employeeNumber: "asc" },
+    });
+    const fyIndex = (y: number, m: number) => (y - fy) * 12 + m - 4; // 0 = April
+    const rows = emps.map((e) => {
+      const regular = e.payrollLines.filter((l) => l.run.type === "REGULAR").sort((a, b) => fyIndex(b.run.year, b.run.month) - fyIndex(a.run.year, a.run.month));
+      const deducted = e.payrollLines.reduce((s, l) => s + Number(l.tds), 0);
+      const latest = regular[0];
+      const monthly = latest ? Number(latest.tds) : 0;
+      const left = latest && e.status !== "EXITED" ? 11 - fyIndex(latest.run.year, latest.run.month) : 0;
+      const d = e.declarations[0];
+      const pendingProofs = d ? d.items.filter((i) => i.proofStatus === "SUBMITTED").length : 0;
+      return {
+        employee: e.displayName, number: e.employeeNumber, regime: e.statutoryProfile?.taxRegime ?? "NEW",
+        gross: e.payrollLines.reduce((s, l) => s + Number(l.grossEarnings), 0), deducted, monthly, projected: deducted + monthly * Math.max(0, left),
+        declaration: d ? label(d.status) : "not started", declared: d ? Number(d.declaredTotal) : 0, approved: d ? Number(d.approvedTotal) : 0,
+        proofs: pendingProofs, _href: `/employees/${e.id}?tab=finances`, _tone: pendingProofs > 0 ? ("warning" as const) : undefined,
+      };
+    });
+    const sum = (k: "gross" | "deducted" | "projected") => rows.reduce((s, r) => s + r[k], 0);
+    return {
+      columns: [
+        { key: "employee", label: "Employee" }, { key: "number", label: "No." }, { key: "regime", label: "Regime" },
+        { key: "gross", label: "Gross YTD", format: "inr" }, { key: "deducted", label: "TDS YTD", format: "inr" }, { key: "monthly", label: "Latest monthly TDS", format: "inr" },
+        { key: "projected", label: "Projected year TDS", format: "inr" }, { key: "declaration", label: "Declaration" },
+        { key: "declared", label: "Declared", format: "inr" }, { key: "approved", label: "Approved", format: "inr" }, { key: "proofs", label: "Proofs to review", format: "int" },
+      ],
+      rows,
+      totals: { employee: "All", gross: sum("gross"), deducted: sum("deducted"), projected: sum("projected") },
+      notes: ["Projected TDS assumes the latest regular month's TDS repeats for the rest of the year; the run recalculates it every month from actual pay and approved proofs."],
+    };
+  },
+};
+
+const componentClaims: ReportDef = {
+  key: "component-claims", title: "Reimbursement claims by component", group: "Payroll", permission: P.PAYROLL_VIEW,
+  description: "Claims against reimbursement and flexible benefit components for the year: claimed, approved, paid, rejected and still waiting.",
+  async run(viewer, { fy }) {
+    const claims = await prisma.componentClaim.findMany({
+      where: { fyStartYear: fy, employee: scopedEmployeeWhere(viewer, P.PAYROLL_VIEW), status: { not: "DRAFT" } },
+      select: { status: true, claimedAmount: true, payableAmount: true, component: { select: { name: true } } },
+    });
+    const declared = await prisma.fbpDeclarationLine.findMany({
+      where: { declaration: { fyStartYear: fy, employee: scopedEmployeeWhere(viewer, P.PAYROLL_VIEW) } },
+      select: { annualAmount: true, component: { select: { name: true } } },
+    });
+    type Row = { component: string; declared: number; count: number; claimed: number; waiting: number; approved: number; paid: number; rejected: number };
+    const by = new Map<string, Row>();
+    const get = (k: string) => by.get(k) ?? { component: k, declared: 0, count: 0, claimed: 0, waiting: 0, approved: 0, paid: 0, rejected: 0 };
+    for (const d of declared) { const r = get(d.component.name); r.declared += Number(d.annualAmount); by.set(r.component, r); }
+    for (const c of claims) {
+      const r = get(c.component.name);
+      const claimed = Number(c.claimedAmount), payable = Number(c.payableAmount ?? c.claimedAmount);
+      r.count++; r.claimed += claimed;
+      if (c.status === "SUBMITTED") r.waiting += claimed;
+      if (c.status === "APPROVED") r.approved += payable;
+      if (c.status === "PAID") r.paid += payable;
+      if (c.status === "REJECTED") r.rejected += claimed;
+      by.set(r.component, r);
+    }
+    const rows = [...by.values()].sort((a, b) => b.claimed - a.claimed).map((r) => ({ ...r, _tone: r.waiting > 0 ? ("warning" as const) : undefined }));
+    const sum = (k: keyof Omit<Row, "component">) => rows.reduce((s, r) => s + r[k], 0);
+    return {
+      columns: [
+        { key: "component", label: "Component" }, { key: "declared", label: "Declared under FBP", format: "inr" }, { key: "count", label: "Claims", format: "int" },
+        { key: "claimed", label: "Claimed", format: "inr" }, { key: "waiting", label: "Waiting", format: "inr" }, { key: "approved", label: "Approved, unpaid", format: "inr" },
+        { key: "paid", label: "Paid", format: "inr" }, { key: "rejected", label: "Rejected", format: "inr" },
+      ],
+      rows,
+      totals: { component: "All", declared: sum("declared"), count: sum("count"), claimed: sum("claimed"), waiting: sum("waiting"), approved: sum("approved"), paid: sum("paid"), rejected: sum("rejected") },
+    };
+  },
+};
+
+const salaryRevisions: ReportDef = {
+  key: "salary-revisions", title: "Salary revisions", group: "Payroll", permission: P.PAY_REGISTER_VIEW,
+  description: "Every salary change effective in the year, with the size of the change and whether it is applied, still with approvers, or rejected.",
+  async run(viewer, { fy }) {
+    const revs = await prisma.salaryRevision.findMany({
+      where: { employee: scopedEmployeeWhere(viewer, P.PAY_REGISTER_VIEW), effectiveFrom: { gte: monthStart(fy, 4), lte: monthEnd(fy + 1, 3) } },
+      select: { effectiveFrom: true, annualCtc: true, previousCtc: true, reason: true, status: true, employee: { select: { id: true, displayName: true, employeeNumber: true } } },
+      orderBy: { effectiveFrom: "asc" },
+    });
+    const rows = revs.map((r) => {
+      const prev = r.previousCtc ? Number(r.previousCtc) : 0;
+      return {
+        employee: r.employee.displayName, number: r.employee.employeeNumber, effective: r.effectiveFrom,
+        previous: prev || null, ctc: Number(r.annualCtc), change: prev ? (Number(r.annualCtc) - prev) / prev : null,
+        reason: r.reason ?? "", status: label(r.status), _href: `/employees/${r.employee.id}?tab=finances`,
+        _tone: r.status === "PENDING_APPROVAL" ? ("warning" as const) : r.status === "REJECTED" ? ("danger" as const) : undefined,
+      };
+    });
+    const applied = rows.filter((r) => r.status === "applied" && r.previous);
+    return {
+      columns: [
+        { key: "employee", label: "Employee" }, { key: "number", label: "No." }, { key: "effective", label: "Effective", format: "date" },
+        { key: "previous", label: "Previous CTC", format: "inr" }, { key: "ctc", label: "New CTC", format: "inr" }, { key: "change", label: "Change", format: "pct" },
+        { key: "reason", label: "Reason" }, { key: "status", label: "Status" },
+      ],
+      rows,
+      notes: applied.length ? [`Average applied increase: ${((applied.reduce((s, r) => s + (r.change ?? 0), 0) / applied.length) * 100).toFixed(1)}% across ${applied.length} revisions.`] : [],
+    };
+  },
+};
+
+const bonusRegister: ReportDef = {
+  key: "bonuses", title: "Bonuses", group: "Payroll", permission: P.PAYROLL_VIEW,
+  description: "Bonuses scheduled for payout in the year by type: paid through payroll, paid outside it, on hold, voided and still to come.",
+  async run(viewer, { fy }) {
+    const bonuses = await prisma.employeeBonus.findMany({
+      where: { employee: scopedEmployeeWhere(viewer, P.PAYROLL_VIEW), OR: [{ payoutYear: fy, payoutMonth: { gte: 4 } }, { payoutYear: fy + 1, payoutMonth: { lte: 3 } }] },
+      select: { amount: true, paidAmount: true, payAction: true, isProcessed: true, bonusType: { select: { name: true } } },
+    });
+    type Row = { type: string; count: number; scheduled: number; paid: number; outside: number; held: number; voided: number; upcoming: number };
+    const by = new Map<string, Row>();
+    for (const b of bonuses) {
+      const r = by.get(b.bonusType.name) ?? { type: b.bonusType.name, count: 0, scheduled: 0, paid: 0, outside: 0, held: 0, voided: 0, upcoming: 0 };
+      const amt = Number(b.amount);
+      r.count++; r.scheduled += amt;
+      if (b.payAction === "VOID") r.voided += amt;
+      else if (b.payAction === "ON_HOLD") r.held += amt;
+      else if (b.payAction === "PAY_OUTSIDE_PAYROLL") r.outside += amt;
+      else if (b.isProcessed) r.paid += b.payAction === "PARTIALLY_PAY" ? Number(b.paidAmount ?? 0) : amt;
+      else r.upcoming += b.payAction === "PARTIALLY_PAY" ? Number(b.paidAmount ?? 0) : amt;
+      by.set(r.type, r);
+    }
+    const rows = [...by.values()].sort((a, b) => b.scheduled - a.scheduled);
+    const sum = (k: keyof Omit<Row, "type">) => rows.reduce((s, r) => s + r[k], 0);
+    return {
+      columns: [
+        { key: "type", label: "Bonus type" }, { key: "count", label: "Bonuses", format: "int" }, { key: "scheduled", label: "Scheduled", format: "inr" },
+        { key: "paid", label: "Paid in payroll", format: "inr" }, { key: "outside", label: "Paid outside", format: "inr" }, { key: "held", label: "On hold", format: "inr" },
+        { key: "voided", label: "Voided", format: "inr" }, { key: "upcoming", label: "Still to pay", format: "inr" },
+      ],
+      rows,
+      totals: { type: "All", count: sum("count"), scheduled: sum("scheduled"), paid: sum("paid"), outside: sum("outside"), held: sum("held"), voided: sum("voided"), upcoming: sum("upcoming") },
+    };
+  },
+};
+
+
+export const REPORTS: ReportDef[] = [headcount, attrition, probation, payrollSummary, payrollByDept, payrollYtd, incomeTax, salaryRevisions, bonusRegister, componentClaims, loansOutstanding, attendanceSummary, leaveUtil, statutoryDues, dataQuality, helpdeskSla];
 
 export function reportsFor(viewer: Viewer): ReportDef[] {
   return REPORTS.filter((r) => can(viewer, r.permission));
