@@ -1,6 +1,7 @@
 import { prisma } from "@keka/db";
-import { capacityOf, hourlyCost, peakLoad, r2, DEFAULT_CAPACITY } from "./psa-math";
+import { capacityOf, hourlyCost, peakLoad } from "./psa-math";
 import { notify } from "./lifecycle";
+
 
 /**
  * Resourcing: the billing roles master, soft and hard allocations from the
@@ -285,4 +286,3 @@ export function costLabel(p: { costType: string | null; costAmount: unknown; cur
 }
 
 export const CAPACITY_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-export { DEFAULT_CAPACITY, r2 as round2 };

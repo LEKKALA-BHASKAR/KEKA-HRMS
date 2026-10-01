@@ -9,7 +9,7 @@
  */
 
 const DAY = 86_400_000;
-export const r2 = (n: number) => Math.round(n * 100) / 100;
+const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Hours available Sunday..Saturday when a person has no resource profile. */
 export const DEFAULT_CAPACITY = [0, 8, 8, 8, 8, 8, 0];
@@ -218,7 +218,7 @@ export function isCritical(r: { status: string; startDate: Date }, today: Date, 
 }
 
 /** Whole years between two dates. */
-export function yearsBetween(from: Date, to: Date): number {
+export function wholeYearsBetween(from: Date, to: Date): number {
   let y = to.getUTCFullYear() - from.getUTCFullYear();
   if (to.getUTCMonth() < from.getUTCMonth() || (to.getUTCMonth() === from.getUTCMonth() && to.getUTCDate() < from.getUTCDate())) y--;
   return Math.max(0, y);
@@ -273,7 +273,7 @@ export function invoiceStatusLabel(inv: { status: string; dueDate: Date; amountD
 }
 
 /** Percentage change, for the deterministic insights. Null without a base. */
-export function pctChange(prev: number, cur: number): number | null {
+export function psaPctChange(prev: number, cur: number): number | null {
   return prev > 0 ? r2(((cur - prev) / prev) * 100) : null;
 }
 

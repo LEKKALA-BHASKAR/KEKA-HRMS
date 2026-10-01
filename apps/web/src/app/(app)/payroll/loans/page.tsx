@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
-import { formatDate, formatINR } from "@keka/shared";
+import { formatDate, formatINR, MONTH_SHORT } from "@keka/shared";
 import { concessionalLoanPerquisite } from "@keka/payroll";
 import { requireAuth, can } from "@/lib/context";
 import { scopedEmployeeWhere } from "@/lib/scope";
@@ -29,7 +29,8 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
   });
   const pending = all.filter((l) => ["REQUESTED", "PENDING_APPROVAL"].includes(l.status));
   const active = all.filter((l) => ["APPROVED", "DISBURSED", "ACTIVE"].includes(l.status));
-  const closed = all.filter((l) => ["CLOSED", "FORECLOSED", "REJECTED"].includes(l.status));
+  const closed = all.filter((l) => ["CLOSED", "FORECLOSED", "REJECTED", "WITHDRAWN"].includes(l.status));
+  const ym = (y: number | null, m: number | null) => (y && m ? `${MONTH_SHORT[m - 1]} ${y}` : "—");
   const outstanding = active.reduce((s, l) => s + Number(l.outstanding), 0);
   const now = new Date();
   const thisMonth = active.flatMap((l) => l.schedule.filter((i) => i.year === now.getUTCFullYear() && i.month === now.getUTCMonth() + 1 && i.status === "SCHEDULED"));
@@ -56,15 +57,17 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
           {pending.length === 0 ? <Empty title="No loan requests waiting" /> : (
             <div className="table-wrap">
               <table className="data">
-                <thead><tr><th>Employee</th><th>Type</th><th className="num">Amount</th><th className="num">Months</th><th className="num">EMI</th><th>Purpose</th><th>Requested</th><th /></tr></thead>
+                <thead><tr><th>Employee</th><th>Type</th><th className="num">Amount</th><th className="num">Months</th><th className="num">EMI</th><th>Expected</th><th>EMI from</th><th>Purpose</th><th>Requested</th><th /></tr></thead>
                 <tbody>
                   {pending.map((l) => (
                     <tr key={l.id}>
                       <td><Person name={l.employee.displayName ?? ""} meta={l.employee.employeeNumber} /></td>
-                      <td>{l.category.name}</td>
+                      <td>{l.category.name}{l.category.code ? <div className="text-xs subtle">{l.category.code}</div> : null}</td>
                       <td className="num">{formatINR(Number(l.principal))}</td>
                       <td className="num">{l.installments}</td>
                       <td className="num">{formatINR(Number(l.emiAmount))}</td>
+                      <td className="nowrap text-sm">{ym(l.expectedYear, l.expectedMonth)}</td>
+                      <td className="nowrap text-sm">{ym(l.startYear, l.startMonth)}</td>
                       <td className="text-sm muted" style={{ maxWidth: 240 }}>{l.purpose ?? "—"}</td>
                       <td className="nowrap text-sm">{formatDate(l.requestedAt)}</td>
                       <td className="right">{can(viewer, P.LOAN_APPROVE) && l.employeeId !== viewer.employee?.id ? <LoanDecision loanId={l.id} /> : null}</td>
@@ -102,7 +105,7 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                         </td>
                         <td className="num">{formatINR(Number(l.outstanding))}{perq && perq.monthly.gt(0) ? <div className="text-xs" style={{ color: "var(--warning)" }}>perquisite {formatINR(perq.monthly.toNumber())}/mo</div> : null}</td>
                         <td className="nowrap text-sm">{next ? `${formatINR(Number(next.totalAmount))} · ${next.month}/${next.year}` : "—"}</td>
-                        <td><Badge tone={l.status === "ACTIVE" ? "success" : l.status === "APPROVED" ? "warning" : "neutral"}>{l.status.toLowerCase()}</Badge>{l.decisionNote ? <div className="text-xs subtle">{l.decisionNote}</div> : null}</td>
+                        <td><Badge tone={l.status === "ACTIVE" ? "success" : l.status === "APPROVED" ? "warning" : l.status === "REJECTED" ? "danger" : "neutral"}>{l.status.toLowerCase()}</Badge>{l.decisionNote ? <div className="text-xs subtle">{l.decisionNote}</div> : null}</td>
                         <td className="right">{tab === "active" ? <LoanOps loanId={l.id} status={l.status} upcoming={upcoming} /> : null}</td>
                       </tr>
                     );
@@ -135,8 +138,8 @@ async function Setup({ tenantId }: { tenantId: string }) {
       {categories.map((c) => {
         const rule = policy?.rules.find((r) => r.categoryId === c.id);
         return (
-          <Card key={c.id} title={c.name} description={c.isConcessional ? `Concessional · benchmark ${Number(c.sbiBenchmarkRate ?? 0)}%` : undefined}>
-            <LoanCategoryForm category={{ id: c.id, name: c.name, description: c.description, isConcessional: c.isConcessional, sbiBenchmarkRate: n(c.sbiBenchmarkRate) }} />
+          <Card key={c.id} title={c.code ? `${c.name} · ${c.code}` : c.name} description={c.isConcessional ? `Concessional · benchmark ${Number(c.sbiBenchmarkRate ?? 0)}%` : undefined}>
+            <LoanCategoryForm category={{ id: c.id, name: c.name, code: c.code, description: c.description, isConcessional: c.isConcessional, sbiBenchmarkRate: n(c.sbiBenchmarkRate) }} />
             {policy ? (
               <>
                 <div className="divider" />

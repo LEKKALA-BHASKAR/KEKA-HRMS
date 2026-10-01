@@ -16,7 +16,6 @@ export * from "./accounting-math";
 export * from "./accounting";
 export * from "./declarations";
 export * from "./profile";
-<<<<<<< HEAD
 export * from "./engagement-math";
 export * from "./learning-math";
 export * from "./analytics-math";
@@ -24,14 +23,10 @@ export * from "./time-requests";
 export * from "./learning";
 export * from "./probation-math";
 export * from "./probation";
-=======
 export * from "./performance-learning";
 export * from "./hire";
 export * from "./finances";
-export * from "./analytics-math";
 export * from "./analytics";
-export * from "./time-requests";
 export * from "./assets";
 export * from "./helpdesk";
 export * from "./home-wall";
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)

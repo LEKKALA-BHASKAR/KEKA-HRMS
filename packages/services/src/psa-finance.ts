@@ -2,7 +2,9 @@ import { prisma, Prisma } from "@keka/db";
 import { gst } from "./projects-math";
 import { stateCode } from "./projects";
 import { postEntry, postInvoice, reverseEntry } from "./accounting";
-import { markupPct, r2 } from "./psa-math";
+import { markupPct } from "./psa-math";
+
+const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
  * Project finance: charges (what is ready to bill), invoices and proforma

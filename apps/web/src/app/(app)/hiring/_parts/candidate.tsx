@@ -23,7 +23,7 @@ export function StageSelect({ applicationId, stages, current, disabled }: { appl
   return (
     <form ref={form} action={action}>
       <input type="hidden" name="applicationId" value={applicationId} />
-      <select name="stageId" className={s.stageSelect} defaultValue={current ?? ""} disabled={disabled || pending} aria-label="Hiring stage"
+      <select key={current ?? "none"} name="stageId" className={s.stageSelect} defaultValue={current ?? ""} disabled={disabled || pending} aria-label="Hiring stage"
         onChange={() => form.current?.requestSubmit()}>
         {stages.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>

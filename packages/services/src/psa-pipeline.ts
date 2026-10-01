@@ -1,7 +1,9 @@
 import { prisma, Prisma } from "@keka/db";
 import { notify } from "./lifecycle";
 import { refreshProjectHealth } from "./projects";
-import { checkOpportunityDates, estimateLine, estimateTotals, r2, type EstimateLineInput } from "./psa-math";
+import { checkOpportunityDates, estimateLine, estimateTotals, type EstimateLineInput } from "./psa-math";
+
+const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
  * The sales side of PSA: opportunities moving through stages, prospects,
