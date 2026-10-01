@@ -32,7 +32,11 @@ export interface WindowState {
   till: Date | null;
   /** One sentence for the employee. */
   note: string;
+  /** Keka's label/value rows for an open window: "Current Window — Till …", "Monthly Window — …". */
+  rows?: Array<[string, string]>;
 }
+
+const ordinal = (d: number) => `${d}${d % 10 === 1 && d !== 11 ? "st" : d % 10 === 2 && d !== 12 ? "nd" : d % 10 === 3 && d !== 13 ? "rd" : "th"}`;
 
 const IST_OFFSET_MIN = 330;
 const dayKey = (d: Date) => d.toISOString().slice(0, 10);
@@ -88,9 +92,9 @@ export function declarationWindows(
   if (opts.locked) {
     declaration = closed("Your payroll team has locked your declaration for this year.");
   } else if (s.allowLateDeclaration && dayKey(today) <= dayKey(fyEnd)) {
-    declaration = { open: true, till: fyEnd, note: `Late declarations are allowed this year: you can add or edit declarations until ${fmt(fyEnd)}.` };
+    declaration = { open: true, till: fyEnd, note: `Late declarations are allowed this year: you can add or edit declarations until ${fmt(fyEnd)}.`, rows: [["Current Window", `Till ${fmt(fyEnd)}`]] };
   } else if (opts.joinedOn <= today && dayKey(today) <= dayKey(joinTill)) {
-    declaration = { open: true, till: joinTill, note: `As a new joiner you can add or edit declarations until ${fmt(joinTill)}.` };
+    declaration = { open: true, till: joinTill, note: `As a new joiner you can add or edit declarations until ${fmt(joinTill)}.`, rows: [["Current Window", `Till ${fmt(joinTill)}`], ["New Joiner Window", `${s.newJoinerWindowDays} days from joining`]] };
   } else if (dayKey(today) > dayKey(cutoff)) {
     declaration = closed("You cannot add or edit declarations as the investment declaration window has lapsed.");
   } else {
@@ -103,6 +107,7 @@ export function declarationWindows(
       declaration = {
         open: true, till,
         note: `You can add or edit declarations until ${fmt(till)}. The window opens on day ${s.declarationOpenDay} and closes on day ${s.declarationCloseDay} of each month, until ${fmt(cutoff)}.`,
+        rows: [["Current Window", `Till ${fmt(till)}`], ["Monthly Window", `${ordinal(s.declarationOpenDay)} to ${ordinal(s.declarationCloseDay)} of every month till ${fmt(cutoff)}`]],
       };
     } else {
       const next = d < openD ? utc(y, m, openD) : utc(y, m + 1, Math.min(s.declarationOpenDay, lastDay(y, m + 1)));

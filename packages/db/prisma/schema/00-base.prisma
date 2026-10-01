@@ -8,7 +8,7 @@
 // ============================================================================
 
 generator client {
-  provider        = "prisma-client-js"
+  provider = "prisma-client-js"
   // multi-file schema (prisma/schema/) is GA as of Prisma 6.7
 }
 
@@ -29,127 +29,190 @@ enum PlanTier {
 
 /// A customer account. Owns every other row in the system.
 model Tenant {
-  id          String   @id @default(cuid())
+  id        String   @id @default(cuid())
   /// Tenant address: <subdomain>.keka.local — also stamped on every webhook payload.
-  subdomain   String   @unique
-  name        String
+  subdomain String   @unique
+  name      String
   /// Commercial tier. Gates features per the published matrix (Teardown Part 04).
-  plan        PlanTier @default(FOUNDATION)
+  plan      PlanTier @default(FOUNDATION)
   /// Add-on product flags — neither can be bought standalone.
-  hasHire     Boolean  @default(false)
-  hasPsa      Boolean  @default(false)
-  hasLearn    Boolean  @default(false)
+  hasHire   Boolean  @default(false)
+  hasPsa    Boolean  @default(false)
+  hasLearn  Boolean  @default(false)
 
-  countryCode String   @default("IN")
-  currency    String   @default("INR")
-  timezone    String   @default("Asia/Kolkata")
+  countryCode  String  @default("IN")
+  currency     String  @default("INR")
+  timezone     String  @default("Asia/Kolkata")
   /// Financial year start month, 1-12. India defaults to April.
   fyStartMonth Int     @default(4)
-  logoUrl     String?
+  logoUrl      String?
 
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  users              User[]
-  legalEntities      LegalEntity[]
-  businessUnits      BusinessUnit[]
-  departments        Department[]
-  locations          Location[]
-  costCenters        CostCenter[]
-  bands              Band[]
-  payGrades          PayGrade[]
-  workerTypes        WorkerType[]
-  jobTitles          JobTitle[]
-  employees          Employee[]
+  users                User[]
+  legalEntities        LegalEntity[]
+  businessUnits        BusinessUnit[]
+  departments          Department[]
+  locations            Location[]
+  costCenters          CostCenter[]
+  bands                Band[]
+  payGrades            PayGrade[]
+  workerTypes          WorkerType[]
+  jobTitles            JobTitle[]
+  employees            Employee[]
   employeeNumberSeries EmployeeNumberSeries[]
-  roles              Role[]
-  auditLogs          AuditLog[]
-  customFieldDefs    CustomFieldDefinition[]
-  payGroups          PayGroup[]
-  salaryComponents   SalaryComponent[]
-  payrollRuns        PayrollRun[]
-  visibilitySetting  TenantVisibilitySetting?
-  securitySetting    TenantSecuritySetting?
-  loginEvents        LoginEvent[]
-
+  roles                Role[]
+  auditLogs            AuditLog[]
+  customFieldDefs      CustomFieldDefinition[]
+  payGroups            PayGroup[]
+  salaryComponents     SalaryComponent[]
+  payrollRuns          PayrollRun[]
+  visibilitySetting    TenantVisibilitySetting?
+  securitySetting      TenantSecuritySetting?
+  loginEvents          LoginEvent[]
 
   // --- Ownership of tenant-scoped records (cascade on tenant deletion) ---
-  accountMappings AccountMapping[]
-  accountingPeriods AccountingPeriod[]
-  accounts Account[]
-  announcements Announcement[]
-  applications Application[]
-  assetCategories AssetCategory[]
-  assetIdSeries AssetIdSeries[]
-  assetRequests AssetRequest[]
-  assets Asset[]
-  attendanceLogs AttendanceLog[]
-  attendancePolicies AttendancePolicy[]
-  attendanceRecords AttendanceRecord[]
-  attendanceRequests AttendanceRequest[]
-  awardTypes AwardType[]
-  bgvChecks BgvCheck[]
-  bonusTypes BonusType[]
-  candidates Candidate[]
-  cashAdvances CashAdvance[]
-  clients Client[]
-  documentFolders DocumentFolder[]
-  documentTemplates DocumentTemplate[]
-  emailOutbox EmailOutbox[]
-  employeeAwards EmployeeAward[]
-  employeeContracts EmployeeContract[]
-  employeeDocuments EmployeeDocument[]
-  expenseCategories ExpenseCategory[]
-  expenseClaims ExpenseClaim[]
-  expensePolicies ExpensePolicy[]
-  goalTypes GoalType[]
-  goals Goal[]
-  helpdeskCategories HelpdeskCategory[]
-  helpdeskTickets HelpdeskTicket[]
-  hiringFlows HiringFlow[]
-  holidayCalendars HolidayCalendar[]
-  hrActivities HrActivity[]
-  improvementPlans ImprovementPlan[]
-  indicatorCategories IndicatorCategory[]
-  invoices Invoice[]
-  jobs Job[]
-  journeyTemplates JourneyTemplate[]
-  journeys Journey[]
-  leaveLedgerEntries LeaveLedgerEntry[]
-  leavePlans LeavePlan[]
-  leaveRequests LeaveRequest[]
-  leaveTypes LeaveType[]
-  ledgerEntries LedgerEntry[]
-  loanCategories LoanCategory[]
-  loanPolicies LoanPolicy[]
-  lopAdjustments LopAdjustment[]
-  meetingRooms MeetingRoom[]
-  meetings Meeting[]
-  noticePeriodPolicies NoticePeriodPolicy[]
-  notifications Notification[]
-  orgDocuments OrgDocument[]
-  otpChallenges OtpChallenge[]
-  overtimeEntries OvertimeEntry[]
-  praises Praise[]
-  feedback Feedback[]
-  projects Project[]
-  rateCards RateCard[]
-  requisitions Requisition[]
-  reviewCycles ReviewCycle[]
+  accountMappings       AccountMapping[]
+  accountingPeriods     AccountingPeriod[]
+  accounts              Account[]
+  announcements         Announcement[]
+  applications          Application[]
+  assetCategories       AssetCategory[]
+  assetIdSeries         AssetIdSeries[]
+  assetRequests         AssetRequest[]
+  assets                Asset[]
+  attendanceLogs        AttendanceLog[]
+  attendancePolicies    AttendancePolicy[]
+  attendanceRecords     AttendanceRecord[]
+  attendanceRequests    AttendanceRequest[]
+  awardTypes            AwardType[]
+  bgvChecks             BgvCheck[]
+  bonusTypes            BonusType[]
+  candidates            Candidate[]
+  cashAdvances          CashAdvance[]
+  clients               Client[]
+  documentFolders       DocumentFolder[]
+  documentTemplates     DocumentTemplate[]
+  emailOutbox           EmailOutbox[]
+  employeeAwards        EmployeeAward[]
+  employeeContracts     EmployeeContract[]
+  employeeDocuments     EmployeeDocument[]
+  expenseCategories     ExpenseCategory[]
+  expenseClaims         ExpenseClaim[]
+  expensePolicies       ExpensePolicy[]
+  goalTypes             GoalType[]
+  goals                 Goal[]
+  helpdeskCategories    HelpdeskCategory[]
+  helpdeskTickets       HelpdeskTicket[]
+  hiringFlows           HiringFlow[]
+  holidayCalendars      HolidayCalendar[]
+  hrActivities          HrActivity[]
+  improvementPlans      ImprovementPlan[]
+  indicatorCategories   IndicatorCategory[]
+  invoices              Invoice[]
+  jobs                  Job[]
+  journeyTemplates      JourneyTemplate[]
+  journeys              Journey[]
+  leaveLedgerEntries    LeaveLedgerEntry[]
+  leavePlans            LeavePlan[]
+  leaveRequests         LeaveRequest[]
+  leaveTypes            LeaveType[]
+  ledgerEntries         LedgerEntry[]
+  loanCategories        LoanCategory[]
+  loanPolicies          LoanPolicy[]
+  lopAdjustments        LopAdjustment[]
+  meetingRooms          MeetingRoom[]
+  meetings              Meeting[]
+  noticePeriodPolicies  NoticePeriodPolicy[]
+  notifications         Notification[]
+  orgDocuments          OrgDocument[]
+  otpChallenges         OtpChallenge[]
+  overtimeEntries       OvertimeEntry[]
+  praises               Praise[]
+  feedback              Feedback[]
+  projects              Project[]
+  rateCards             RateCard[]
+  requisitions          Requisition[]
+  reviewCycles          ReviewCycle[]
   shiftAllowanceEntries ShiftAllowanceEntry[]
-  shifts Shift[]
-  skills Skill[]
-  statutoryFilings StatutoryFiling[]
-  storedFiles StoredFile[]
-  tasks Task[]
-  tdsChallans TdsChallan[]
-  timeEntries TimeEntry[]
-  timesheets Timesheet[]
-  trainingPrograms TrainingProgram[]
-  trainingTypes TrainingType[]
-  travelRequests TravelRequest[]
-  weeklyOffPolicies WeeklyOffPolicy[]
+  shifts                Shift[]
+  skills                Skill[]
+  statutoryFilings      StatutoryFiling[]
+  storedFiles           StoredFile[]
+  tasks                 Task[]
+  tdsChallans           TdsChallan[]
+  timeEntries           TimeEntry[]
+  timesheets            Timesheet[]
+  trainingPrograms      TrainingProgram[]
+  trainingTypes         TrainingType[]
+  travelRequests        TravelRequest[]
+  weeklyOffPolicies     WeeklyOffPolicy[]
+
+  // --- Keka parity: shared platform (14-platform) ---
+  aiGenerations    AiGeneration[]
+  scheduledReports ScheduledReport[]
+
+  // --- Keka parity: Home, Wall and profile (15-engage) ---
+  dashboardWidgets DashboardWidget[]
+  wallSetting      WallSetting?
+  wallPosts        WallPost[]
+  wallLikes        WallLike[]
+  wallComments     WallComment[]
+  praiseBadges     PraiseBadge[]
+  profileQuestions ProfileQuestion[]
+
+  // --- Keka parity: Assets (16-assets-ops) ---
+  assetRequestApprovals AssetRequestApproval[]
+  assetEvents           AssetEvent[]
+  assetImports          AssetImport[]
+  assetSettings         AssetSettings?
+
+  // --- Keka parity: Helpdesk (17-helpdesk-ops) ---
+  helpdeskBusinessHours   HelpdeskBusinessHours[]
+  helpdeskCannedResponses HelpdeskCannedResponse[]
+  helpdeskClosingReasons  HelpdeskClosingReason[]
+
+  // --- Keka parity: Hire (18-hire-ops) ---
+  requisitionBackfills    RequisitionBackfill[]
+  jobDescriptionTemplates JobDescriptionTemplate[]
+  interviewQuestionSets   InterviewQuestionSet[]
+  candidateNotes          CandidateNote[]
+  hiringSetting           HiringSetting?
+
+  // --- Keka parity: 1:1s and Learn (19-perform-learn) ---
+  agendaTemplates MeetingAgendaTemplate[]
+
+  // --- Keka parity: PSA (20-psa-ops) ---
+  opportunityStages     OpportunityStage[]
+  opportunitySources    OpportunitySource[]
+  prospects             Prospect[]
+  opportunities         Opportunity[]
+  projectRequests       ProjectRequest[]
+  billingRoles          BillingRole[]
+  resourceRequests      ResourceRequest[]
+  resourceProfiles      ResourceProfile[]
+  projectCharges        ProjectCharge[]
+  creditNotes           CreditNote[]
+  billingEntitySettings BillingEntitySetting[]
+  psaDashboardLayouts   PsaDashboardLayout[]
+  psaInsightCaches      PsaInsightCache[]
+  psaSetting            PsaSetting?
+
+  // --- Keka parity: Time requests (21-time-requests) ---
+  shiftRequests           ShiftRequest[]
+  overtimeRequests        OvertimeRequest[]
+  compOffRequests         CompOffRequest[]
+  leaveEncashmentRequests LeaveEncashmentRequest[]
+  requestComments         RequestComment[]
+
+  // --- Keka parity: Analytics and exits (22-analytics) ---
+  exitReasons         ExitReason[]
+  attritionRiskScores AttritionRiskScore[]
+  analyticsInsights   AnalyticsInsight[]
+  analyticsComments   AnalyticsComment[]
+  storyboardShares    StoryboardShare[]
 
   surveys Survey[]
   courses Course[]
@@ -170,16 +233,16 @@ model Tenant {
 /// An unscoped role therefore sees across all legal entities regardless of this.
 /// This is a directory-visibility control, NOT a hard data partition.
 model TenantVisibilitySetting {
-  id                      String  @id @default(cuid())
-  tenantId                String  @unique
-  tenant                  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   restrictByLegalEntity   Boolean @default(false)
   restrictByBusinessUnit  Boolean @default(false)
   /// Managers and their direct reports retain mutual visibility across boundaries.
   managerReporteeOverride Boolean @default(true)
 
-  updatedAt               DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 
   @@map("tenant_visibility_settings")
 }
@@ -193,25 +256,25 @@ enum TwoFactorPolicy {
 
 /// Authentication policy for a tenant.
 model TenantSecuritySetting {
-  id                   String   @id @default(cuid())
-  tenantId             String   @unique
-  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  minPasswordLength    Int      @default(8)
-  requireMixedCase     Boolean  @default(true)
-  requireNumber        Boolean  @default(true)
-  requireSymbol        Boolean  @default(true)
+  minPasswordLength    Int     @default(8)
+  requireMixedCase     Boolean @default(true)
+  requireNumber        Boolean @default(true)
+  requireSymbol        Boolean @default(true)
   /// Days before a password must be changed; null never expires.
   passwordExpiryDays   Int?
   /// How many previous passwords cannot be reused.
-  passwordHistoryCount Int      @default(3)
+  passwordHistoryCount Int     @default(3)
 
-  maxFailedAttempts    Int      @default(5)
-  lockoutMinutes       Int      @default(15)
-  sessionHours         Int      @default(8)
-  twoFactorPolicy      TwoFactorPolicy @default(OFF)
+  maxFailedAttempts Int             @default(5)
+  lockoutMinutes    Int             @default(15)
+  sessionHours      Int             @default(8)
+  twoFactorPolicy   TwoFactorPolicy @default(OFF)
 
-  updatedAt            DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 
   @@map("tenant_security_settings")
 }
@@ -219,17 +282,17 @@ model TenantSecuritySetting {
 /// Every sign-in attempt, successful or not. Drives lockout, rate limiting
 /// and the security log administrators review.
 model LoginEvent {
-  id          String   @id @default(cuid())
-  tenantId    String?
-  tenant      Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  userId      String?
-  email       String
-  ipAddress   String?
-  userAgent   String?
-  success     Boolean
+  id        String   @id @default(cuid())
+  tenantId  String?
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String?
+  email     String
+  ipAddress String?
+  userAgent String?
+  success   Boolean
   /// BAD_CREDENTIALS | LOCKED | RATE_LIMITED | DISABLED | OTP_SENT | OTP_FAILED | OK
-  outcome     String
-  createdAt   DateTime @default(now())
+  outcome   String
+  createdAt DateTime @default(now())
 
   @@index([email, createdAt])
   @@index([ipAddress, createdAt])
@@ -256,42 +319,48 @@ enum TwoFactorMethod {
 
 /// A login. One-to-one with Employee once the employee is invited.
 model User {
-  id             String   @id @default(cuid())
-  tenantId       String
-  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  email          String
-  passwordHash   String?
-  phone          String?
+  email        String
+  passwordHash String?
+  phone        String?
 
   /// Disable Login — "effect is immediate, with no delay or grace period".
   /// Distinct from deactivation and from exit (Teardown Part 05).
-  loginDisabled  Boolean  @default(false)
+  loginDisabled      Boolean   @default(false)
   /// Consecutive failed sign-ins; reset on success.
-  failedLoginCount Int     @default(0)
-  lockedUntil    DateTime?
-  passwordChangedAt DateTime?
+  failedLoginCount   Int       @default(0)
+  lockedUntil        DateTime?
+  passwordChangedAt  DateTime?
   /// Set by an administrator or an expired password.
-  mustChangePassword Boolean @default(false)
+  mustChangePassword Boolean   @default(false)
   /// Recent password hashes, newest first, to refuse reuse.
-  passwordHistory Json?
+  passwordHistory    Json?
   /// Bumped to revoke every live session at once.
-  sessionVersion Int      @default(0)
+  sessionVersion     Int       @default(0)
   /// Temporary deactivation, e.g. sabbatical or extended leave.
-  isDeactivated  Boolean  @default(false)
+  isDeactivated      Boolean   @default(false)
 
-  twoFactor      TwoFactorMethod @default(NONE)
-  lastLoginAt    DateTime?
+  twoFactor       TwoFactorMethod @default(NONE)
+  lastLoginAt     DateTime?
   emailVerifiedAt DateTime?
 
-  employee       Employee?
+  employee Employee?
 
-  sessions       Session[]
+  sessions        Session[]
   roleAssignments UserRoleAssignment[]
-  auditLogs      AuditLog[]
+  auditLogs       AuditLog[]
 
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  // --- Keka parity: analytics storyboards (22-analytics) ---
+  analyticsInsights     AnalyticsInsight[]
+  analyticsComments     AnalyticsComment[]
+  storyboardSharesOwned StoryboardShare[]  @relation("StoryboardShareOwner")
+  storyboardShares      StoryboardShare[]  @relation("StoryboardShareRecipient")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -299,14 +368,14 @@ model User {
 }
 
 model Session {
-  id           String   @id @default(cuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash    String   @unique
-  expiresAt    DateTime
-  ipAddress    String?
-  userAgent    String?
-  createdAt    DateTime @default(now())
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
 
   @@index([userId])
   @@map("sessions")
@@ -314,16 +383,16 @@ model Session {
 
 /// One-time codes for mobile OTP login and 2FA.
 model OtpChallenge {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   tenantId   String
-  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  identifier String   // email or phone
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  identifier String // email or phone
   codeHash   String
-  purpose    String   // LOGIN | TWO_FACTOR
-  attempts   Int      @default(0)
+  purpose    String // LOGIN | TWO_FACTOR
+  attempts   Int       @default(0)
   expiresAt  DateTime
   consumedAt DateTime?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime  @default(now())
 
   @@index([tenantId, identifier])
   @@map("otp_challenges")
@@ -337,9 +406,9 @@ model OtpChallenge {
 /// Eleven are seeded per tenant as system roles (Teardown Part 06);
 /// custom roles are created by ticking individual privileges.
 model Role {
-  id          String  @id @default(cuid())
-  tenantId    String
-  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   /// Stable machine key, e.g. GLOBAL_ADMIN. Null for custom roles.
   key         String?
@@ -351,8 +420,8 @@ model Role {
   permissions RolePermission[]
   assignments UserRoleAssignment[]
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -362,10 +431,10 @@ model Role {
 /// A single granted privilege, e.g. "payroll.run.execute".
 /// The authoritative catalogue lives in @keka/rbac.
 model RolePermission {
-  id           String @id @default(cuid())
-  roleId       String
-  role         Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission   String
+  id         String @id @default(cuid())
+  roleId     String
+  role       Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission String
 
   @@unique([roleId, permission])
   @@index([roleId])
@@ -376,13 +445,13 @@ model RolePermission {
 /// Legal entity is deliberately NOT available as a role scope filter —
 /// this mirrors the documented gap (Teardown Part 06).
 model UserRoleAssignment {
-  id        String @id @default(cuid())
-  userId    String
-  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  roleId    String
-  role      Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId String
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
-  scopes    RoleScope[]
+  scopes RoleScope[]
 
   grantedAt DateTime @default(now())
   grantedBy String?
@@ -394,7 +463,7 @@ model UserRoleAssignment {
 }
 
 model RoleScope {
-  id           String @id @default(cuid())
+  id           String             @id @default(cuid())
   assignmentId String
   assignment   UserRoleAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
 
@@ -421,6 +490,12 @@ enum AuditModule {
   LIFECYCLE
   HELPDESK
   SYSTEM
+  /// Org analytics, storyboards and attrition risk.
+  ANALYTICS
+  /// Asset inventory, assignments and requests.
+  ASSET
+  /// PSA: opportunities, project requests, resourcing and project billing.
+  PROJECTS
 }
 
 enum AuditAction {
@@ -434,15 +509,17 @@ enum AuditAction {
   EXPORT
   LOGIN
   LOGOUT
+  /// A read of sensitive data, e.g. the attrition-risk page.
+  VIEW
 }
 
 /// Who, when, what, old value, new value.
 /// Keka's own audit log covers four modules; this model covers those plus
 /// role and auth changes, which the teardown flags as a real audit gap.
 model AuditLog {
-  id         String      @id @default(cuid())
-  tenantId   String
-  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   module     AuditModule
   action     AuditAction
@@ -451,15 +528,15 @@ model AuditLog {
   /// Human-readable summary for the log list.
   summary    String?
 
-  oldValue   Json?
-  newValue   Json?
+  oldValue Json?
+  newValue Json?
 
   actorId    String?
-  actor      User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actor      User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
   actorLabel String?
   ipAddress  String?
 
-  createdAt  DateTime    @default(now())
+  createdAt DateTime @default(now())
 
   @@index([tenantId, module, createdAt])
   @@index([tenantId, entityType, entityId])

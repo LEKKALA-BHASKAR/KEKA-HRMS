@@ -9,54 +9,66 @@
 /// Capture + penalisation rules, combined. A day's status, payable value and
 /// loss of pay are computed against exactly one of these.
 model AttendancePolicy {
-  id                   String   @id @default(cuid())
-  tenantId             String
-  tenant               Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name                 String
-  description          String?
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
 
   // --- Capture ---
-  allowWebClockIn      Boolean  @default(true)
-  allowMobileClockIn   Boolean  @default(true)
+  allowWebClockIn       Boolean @default(true)
+  allowMobileClockIn    Boolean @default(true)
   /// Web clock-in only from these addresses. Empty means anywhere.
-  ipAllowList          Json?
+  ipAllowList           Json?
   requireClockInComment Boolean @default(false)
 
   // --- Day classification ---
   /// Effective hours at or above this share of the shift count as a full day.
-  fullDayThresholdPct  Int      @default(90)
+  fullDayThresholdPct Int @default(90)
   /// At or above this share, a half day. Below it, absent.
-  halfDayThresholdPct  Int      @default(50)
+  halfDayThresholdPct Int @default(50)
 
   // --- Late arrival ---
-  graceMinutes         Int      @default(15)
+  graceMinutes       Int     @default(15)
   /// Late incidents per month forgiven before a penalty applies.
-  lateExemptPerMonth   Int      @default(3)
+  lateExemptPerMonth Int     @default(3)
   /// Days of LOP per late incident beyond the exemption.
-  latePenaltyDays      Decimal  @default(0.5) @db.Decimal(4, 2)
+  latePenaltyDays    Decimal @default(0.5) @db.Decimal(4, 2)
 
   // --- Missing punch ---
-  missingPunchExemptPerMonth Int  @default(2)
-  missingPunchPenaltyDays Decimal @default(0.5) @db.Decimal(4, 2)
+  missingPunchExemptPerMonth Int     @default(2)
+  missingPunchPenaltyDays    Decimal @default(0.5) @db.Decimal(4, 2)
 
   // --- No attendance ---
   /// A working day with no punches and no leave is loss of pay.
-  noAttendanceIsLop    Boolean  @default(true)
+  noAttendanceIsLop Boolean @default(true)
 
   // --- Overtime ---
-  overtimeEnabled      Boolean  @default(false)
+  overtimeEnabled    Boolean @default(false)
   /// Minutes beyond the shift before overtime starts counting.
-  overtimeMinMinutes   Int      @default(30)
+  overtimeMinMinutes Int     @default(30)
 
   /// Days back an employee may request a regularisation.
-  regularisationWindowDays Int  @default(30)
+  regularisationWindowDays Int @default(30)
 
-  isDefault            Boolean  @default(false)
-  isActive             Boolean  @default(true)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  // --- Keka parity (time-inbox) ---
+  allowRemoteClockIn         Boolean @default(false)
+  remoteClockInNeedsApproval Boolean @default(true)
+  allowHalfDayRemoteWork     Boolean @default(true)
+  allowHourlyRemoteWork      Boolean @default(false)
+  overtimeNeedsRequest       Boolean @default(true)
+  overtimeRequestWindowDays  Int     @default(30)
+  allowShiftChangeRequests   Boolean @default(true)
+  allowWeeklyOffRequests     Boolean @default(true)
+  /// Days a penalty waits before applying, so the employee can regularise.
+  penaltyBufferDays          Int     @default(2)
 
-  assignments          EmployeeTimePolicy[]
+  isDefault Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments EmployeeTimePolicy[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -66,20 +78,20 @@ model AttendancePolicy {
 /// Which shift, weekly-off pattern, holiday calendar and attendance policy an
 /// employee is on, effective-dated so a mid-month change is exact.
 model EmployeeTimePolicy {
-  id                  String            @id @default(cuid())
-  employeeId          String
-  employee            Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  attendancePolicyId  String?
-  attendancePolicy    AttendancePolicy? @relation(fields: [attendancePolicyId], references: [id], onDelete: SetNull)
-  shiftId             String?
-  weeklyOffPolicyId   String?
-  holidayCalendarId   String?
+  id                 String            @id @default(cuid())
+  employeeId         String
+  employee           Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  attendancePolicyId String?
+  attendancePolicy   AttendancePolicy? @relation(fields: [attendancePolicyId], references: [id], onDelete: SetNull)
+  shiftId            String?
+  weeklyOffPolicyId  String?
+  holidayCalendarId  String?
   /// Attendance is not tracked for this employee — no NO_ATTENDANCE LOP.
-  trackAttendance     Boolean           @default(true)
+  trackAttendance    Boolean           @default(true)
 
-  effectiveFrom       DateTime
-  effectiveTo         DateTime?
-  createdAt           DateTime          @default(now())
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  createdAt     DateTime  @default(now())
 
   @@index([employeeId, effectiveFrom])
   @@map("employee_time_policies")
@@ -94,6 +106,8 @@ enum AttendanceRequestType {
   PARTIAL_DAY
   WORK_FROM_HOME
   ON_DUTY
+  /// One per employee per day of Remote Clock-In punches awaiting approval.
+  REMOTE_CLOCK_IN
 }
 
 enum AttendanceRequestStatus {
@@ -104,29 +118,40 @@ enum AttendanceRequestStatus {
 }
 
 model AttendanceRequest {
-  id           String                  @id @default(cuid())
-  tenantId     String
-  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId   String
-  employee     Employee                @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  type         AttendanceRequestType
-  status       AttendanceRequestStatus @default(PENDING)
-  fromDate     DateTime
-  toDate       DateTime
+  type           AttendanceRequestType
+  status         AttendanceRequestStatus @default(PENDING)
+  fromDate       DateTime
+  toDate         DateTime
   /// For ADJUSTMENT: the corrected times, as UTC instants.
-  proposedIn   DateTime?
-  proposedOut  DateTime?
+  proposedIn     DateTime?
+  proposedOut    DateTime?
   /// For PARTIAL_DAY: minutes of permitted absence.
   partialMinutes Int?
-  reason       String
+  reason         String
+
+  // --- Keka parity (time-inbox) ---
+  /// WFH/OD: part of the day; null = full day.
+  portion           DayPortion?
+  /// WFH/OD by the hour: proposedIn/proposedOut carry the window.
+  isHourly          Boolean     @default(false)
+  /// ADJUSTMENT with several punches: [{ "at": "<ISO instant>", "direction": 0 | 1 }]
+  proposedLogs      Json?
+  /// Employees copied on the request: ["<employeeId>", ...]
+  notifyEmployeeIds Json?
+  attachmentFileId  String?
 
   decidedBy    String?
   decidedAt    DateTime?
   decisionNote String?
 
-  createdAt    DateTime                @default(now())
-  updatedAt    DateTime                @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([tenantId, status])
   @@index([employeeId, fromDate])
@@ -149,25 +174,27 @@ enum LeaveLedgerKind {
 /// Every movement on a leave balance. LeaveBalance is a cache of the sum;
 /// this is the record that explains it.
 model LeaveLedgerEntry {
-  id           String          @id @default(cuid())
-  tenantId     String
-  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId   String
-  employee     Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  leaveTypeId  String
-  yearStart    DateTime
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId String
+  yearStart   DateTime
 
-  kind         LeaveLedgerKind
+  kind      LeaveLedgerKind
   /// Positive credits the balance, negative debits it.
-  days         Decimal         @db.Decimal(9, 2)
+  days      Decimal         @db.Decimal(9, 2)
   /// Idempotency key. An accrual for a given month carries "ACCRUAL:2026-06"
   /// so a re-run of the accrual job never double-credits.
-  periodKey    String?
-  requestId    String?
-  note         String?
+  periodKey String?
+  requestId String?
+  note      String?
+  /// COMP_OFF_CREDIT: the day this credit lapses.
+  expiresOn DateTime?
 
-  createdBy    String?
-  createdAt    DateTime        @default(now())
+  createdBy String?
+  createdAt DateTime @default(now())
 
   @@unique([employeeId, leaveTypeId, kind, periodKey])
   @@index([employeeId, leaveTypeId, yearStart])

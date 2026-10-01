@@ -41,6 +41,13 @@ export const longDayLabel = (d: Date) =>
 
 const dayMonth = (d: Date) => `${String(d.getUTCDate()).padStart(2, "0")} ${MONTH_SHORT[d.getUTCMonth()]}`;
 
+/** "Tomorrow", else "26 August" — how Keka labels an upcoming celebration. */
+function upcomingLabel(today: Today, days: number): string {
+  if (days === 1) return "Tomorrow";
+  const d = new Date(today.date.getTime() + days * DAY);
+  return `${d.getUTCDate()} ${MONTH_LONG[d.getUTCMonth()]}`;
+}
+
 // --- People -----------------------------------------------------------------
 
 export const PERSON_SELECT = {
@@ -295,14 +302,14 @@ export async function celebrations(viewer: Viewer, today: Today): Promise<Celebr
 
   const bToday: Celebrant[] = [], bSoon: Array<Celebrant & { d: number }> = [];
   const aToday: Celebrant[] = [], aSoon: Array<Celebrant & { d: number }> = [];
-  const joinees: Array<Celebrant & { t: number }> = [];
+  const joinees: Array<Celebrant & { t: number }> = [], jToday: Celebrant[] = [];
 
   for (const p of people) {
     const base = { id: p.id, name: nameOf(p), photoUrl: p.photoUrl };
     if (p.dateOfBirth) {
       const { days } = daysUntil(today, p.dateOfBirth.getUTCMonth(), p.dateOfBirth.getUTCDate());
       if (days === 0) bToday.push({ ...base, when: "Today" });
-      else if (days <= UPCOMING_DAYS) bSoon.push({ ...base, when: dayMonth(new Date(today.date.getTime() + days * DAY)), d: days });
+      else if (days <= UPCOMING_DAYS) bSoon.push({ ...base, when: upcomingLabel(today, days), d: days });
     }
     const doj = p.dateOfJoining;
     if (doj.getTime() <= today.date.getTime()) {
@@ -311,10 +318,11 @@ export async function celebrations(viewer: Viewer, today: Today): Promise<Celebr
       if (years >= 1) {
         const note = `${years} ${years === 1 ? "year" : "years"}`;
         if (days === 0) aToday.push({ ...base, when: "Today", note });
-        else if (days <= UPCOMING_DAYS) aSoon.push({ ...base, when: dayMonth(new Date(today.date.getTime() + days * DAY)), note, d: days });
+        else if (days <= UPCOMING_DAYS) aSoon.push({ ...base, when: upcomingLabel(today, days), note, d: days });
       }
       const since = Math.round((today.date.getTime() - doj.getTime()) / DAY);
-      if (since <= NEW_JOINEE_DAYS) joinees.push({ ...base, when: since === 0 ? "Today" : dayMonth(doj), note: p.jobTitleName ?? undefined, t: doj.getTime() });
+      if (since === 0) jToday.push({ ...base, when: "Today", note: p.jobTitleName ?? undefined });
+      else if (since <= NEW_JOINEE_DAYS) joinees.push({ ...base, when: dayMonth(doj), note: p.jobTitleName ?? undefined, t: doj.getTime() });
     }
   }
 
@@ -325,10 +333,8 @@ export async function celebrations(viewer: Viewer, today: Today): Promise<Celebr
   return [
     { key: "birthdays", count: bToday.length, today: bToday.sort(byName), upcoming: strip(bSoon.sort((a, b) => a.d - b.d || byName(a, b))) },
     { key: "anniversaries", count: aToday.length, today: aToday.sort(byName), upcoming: strip(aSoon.sort((a, b) => a.d - b.d || byName(a, b))) },
-    {
-      // One list, newest first — someone joining today simply reads "Today".
-      key: "joinees", count: joinees.length, today: [], upcoming: strip(joinees),
-    },
+    // Joined today, then everyone who joined in the last 90 days, newest first.
+    { key: "joinees", count: jToday.length, today: jToday.sort(byName), upcoming: strip(joinees) },
   ];
 }
 
@@ -359,4 +365,84 @@ export async function praiseableColleagues(viewer: Viewer): Promise<Array<{ id: 
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
   });
   return rows.map((r) => ({ id: r.id, name: nameOf(r) }));
+}
+
+// --- Working remotely ---------------------------------------------------------------
+
+/** Approved work-from-home and on-duty requests that cover today, as directory people. */
+export async function workingRemotelyToday(viewer: Viewer, today: Today): Promise<Array<PersonLite & { mode: "WFH" | "ON_DUTY" }>> {
+  const reqs = await prisma.attendanceRequest.findMany({
+    where: {
+      tenantId: viewer.tenantId, status: "APPROVED", type: { in: ["WORK_FROM_HOME", "ON_DUTY"] },
+      fromDate: { lte: today.date }, toDate: { gte: today.date },
+    },
+    select: { employeeId: true, type: true },
+  });
+  if (reqs.length === 0) return [];
+  const mode = new Map(reqs.map((r) => [r.employeeId, r.type === "ON_DUTY" ? "ON_DUTY" as const : "WFH" as const]));
+  const people = await prisma.employee.findMany({
+    where: { ...directoryWhere(viewer.tenantId), id: { in: [...mode.keys()] } },
+    select: PERSON_SELECT, orderBy: { firstName: "asc" },
+  });
+  return people.map((p) => ({ ...toPerson(p), mode: mode.get(p.id)! }));
+}
+
+// --- Holidays for a year --------------------------------------------------------------
+
+export interface HolidayRow { id: string; name: string; month: number; day: number; weekday: string; optional: boolean; past: boolean }
+
+/** The viewer's holiday calendar for a year (their location's, else the default), and the years on offer. */
+export async function holidayYear(viewer: Viewer, year: number, locationId: string | null | undefined, today: Today): Promise<{ rows: HolidayRow[]; years: number[] }> {
+  const calendars = await prisma.holidayCalendar.findMany({
+    where: { tenantId: viewer.tenantId },
+    select: { id: true, isDefault: true, locationIds: true, year: true },
+  });
+  const mine = (c: { locationIds: unknown }) => !!locationId && Array.isArray(c.locationIds) && (c.locationIds as unknown[]).includes(locationId);
+  const years = [...new Set(calendars.map((c) => c.year))].sort((a, b) => a - b);
+  const forYear = calendars.filter((c) => c.year === year);
+  const chosen = forYear.some(mine) ? forYear.filter(mine) : forYear.filter((c) => c.isDefault);
+  const pool = chosen.length ? chosen : forYear;
+  const rows = pool.length ? await prisma.holiday.findMany({
+    where: { calendarId: { in: pool.map((c) => c.id) }, date: { gte: new Date(Date.UTC(year, 0, 1)), lt: new Date(Date.UTC(year + 1, 0, 1)) } },
+    orderBy: [{ date: "asc" }, { name: "asc" }],
+  }) : [];
+  const seen = new Set<string>();
+  const WEEKDAY_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  return {
+    years,
+    rows: rows.filter((h) => { const k = `${h.date.toISOString()}|${h.name}`; if (seen.has(k)) return false; seen.add(k); return true; })
+      .map((h) => ({
+        id: h.id, name: h.name, month: h.date.getUTCMonth(), day: h.date.getUTCDate(), weekday: WEEKDAY_LONG[h.date.getUTCDay()],
+        optional: h.isOptional, past: h.date.getTime() < today.date.getTime(),
+      })),
+  };
+}
+
+// --- Feedback and project time ----------------------------------------------------------
+
+export async function feedbackReceivedCount(viewer: Viewer): Promise<number> {
+  if (!viewer.employee) return 0;
+  return prisma.feedback.count({ where: { tenantId: viewer.tenantId, aboutEmployeeId: viewer.employee.id, kind: "FEEDBACK" } });
+}
+
+export interface ProjectTimeLine { id: string; label: string; minutes: number }
+
+/** Today's time entries, and whether the viewer has any project to log against at all. */
+export async function projectTimeToday(viewer: Viewer, today: Today): Promise<{ assigned: boolean; lines: ProjectTimeLine[]; totalMinutes: number }> {
+  if (!viewer.employee) return { assigned: false, lines: [], totalMinutes: 0 };
+  const id = viewer.employee.id;
+  const [allocations, entries] = await Promise.all([
+    prisma.resourceAllocation.count({ where: { employeeId: id, project: { tenantId: viewer.tenantId, status: { in: ["ACTIVE", "ON_HOLD", "OVERDUE"] } } } }),
+    prisma.timeEntry.findMany({
+      where: { tenantId: viewer.tenantId, employeeId: id, date: today.date },
+      select: { id: true, hours: true, project: { select: { name: true, client: { select: { name: true } } } }, task: { select: { title: true } } },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
+  const lines = entries.map((e) => ({
+    id: e.id,
+    label: [e.project.client?.name, e.project.name, e.task?.title].filter(Boolean).join(" - "),
+    minutes: Math.round(Number(e.hours) * 60),
+  }));
+  return { assigned: allocations > 0 || lines.length > 0, lines, totalMinutes: lines.reduce((a, l) => a + l.minutes, 0) };
 }

@@ -9,6 +9,8 @@ export default function ManageTaxLayout({ children }: { children: ReactNode }) {
         { label: "Declaration", href: "/finances/tax" },
         { label: "Previous Income", href: "/finances/tax/previous-income" },
         { label: "Forms", href: "/finances/tax/forms" },
+        { label: "Tax Filing", href: "/finances/tax/tax-filing" },
+        { label: "Tax Saving Investment", href: "/finances/tax/tax-saving-investment" },
       ]} />
       {children}
     </>

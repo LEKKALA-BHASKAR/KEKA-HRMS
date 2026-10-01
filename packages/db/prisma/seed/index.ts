@@ -23,6 +23,8 @@ import { seedToday } from "./today";
 import { seedEngageLearn } from "./engage-learn";
 import { seedProbation } from "./probation";
 import { seedAccountingOpening, seedAccountingActivity } from "./accounting";
+import { seedHelpdesk } from "./helpdesk";
+import { seedAnalytics } from "./analytics";
 
 const prisma = new PrismaClient();
 
@@ -871,11 +873,20 @@ async function main() {
   const ss = await seedSelfService(prisma, { tenantId: tenant.id });
   log("Self-service", `${ss.about} profiles introduced, ${ss.praise} praises and ${ss.feedback} feedback notes, ${ss.declarations} tax declarations`);
 
+<<<<<<< HEAD
   const el = await seedEngageLearn(prisma, { tenantId: tenant.id, empIdByNumber });
   log("Engagement & learning", `${el.surveys} surveys and polls (${el.responses} responses), ${el.skills} skills on ${el.skillRows} profiles, ${el.paths} career paths, ${el.courses} courses with ${el.enrolments} enrolments; comp-off and ${el.encash} encashment awaiting a decision`);
 
   const pr = await seedProbation(prisma, { tenantId: tenant.id, empIdByNumber });
   log("Probation", `${pr.policies} policies, ${pr.started} employees on probation; one ended with ${pr.reviews} reviews in, waiting on HR`);
+=======
+  // Keka parity areas: one idempotent module per area, each runnable on its own.
+  const hd = await seedHelpdesk(prisma, { tenantId: tenant.id });
+  log("Helpdesk (Keka)", `${hd.categories} categories and subcategories, ${hd.tickets} tickets (${hd.open} open, ${hd.closed} closed) with threads, followers and SLA flags`);
+  const an = await seedAnalytics(prisma, { tenantId: tenant.id });
+  log("Org analytics", `${an.reasons} exit reasons, ${an.leavers} past leavers with history, ${an.raises} raise histories, ${an.snapshots} risk scores (${an.risk.HIGH} high, ${an.risk.MEDIUM} medium today), a shared storyboard`);
+  // @keka-parity-seeds (each area adds its import above and its call above this line)
+>>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
 
   const ac = await seedAccountingActivity(prisma, { tenantId: tenant.id, byUserId: finance.id });
   log("General ledger", `${ac.entries} ledger entries: opening, ${ac.paid} payroll accruals and payments, ${ac.remitted} statutory remittances, invoices and receipts; Apr–Jun closed; trial balance ₹${ac.total.toLocaleString("en-IN")} each side`);

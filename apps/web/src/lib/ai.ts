@@ -61,3 +61,29 @@ export async function aiJson<T>(opts: { system: string; prompt: string; maxToken
     return { ok: false, reason: "The AI answer was not valid JSON." };
   }
 }
+
+/**
+ * Every AI feature goes through here: it caps how often one person can ask
+ * (per feature, per hour) and records each call in the shared AiGeneration
+ * log — the feature, the size of what was sent and whether it worked, never
+ * the content itself.
+ */
+export const AI_HOURLY_LIMIT = 30;
+
+export async function aiForViewer<T>(
+  viewer: { tenantId: string; user: { id: string } },
+  opts: { feature: string; subjectId?: string | null; inputChars: number },
+  run: () => Promise<AiResult<T>>,
+): Promise<AiResult<T>> {
+  if (!aiEnabled()) return { ok: false, reason: AI_UNAVAILABLE };
+  const { prisma } = await import("@keka/db");
+  const recent = await prisma.aiGeneration.count({
+    where: { tenantId: viewer.tenantId, userId: viewer.user.id, feature: opts.feature, createdAt: { gte: new Date(Date.now() - 3_600_000) } },
+  });
+  if (recent >= AI_HOURLY_LIMIT) return { ok: false, reason: "You've used this AI assistant a lot in the last hour. Try again a little later." };
+  const result = await run();
+  await prisma.aiGeneration.create({
+    data: { tenantId: viewer.tenantId, userId: viewer.user.id, feature: opts.feature, subjectId: opts.subjectId ?? null, inputChars: opts.inputChars, ok: result.ok },
+  });
+  return result;
+}

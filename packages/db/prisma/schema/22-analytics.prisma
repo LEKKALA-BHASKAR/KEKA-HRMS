@@ -1,0 +1,140 @@
+// ============================================================================
+//  KEKA — Org analytics: exit reasons, attrition risk, AI storyboard insights,
+//  widget comments and storyboard shares
+// ============================================================================
+//  Spec: analytics-ai. ExitRecord (05-transactions) gains reasonId → ExitReason.
+//  AnalyticsInsight stores the exact payload sent to the model and the
+//  validated answer (24 h cache by payloadHash); per-call quota/audit for other
+//  areas lives in AiGeneration (14-platform).
+// ============================================================================
+
+enum ExitReasonKind {
+  VOLUNTARY
+  INVOLUNTARY
+  OTHER
+}
+
+/// Structured exit-reason master. ExitRecord.reason (free text) stays as "Comments".
+model ExitReason {
+  id           String         @id @default(cuid())
+  tenantId     String
+  tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  kind         ExitReasonKind @default(VOLUNTARY)
+  displayOrder Int            @default(0)
+  isActive     Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  exits        ExitRecord[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("exit_reasons")
+}
+
+enum RiskBand {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum InsightKind {
+  SUMMARY
+  PROMPT
+  RISK_EXPLAIN
+}
+
+/// Monthly attrition-risk snapshot per employee (model "risk-v1").
+model AttritionRiskScore {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  /// UTC midnight; monthly snapshots on the 1st.
+  asOf         DateTime
+  /// 0..100. High ≥ 50, Medium 30–49, Low < 30.
+  score        Int
+  band         RiskBand
+  /// [{ key, label, points, max, detail }]: detail never contains amounts.
+  factors      Json
+  /// Signals with data, out of 14.
+  coverage     Int
+  modelVersion String   @default("risk-v1")
+  createdAt    DateTime @default(now())
+
+  @@unique([employeeId, asOf, modelVersion])
+  @@index([tenantId, asOf])
+  @@map("attrition_risk_scores")
+}
+
+/// One AI answer on a storyboard: what was sent, what came back, and a rating.
+model AnalyticsInsight {
+  id          String      @id @default(cuid())
+  tenantId    String
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// attrition | headcount | risk
+  board       String
+  /// Null = whole board.
+  widget      String?
+  kind        InsightKind
+  filters     Json
+  /// After redaction.
+  prompt      String?
+  /// Exactly the JSON sent to the model; shown under "What was sent".
+  payload     Json
+  /// sha256(board, widget, kind, prompt, payload) for the 24h cache.
+  payloadHash String
+  /// Validated output.
+  answer      Json
+  model       String
+  /// 1 | -1
+  rating      Int?
+  createdAt   DateTime    @default(now())
+
+  @@index([tenantId, board, createdAt])
+  @@index([userId, createdAt])
+  @@index([payloadHash])
+  @@map("analytics_insights")
+}
+
+/// A comment on one storyboard widget.
+model AnalyticsComment {
+  id        String    @id @default(cuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  board     String
+  widget    String
+  authorId  String
+  author    User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body      String
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  @@index([tenantId, board, widget, createdAt])
+  @@index([authorId])
+  @@map("analytics_comments")
+}
+
+/// A storyboard shared by its owner with another user.
+model StoryboardShare {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  board     String
+  ownerId   String
+  owner     User     @relation("StoryboardShareOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation("StoryboardShareRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  /// Owner's filters at share time; recipient sees aggregates at owner's scope ∩ these.
+  filters   Json?
+  /// AnalyticsInsight id shared alongside (plain column).
+  insightId String?
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, board, ownerId, userId])
+  @@index([userId])
+  @@index([ownerId])
+  @@map("storyboard_shares")
+}

@@ -11,43 +11,43 @@
 /// Top-level container. Statutory registrations attach to the PAY GROUP,
 /// not here — the legal entity carries company identity only (Teardown Part 07).
 model LegalEntity {
-  id                 String   @id @default(cuid())
-  tenantId           String
-  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   /// Internal short name used across the UI.
-  name               String
+  name        String
   /// Legal name exactly as incorporated.
-  legalName          String
+  legalName   String
   /// Sets the entity's currency.
-  countryCode        String   @default("IN")
-  currency           String   @default("INR")
+  countryCode String @default("IN")
+  currency    String @default("INR")
 
   /// Company Identification Number (MCA).
-  cin                String?
+  cin                 String?
   dateOfIncorporation DateTime?
-  businessType       String?
-  sector             String?
-  natureOfBusiness   String?
+  businessType        String?
+  sector              String?
+  natureOfBusiness    String?
 
   /// Max 600 KB, 100x60 px per Keka's constraint.
-  logoUrl            String?
+  logoUrl String?
 
-  addressLine1       String?
-  addressLine2       String?
-  city               String?
-  state              String?
-  postalCode         String?
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  postalCode   String?
 
-  isActive           Boolean  @default(true)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  businessUnits      BusinessUnit[]
-  signatories        AuthorisedSignatory[]
-  bankAccounts       EntityBankAccount[]
-  payGroups          PayGroup[]
-  employees          Employee[]
+  businessUnits BusinessUnit[]
+  signatories   AuthorisedSignatory[]
+  bankAccounts  EntityBankAccount[]
+  payGroups     PayGroup[]
+  employees     Employee[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -61,14 +61,14 @@ model AuthorisedSignatory {
   legalEntityId String
   legalEntity   LegalEntity @relation(fields: [legalEntityId], references: [id], onDelete: Cascade)
 
-  name          String
-  designation   String
-  email         String?
-  fathersName   String?
-  address       String?
-  pan           String?
+  name        String
+  designation String
+  email       String?
+  fathersName String?
+  address     String?
+  pan         String?
 
-  createdAt     DateTime    @default(now())
+  createdAt DateTime @default(now())
 
   @@index([legalEntityId])
   @@map("authorised_signatories")
@@ -87,9 +87,9 @@ model EntityBankAccount {
   corporateId   String?
   userId        String?
   aliasId       String?
-  isPrimary     Boolean     @default(false)
+  isPrimary     Boolean @default(false)
 
-  createdAt     DateTime    @default(now())
+  createdAt DateTime @default(now())
 
   @@index([legalEntityId])
   @@map("entity_bank_accounts")
@@ -102,19 +102,19 @@ model BusinessUnit {
   legalEntityId String
   legalEntity   LegalEntity @relation(fields: [legalEntityId], references: [id], onDelete: Cascade)
 
-  name          String
-  code          String?
-  description   String?
+  name        String
+  code        String?
+  description String?
   /// Derives the implicit Business Head role.
-  headId        String?
-  head          Employee?   @relation("BusinessUnitHead", fields: [headId], references: [id], onDelete: SetNull)
+  headId      String?
+  head        Employee? @relation("BusinessUnitHead", fields: [headId], references: [id], onDelete: SetNull)
 
-  isActive      Boolean     @default(true)
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  departments   Department[]
-  employees     Employee[]
+  departments Department[]
+  employees   Employee[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -129,18 +129,20 @@ model Department {
   businessUnitId String?
   businessUnit   BusinessUnit? @relation(fields: [businessUnitId], references: [id], onDelete: SetNull)
 
-  name           String
-  code           String?
-  description    String?
+  name        String
+  code        String?
+  description String?
   /// Derives the implicit Department Head role.
-  headId         String?
-  head           Employee?     @relation("DepartmentHead", fields: [headId], references: [id], onDelete: SetNull)
+  headId      String?
+  head        Employee? @relation("DepartmentHead", fields: [headId], references: [id], onDelete: SetNull)
 
-  isActive       Boolean       @default(true)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  employees      Employee[]
+  employees Employee[]
+  /// Keka Wall group posts (15-engage). Null departmentId = Organization.
+  wallPosts WallPost[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -151,9 +153,9 @@ model Department {
 /// Physical location. Drives Professional Tax and LWF state rules —
 /// the employee's office location is what maps to a registered state.
 model Location {
-  id           String   @id @default(cuid())
-  tenantId     String
-  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name         String
   code         String?
@@ -164,16 +166,18 @@ model Location {
   stateCode    String?
   state        String?
   postalCode   String?
-  countryCode  String   @default("IN")
-  timezone     String   @default("Asia/Kolkata")
+  countryCode  String  @default("IN")
+  timezone     String  @default("Asia/Kolkata")
 
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  employees    Employee[]
-  ptLinks      PtStateRegistrationLocation[]
-  lwfLinks     LwfStateRegistrationLocation[]
+  employees Employee[]
+  ptLinks   PtStateRegistrationLocation[]
+  lwfLinks  LwfStateRegistrationLocation[]
+  /// Assets kept at this location (07-workplace Asset.locationId).
+  assets    Asset[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -199,15 +203,15 @@ model CostCenter {
 
 /// Career band / level.
 model Band {
-  id        String   @id @default(cuid())
-  tenantId  String
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name      String
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
   /// Ordering for seniority comparisons.
-  rank      Int      @default(0)
+  rank        Int      @default(0)
   description String?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
 
   employees Employee[]
 
@@ -237,16 +241,16 @@ model PayGrade {
 
 /// Permanent, contract, intern, consultant. Contractors are modelled here.
 model WorkerType {
-  id            String   @id @default(cuid())
-  tenantId      String
-  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name          String
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
   /// Contract workers get a dedicated path and 26Q TDS treatment.
-  isContingent  Boolean  @default(false)
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
+  isContingent Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
 
-  employees     Employee[]
+  employees Employee[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -272,22 +276,22 @@ model JobTitle {
 /// Org -> Employees -> Settings -> Employee Number.
 /// Multiple series supported via "+Add New Series".
 model EmployeeNumberSeries {
-  id          String   @id @default(cuid())
-  tenantId    String
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name        String
   description String?
-  prefix      String   @default("")
+  prefix      String  @default("")
   /// Zero-padded width of the numeric portion.
-  digits      Int      @default(4)
-  suffix      String   @default("")
-  nextNumber  Int      @default(1)
-  isActive    Boolean  @default(true)
-  isDefault   Boolean  @default(false)
+  digits      Int     @default(4)
+  suffix      String  @default("")
+  nextNumber  Int     @default(1)
+  isActive    Boolean @default(true)
+  isDefault   Boolean @default(false)
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -314,30 +318,32 @@ enum CustomFieldEntity {
   DOCUMENT
   PROJECT
   CLIENT
+  /// Asset custom fields (values may also live on Asset.customFields).
+  ASSET
 }
 
 /// Employee custom fields, which can be made mandatory and can be turned
 /// into onboarding tasks via Profile Field Task Templates.
 model CustomFieldDefinition {
-  id          String            @id @default(cuid())
-  tenantId    String
-  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  entity      CustomFieldEntity @default(EMPLOYEE)
+  entity       CustomFieldEntity @default(EMPLOYEE)
   /// Which profile card it renders under.
-  section     String?
-  label       String
-  fieldKey    String
-  type        CustomFieldType   @default(TEXT)
-  options     Json?
-  isMandatory Boolean           @default(false)
-  isActive    Boolean           @default(true)
-  displayOrder Int              @default(0)
+  section      String?
+  label        String
+  fieldKey     String
+  type         CustomFieldType   @default(TEXT)
+  options      Json?
+  isMandatory  Boolean           @default(false)
+  isActive     Boolean           @default(true)
+  displayOrder Int               @default(0)
 
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  values      CustomFieldValue[]
+  values CustomFieldValue[]
 
   @@unique([tenantId, entity, fieldKey])
   @@index([tenantId, entity])
@@ -345,7 +351,7 @@ model CustomFieldDefinition {
 }
 
 model CustomFieldValue {
-  id           String @id @default(cuid())
+  id           String                @id @default(cuid())
   definitionId String
   definition   CustomFieldDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
   /// Polymorphic owner id — employee, document, project.

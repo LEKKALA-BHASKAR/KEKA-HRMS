@@ -4,7 +4,9 @@ import { prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import {
   checkInGoal, refreshGoal, launchCycle, submitReviewResponse, calibrateReview, shareCycle, acknowledgeReview, notify,
+  parseGoalSuggestions, parseTimeframe, timeframeOfDates, type GoalSuggestionShape,
 } from "@keka/services";
+import { aiForViewer, aiJson, aiEnabled, AI_UNAVAILABLE } from "@/lib/ai";
 import { foreignReference } from "@/lib/ownership";
 import { requireAuth, requireViewer, can, type Viewer } from "@/lib/context";
 import {
@@ -13,6 +15,8 @@ import {
 } from "@/lib/forms";
 
 const P = PERMISSIONS;
+/** Every page that shows goals, reviews or plans. */
+const PERF = ["/performance", "/performance/goals", "/performance/reviews", "/performance/cycles", "/performance/plans", "/me/performance"];
 
 async function targetOf(viewer: Viewer, employeeId: string) {
   return prisma.employee.findFirst({
@@ -92,9 +96,9 @@ export async function saveGoalAction(_prev: ActionState, formData: FormData): Pr
     await refreshGoal(goalId!);
     if (d.employeeId && d.employeeId !== viewer.employee?.id) {
       const t = await targetOf(viewer, d.employeeId);
-      await notify({ tenantId: viewer.tenantId, userIds: [t?.userId], kind: "PERFORMANCE", title: `New goal: ${d.title}`, body: `Set by ${viewer.employee?.displayName ?? viewer.user.email}`, link: "/performance" });
+      await notify({ tenantId: viewer.tenantId, userIds: [t?.userId], kind: "PERFORMANCE", title: `New goal: ${d.title}`, body: `Set by ${viewer.employee?.displayName ?? viewer.user.email}`, link: "/me/performance" });
     }
-    return done(["/performance"], id ? "Saved." : "Goal created.");
+    return done(PERF, id ? "Saved." : "Goal created.");
   } catch (err) {
     return toErrorState(err, values);
   }
@@ -110,7 +114,7 @@ export async function checkInAction(_prev: ActionState, formData: FormData): Pro
   const allowed = goal.employeeId ? await mayEditGoalsOf(viewer, goal.employeeId) : can(viewer, P.GOALS_MANAGE);
   if (!allowed) return { ok: false, message: "You cannot update this goal." };
   const r = await checkInGoal({ goalId, value, note: String(formData.get("note") ?? "") || null, byEmployeeId: viewer.employee?.id });
-  return r.ok ? done(["/performance"], r.message) : { ok: false, message: r.message };
+  return r.ok ? done(PERF, r.message) : { ok: false, message: r.message };
 }
 
 export async function setGoalStatusAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -125,7 +129,7 @@ export async function setGoalStatusAction(_prev: ActionState, formData: FormData
   else if (op === "reopen") { await prisma.goal.update({ where: { id: goalId }, data: { status: "ON_TRACK", statusOverride: null } }); await refreshGoal(goalId); }
   else return { ok: false, message: "Unknown action." };
   if (goal.parentGoalId) await refreshGoal(goal.parentGoalId);
-  return done(["/performance"], op === "cancel" ? "Cancelled." : "Reopened.");
+  return done(PERF, op === "cancel" ? "Cancelled." : "Reopened.");
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +166,7 @@ export async function createCycleAction(_prev: ActionState, formData: FormData):
       },
     });
     await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "ReviewCycle", entityId: cycle.id, summary: `Created review cycle ${d.name}` });
-    return done(["/performance"], `Created ${d.name}. Launch it when you are ready.`);
+    return done(PERF, `Created ${d.name}. Launch it when you are ready.`);
   } catch (err) {
     return toErrorState(err);
   }
@@ -176,7 +180,7 @@ export async function cycleOpAction(_prev: ActionState, formData: FormData): Pro
   if (!c) return { ok: false, message: "Cycle not found." };
   const r = op === "launch" ? await launchCycle(cycleId) : op === "share" ? await shareCycle(cycleId) : { ok: false, message: "Unknown action." };
   if (r.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "ReviewCycle", entityId: cycleId, summary: `${op} ${c.name}: ${r.message}` });
-  return r.ok ? done(["/performance", `/performance/cycles/${cycleId}`], r.message) : { ok: false, message: r.message };
+  return r.ok ? done([...PERF, `/performance/cycles/${cycleId}`], r.message) : { ok: false, message: r.message };
 }
 
 const responseSchema = z.object({
@@ -197,7 +201,7 @@ export async function submitReviewAction(_prev: ActionState, formData: FormData)
     .map(([k, v]) => ({ indicatorId: k.slice("indicator:".length), rating: Number(v) }))
     .filter((r) => r.rating >= 1 && r.rating <= 5);
   const r = await submitReviewResponse({ ...parsed.data, reviewerEmployeeId: viewer.employee.id, indicatorRatings });
-  return r.ok ? done(["/performance", `/performance/reviews/${parsed.data.reviewId}`, "/inbox"], r.message) : { ok: false, message: r.message };
+  return r.ok ? done([...PERF, `/performance/reviews/${parsed.data.reviewId}`, "/inbox"], r.message) : { ok: false, message: r.message };
 }
 
 export async function calibrateAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -217,7 +221,7 @@ export async function calibrateAction(_prev: ActionState, formData: FormData): P
 export async function acknowledgeAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const viewer = await requireViewer();
   const r = await acknowledgeReview(String(formData.get("reviewId")), viewer.employee?.id ?? "", String(formData.get("comments") ?? "") || null);
-  return r.ok ? done(["/performance"], r.message) : { ok: false, message: r.message };
+  return r.ok ? done(PERF, r.message) : { ok: false, message: r.message };
 }
 
 // ---------------------------------------------------------------------------
@@ -240,9 +244,9 @@ export async function createPipAction(_prev: ActionState, formData: FormData): P
   const open = await prisma.improvementPlan.count({ where: { employeeId: d.employeeId, status: "ACTIVE" } });
   if (open) return { ok: false, message: "There is already an active plan for this employee." };
   await prisma.improvementPlan.create({ data: { ...d, tenantId: viewer.tenantId, managerId: t.reportingManagerId, createdBy: viewer.user.id } });
-  await notify({ tenantId: viewer.tenantId, userIds: [t.userId], kind: "PERFORMANCE", title: "A performance improvement plan has been set up with you", body: `It runs until ${d.endDate.toISOString().slice(0, 10)}.`, link: "/performance?tab=plans" });
+  await notify({ tenantId: viewer.tenantId, userIds: [t.userId], kind: "PERFORMANCE", title: "A performance improvement plan has been set up with you", body: `It runs until ${d.endDate.toISOString().slice(0, 10)}.`, link: "/performance/plans" });
   await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "ImprovementPlan", entityId: d.employeeId, summary: `Started an improvement plan for ${t.displayName}` });
-  return done(["/performance"], "Plan started; the employee has been told.");
+  return done(PERF, "Plan started; the employee has been told.");
 }
 
 export async function closePipAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -263,5 +267,136 @@ export async function closePipAction(_prev: ActionState, formData: FormData): Pr
       : { status: "CLOSED", outcome, outcomeNote: note, decidedAt: new Date(), decidedBy: viewer.user.id },
   });
   await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "ImprovementPlan", entityId: id, summary: `Improvement plan for ${t.displayName}: ${outcome.toLowerCase()}` });
-  return done(["/performance"], outcome === "EXTENDED" ? "Extended by 30 days." : `Closed as ${outcome.toLowerCase()}.`);
+  return done(PERF, outcome === "EXTENDED" ? "Extended by 30 days." : `Closed as ${outcome.toLowerCase()}.`);
+}
+
+// ---------------------------------------------------------------------------
+//  The goal wizard: AI suggestions, then publish (or save as draft) in a batch
+// ---------------------------------------------------------------------------
+
+const LEVELS = ["INDIVIDUAL", "DEPARTMENT", "COMPANY"] as const;
+type WizardLevel = (typeof LEVELS)[number];
+
+/**
+ * "Generate goals". Sent: the goal level, the timeframe kind, a job title, a
+ * department name and the titles of that department's live company and
+ * department goals (so suggestions can align). No names or performance data.
+ */
+export async function suggestGoalsAction(input: { level: string; timeframe: string; jobTitle: string; departmentId: string }): Promise<{ ok: boolean; message?: string; goals?: Array<GoalSuggestionShape & { parentGoalId: string | null; parentTitle: string | null }> }> {
+  const viewer = await requireViewer();
+  if (!aiEnabled()) return { ok: false, message: AI_UNAVAILABLE };
+  const level = (LEVELS as readonly string[]).includes(String(input.level)) ? input.level as WizardLevel : "INDIVIDUAL";
+  const kind = ["QUARTER", "HALF_YEAR", "YEAR"].includes(String(input.timeframe)) ? String(input.timeframe) : "QUARTER";
+  const jobTitle = String(input.jobTitle ?? "").trim().slice(0, 80);
+  if (!jobTitle && level === "INDIVIDUAL") return { ok: false, message: "Choose the role the goals are for." };
+  const dept = input.departmentId ? await prisma.department.findFirst({ where: { id: String(input.departmentId), tenantId: viewer.tenantId }, select: { id: true, name: true } }) : null;
+  if (level !== "COMPANY" && !dept) return { ok: false, message: "Choose the department." };
+  const parents = await prisma.goal.findMany({
+    where: { tenantId: viewer.tenantId, status: { notIn: ["CANCELLED", "COMPLETED", "MISSED", "DRAFT"] }, OR: [{ level: "COMPANY" }, ...(dept ? [{ level: "DEPARTMENT" as const, departmentId: dept.id }] : [])] },
+    select: { id: true, title: true }, take: 10, orderBy: [{ level: "asc" }, { createdAt: "asc" }],
+  });
+  const span = kind === "QUARTER" ? "a quarter" : kind === "HALF_YEAR" ? "half a year" : "a year";
+  const prompt = [
+    `Goal level: ${level.toLowerCase()}`,
+    `Achievable within: ${span}`,
+    jobTitle ? `Role: ${jobTitle}` : "",
+    dept ? `Department: ${dept.name}` : "",
+    parents.length ? `Existing company and department goals (0-based index, for alignment):\n${parents.map((g, i) => `${i}. ${g.title}`).join("\n")}` : "",
+  ].filter(Boolean).join("\n");
+  const r = await aiForViewer(viewer, { feature: "GOAL_SUGGEST", subjectId: dept?.id ?? null, inputChars: prompt.length }, () => aiJson({
+    system: "You suggest measurable work goals for an HR performance system. Return a JSON array of exactly 5 objects: {\"title\": string (under 70 characters, starts with a verb), \"description\": string (one sentence), \"metricType\": \"PERCENTAGE\" | \"COMPLETION\" | \"NUMBER_INCREASE\" | \"NUMBER_DECREASE\" | \"CURRENCY\", \"startValue\": number | null, \"targetValue\": number | null, \"metricName\": string | null, \"alignsTo\": number | null}. Use numbers only when a realistic baseline and target exist; currency is Indian rupees. alignsTo is the index of an existing goal it supports, or null.",
+    prompt, maxTokens: 1200, validate: (v) => parseGoalSuggestions(v, parents.length),
+  }));
+  if (!r.ok) return { ok: false, message: r.reason };
+  return { ok: true, goals: r.value.map((g) => ({ ...g, parentGoalId: g.alignsTo !== null ? parents[g.alignsTo].id : null, parentTitle: g.alignsTo !== null ? parents[g.alignsTo].title : null })) };
+}
+
+export interface GoalDraftInput {
+  title: string; description?: string | null; level: string; employeeId?: string | null; departmentId?: string | null;
+  metricType: string; metricName?: string | null; startValue?: number | string | null; targetValue?: number | string | null;
+  timeframe?: string | null; startDate: string; dueDate: string; tags?: string[]; visibility?: string;
+  countsInReview?: boolean; parentGoalId?: string | null; source?: string;
+}
+
+/**
+ * Publish (or save as drafts) the goals built in the wizard. Every goal is
+ * checked first and nothing is written unless all of them pass, so a batch
+ * never half-lands.
+ */
+export async function publishGoalsAction(input: { goals: GoalDraftInput[]; draft: boolean }): Promise<{ ok: boolean; message: string; errors?: Record<number, string>; count?: number }> {
+  const viewer = await requireViewer();
+  const list = Array.isArray(input.goals) ? input.goals.slice(0, 20) : [];
+  if (list.length === 0) return { ok: false, message: "Add at least one goal." };
+  const errors: Record<number, string> = {};
+  const rows: Array<Record<string, unknown>> = [];
+  for (const [i, g] of list.entries()) {
+    const title = String(g.title ?? "").trim();
+    const level = (LEVELS as readonly string[]).includes(String(g.level)) ? g.level as WizardLevel : null;
+    const metric = ["PERCENTAGE", "COMPLETION", "NUMBER_INCREASE", "NUMBER_DECREASE", "CURRENCY"].includes(String(g.metricType)) ? String(g.metricType) : null;
+    const startDate = /^\d{4}-\d{2}-\d{2}$/.test(String(g.startDate)) ? new Date(`${g.startDate}T00:00:00Z`) : null;
+    const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(g.dueDate)) ? new Date(`${g.dueDate}T00:00:00Z`) : null;
+    if (!title || title.length > 200) { errors[i] = "Give the goal a title (under 200 characters)."; continue; }
+    if (!level) { errors[i] = "Choose the goal type."; continue; }
+    if (!metric) { errors[i] = "Choose a metric type."; continue; }
+    if (!startDate || !dueDate || !(dueDate > startDate)) { errors[i] = "The end date must be after the start date."; continue; }
+    let employeeId: string | null = null, departmentId: string | null = null;
+    if (level === "INDIVIDUAL") {
+      employeeId = g.employeeId ? String(g.employeeId) : viewer.employee?.id ?? null;
+      if (!employeeId) { errors[i] = "Choose the goal owner."; continue; }
+      if (!(await mayEditGoalsOf(viewer, employeeId))) { errors[i] = "You can set goals for yourself and your team only."; continue; }
+    } else {
+      if (!can(viewer, P.GOALS_MANAGE)) { errors[i] = "Company and department goals are set by HR."; continue; }
+      if (level === "DEPARTMENT") {
+        departmentId = g.departmentId ? String(g.departmentId) : null;
+        if (!departmentId || !(await prisma.department.findFirst({ where: { id: departmentId, tenantId: viewer.tenantId } }))) { errors[i] = "Choose the department."; continue; }
+      }
+    }
+    const n = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
+    let start = metric === "PERCENTAGE" || metric === "COMPLETION" ? 0 : n(g.startValue) ?? 0;
+    const target = metric === "PERCENTAGE" ? 100 : metric === "COMPLETION" ? 1 : n(g.targetValue);
+    if (target === null || !Number.isFinite(target) || !Number.isFinite(start)) { errors[i] = "Enter the target."; continue; }
+    if ((metric === "NUMBER_INCREASE" || metric === "CURRENCY") && !(target > start)) { errors[i] = "For an increase, the target must be above the starting value."; continue; }
+    if (metric === "NUMBER_DECREASE" && !(target < start)) { errors[i] = "For a decrease, the target must be below the starting value."; continue; }
+    if (Math.abs(start) > 1e15 || Math.abs(target) > 1e15) { errors[i] = "That number is too large."; continue; }
+    let parentGoalId: string | null = g.parentGoalId ? String(g.parentGoalId) : null;
+    if (parentGoalId && !(await prisma.goal.findFirst({ where: { id: parentGoalId, tenantId: viewer.tenantId } }))) parentGoalId = null;
+    const tags = [...new Set((Array.isArray(g.tags) ? g.tags : []).map((t) => String(t).trim().toLowerCase().slice(0, 30)).filter(Boolean))].slice(0, 8);
+    const tf = g.timeframe && parseTimeframe(String(g.timeframe), viewer.tenant.fyStartMonth) ? String(g.timeframe) : timeframeOfDates(startDate, dueDate, viewer.tenant.fyStartMonth);
+    start = Number(start);
+    rows.push({
+      tenantId: viewer.tenantId, title, description: String(g.description ?? "").trim().slice(0, 2000) || null, level, employeeId, departmentId,
+      metricType: metric, metricName: metric.startsWith("NUMBER") ? String(g.metricName ?? "").trim().slice(0, 60) || null : null,
+      startValue: start, targetValue: target, currentValue: start, startDate, dueDate, parentGoalId,
+      timeframe: tf, tags, visibility: g.visibility === "MANAGER_CHAIN" ? "MANAGER_CHAIN" : "EVERYONE",
+      countsInReview: g.countsInReview !== false, source: g.source === "AI" ? "AI" : "MANUAL",
+      status: input.draft ? "DRAFT" : "ON_TRACK", createdBy: viewer.user.id,
+    });
+  }
+  if (Object.keys(errors).length) return { ok: false, message: "Some goals need attention before they can be saved.", errors };
+  const ids: string[] = [];
+  for (const data of rows) ids.push((await prisma.goal.create({ data: data as never })).id);
+  for (const id of ids) await refreshGoal(id);
+  for (const [k, data] of rows.entries()) {
+    await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Goal", entityId: ids[k], summary: `${input.draft ? "Saved a draft goal" : "Published a goal"}: ${String(data.title).slice(0, 80)}${data.source === "AI" ? " (AI suggested)" : ""}` });
+    if (!input.draft && data.employeeId && data.employeeId !== viewer.employee?.id) {
+      const t = await targetOf(viewer, String(data.employeeId));
+      await notify({ tenantId: viewer.tenantId, userIds: [t?.userId], kind: "PERFORMANCE", title: `New goal: ${data.title}`, body: `Set by ${viewer.employee?.displayName ?? viewer.user.email}`, link: "/me/performance" });
+    }
+  }
+  done(PERF, "");
+  return { ok: true, count: ids.length, message: input.draft ? (ids.length > 1 ? `${ids.length} goals saved as drafts.` : "Goal saved as draft.") : (ids.length > 1 ? `${ids.length} goals published successfully.` : "Goal published successfully.") };
+}
+
+/** Publish a draft: it starts being measured against time from now on. */
+export async function publishDraftGoalAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const viewer = await requireViewer();
+  const goal = await prisma.goal.findFirst({ where: { id: String(formData.get("goalId")), tenantId: viewer.tenantId } });
+  if (!goal) return { ok: false, message: "Goal not found." };
+  if (goal.status !== "DRAFT") return { ok: false, message: "Only a draft can be published." };
+  const allowed = goal.employeeId ? await mayEditGoalsOf(viewer, goal.employeeId) : can(viewer, P.GOALS_MANAGE);
+  if (!allowed) return { ok: false, message: "You cannot publish this goal." };
+  await prisma.goal.update({ where: { id: goal.id }, data: { status: "ON_TRACK" } });
+  await refreshGoal(goal.id);
+  await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "Goal", entityId: goal.id, summary: `Published draft goal ${goal.title.slice(0, 80)}` });
+  return done(PERF, "Goal published successfully.");
 }

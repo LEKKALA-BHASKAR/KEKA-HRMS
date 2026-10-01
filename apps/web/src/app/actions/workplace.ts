@@ -5,6 +5,7 @@ import { safeRevalidate } from "@/lib/forms";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
+import { assignAssetAction, acknowledgeAssetAction, recoverAssetAction, decideAssetRequestAction, requestAssetAction } from "./assets";
 
 const P = PERMISSIONS;
 
@@ -243,97 +244,22 @@ export async function payAwardThroughPayroll(formData: FormData): Promise<void> 
 //  ASSETS
 // ---------------------------------------------------------------------------
 
+// The asset screens use the ActionState actions in ./assets. These plain-form
+// versions remain for older callers and throw when refused.
+
 export async function assignAsset(formData: FormData): Promise<void> {
-  const viewer = await requireAuth(P.ASSET_ASSIGN);
-  const assetId = String(formData.get("assetId"));
-  const employeeId = String(formData.get("employeeId"));
-  const conditionOut = String(formData.get("conditionOut") ?? "GOOD") as
-    "NEW" | "GOOD" | "FAIR" | "DAMAGED" | "UNUSABLE";
-  const notes = String(formData.get("notes") ?? "") || null;
-
-  const asset = await prisma.asset.findFirst({
-    where: { id: assetId, tenantId: viewer.tenantId },
-    include: { assetType: { select: { name: true } } },
-  });
-  if (!asset) throw new Error("Asset not found");
-  if (await foreignReference(viewer.tenantId, { employee: employeeId })) throw new Error("Employee not found");
-  if (asset.status === "ASSIGNED") {
-    throw new Error("This asset is already assigned. Record a return first.");
-  }
-  if (asset.status === "RETIRED" || asset.status === "LOST") {
-    throw new Error(`A ${asset.status.toLowerCase()} asset cannot be assigned`);
-  }
-
-  await prisma.$transaction([
-    prisma.assetAssignment.create({
-      data: {
-        assetId, employeeId,
-        assignedOn: new Date(), assignedBy: viewer.employee?.id ?? null,
-        conditionOut, notes,
-      },
-    }),
-    prisma.asset.update({ where: { id: assetId }, data: { status: "ASSIGNED" } }),
-  ]);
-
-  safeRevalidate("/assets");
+  const r = await assignAssetAction({}, formData);
+  if (!r.ok) throw new Error(r.message);
 }
 
 export async function acknowledgeAsset(formData: FormData): Promise<void> {
-  const viewer = await requireViewer();
-  if (!viewer.employee) throw new Error("No employee record linked to this login");
-  const assignmentId = String(formData.get("assignmentId"));
-
-  // An employee may only acknowledge their own assignment.
-  const updated = await prisma.assetAssignment.updateMany({
-    where: { id: assignmentId, employeeId: viewer.employee.id, acknowledgedAt: null },
-    data: { acknowledgedAt: new Date() },
-  });
-  if (updated.count === 0) {
-    throw new Error("Nothing to acknowledge — it may already be acknowledged, or not assigned to you");
-  }
-
-  safeRevalidate("/assets");
-  safeRevalidate("/me/assets");
+  const r = await acknowledgeAssetAction({}, formData);
+  if (!r.ok) throw new Error(r.message);
 }
 
 export async function returnAsset(formData: FormData): Promise<void> {
-  const viewer = await requireAuth(P.ASSET_ASSIGN);
-  const assignmentId = String(formData.get("assignmentId"));
-  const conditionIn = String(formData.get("conditionIn") ?? "GOOD") as
-    "NEW" | "GOOD" | "FAIR" | "DAMAGED" | "UNUSABLE";
-  const damageChargeRaw = String(formData.get("damageCharge") ?? "").trim();
-  const damageNote = String(formData.get("damageNote") ?? "") || null;
-
-  const assignment = await prisma.assetAssignment.findUnique({
-    where: { id: assignmentId },
-    include: { asset: { select: { id: true, tenantId: true } } },
-  });
-  if (!assignment || assignment.asset.tenantId !== viewer.tenantId) {
-    throw new Error("Assignment not found");
-  }
-  if (assignment.returnedOn) throw new Error("This asset has already been returned");
-
-  const damageCharge = damageChargeRaw === "" ? null : Number(damageChargeRaw);
-  if (damageCharge !== null && (Number.isNaN(damageCharge) || damageCharge < 0)) {
-    throw new Error("Enter a valid damage charge, or leave it blank");
-  }
-
-  await prisma.$transaction([
-    prisma.assetAssignment.update({
-      where: { id: assignmentId },
-      data: { returnedOn: new Date(), conditionIn, damageCharge, damageNote },
-    }),
-    prisma.asset.update({
-      where: { id: assignment.asset.id },
-      data: {
-        // A damaged return goes to repair, not straight back into the pool.
-        status: conditionIn === "DAMAGED" || conditionIn === "UNUSABLE" ? "IN_REPAIR" : "AVAILABLE",
-        condition: conditionIn,
-      },
-    }),
-  ]);
-
-  safeRevalidate("/assets");
+  const r = await recoverAssetAction({}, formData);
+  if (!r.ok) throw new Error(r.message);
 }
 
 /**
@@ -397,44 +323,18 @@ export async function recoverAssetDamage(formData: FormData): Promise<void> {
 }
 
 export async function decideAssetRequest(formData: FormData): Promise<void> {
-  const viewer = await requireAuth(P.ASSET_MANAGE);
-  const id = String(formData.get("id"));
-  const decision = String(formData.get("decision"));
-  const reason = String(formData.get("reason") ?? "") || null;
-
-  await prisma.assetRequest.updateMany({
-    where: { id, tenantId: viewer.tenantId, status: "PENDING" },
-    data: decision === "approve"
-      ? { status: "APPROVED", approvedBy: viewer.employee?.id ?? null, approvedAt: new Date() }
-      : { status: "REJECTED", rejectReason: reason },
-  });
-
-  safeRevalidate("/assets");
+  const fd = new FormData();
+  fd.set("requestId", String(formData.get("id") ?? formData.get("requestId") ?? ""));
+  fd.set("decision", String(formData.get("decision") ?? ""));
+  fd.set("note", String(formData.get("reason") ?? formData.get("note") ?? ""));
+  const r = await decideAssetRequestAction({}, fd);
+  if (!r.ok) throw new Error(r.message);
 }
 
 export async function requestAsset(formData: FormData): Promise<void> {
-  const viewer = await requireViewer();
-  if (!viewer.employee) throw new Error("No employee record linked to this login");
-  const assetTypeId = String(formData.get("assetTypeId")) || null;
-  const reason = String(formData.get("reason") ?? "").trim();
-  const neededByRaw = String(formData.get("neededBy") ?? "");
-
-  if (!reason) throw new Error("Give a reason for the request");
-  if (assetTypeId && !(await prisma.assetType.count({ where: { id: assetTypeId, category: { tenantId: viewer.tenantId } } }))) {
-    throw new Error("Asset type not found");
-  }
-
-  await prisma.assetRequest.create({
-    data: {
-      tenantId: viewer.tenantId,
-      employeeId: viewer.employee.id,
-      assetTypeId, reason,
-      neededBy: neededByRaw ? new Date(neededByRaw) : null,
-    },
-  });
-
-  safeRevalidate("/assets");
-  safeRevalidate("/me/assets");
+  if (!formData.get("title")) formData.set("title", String(formData.get("reason") ?? "Asset request").slice(0, 120));
+  const r = await requestAssetAction({}, formData);
+  if (!r.ok) throw new Error(r.message);
 }
 
 // ---------------------------------------------------------------------------

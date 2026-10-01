@@ -1,0 +1,544 @@
+// ============================================================================
+//  KEKA — PSA: pipeline (opportunities, estimates, project requests),
+//  resourcing (billing roles, requests, capacity), billing (charges, credit
+//  notes, billing entities), dashboards and settings
+// ============================================================================
+//  Spec: psa. Client, Project, RateCard, ResourceAllocation and Invoice live in
+//  10-projects (with their Keka-parity fields, and the RevenueRecognition,
+//  AllocationKind and InvoiceKind enums).
+//  Org-unit ids (businessUnitId, departmentId, locationId) are plain columns,
+//  like Project.costCenterId.
+//
+//  Referential note: the spec asks for Restrict on Opportunity.stage,
+//  Opportunity.owner and ResourceRequest.billingRole. Those are NoAction here
+//  and made DEFERRABLE INITIALLY DEFERRED in the migration (the same pattern as
+//  the category FKs in 20261001104418_deferrable_category_fks): deleting a
+//  stage/owner/role still in use is refused at commit, but deleting a tenant
+//  — which removes both sides in one transaction — works.
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+//  PIPELINE
+// ---------------------------------------------------------------------------
+
+enum OpportunityStageKind {
+  OPEN
+  WON
+  LOST
+}
+
+enum OpportunityStatus {
+  OPEN
+  WON
+  LOST
+  ARCHIVED
+}
+
+model OpportunityStage {
+  id             String               @id @default(cuid())
+  tenantId       String
+  tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  color          String               @default("#3b82f6")
+  /// 0..100, copied onto an opportunity when it enters the stage.
+  winProbability Int                  @default(10)
+  kind           OpportunityStageKind @default(OPEN)
+  sequence       Int                  @default(0)
+  isActive       Boolean              @default(true)
+  opportunities  Opportunity[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, sequence])
+  @@map("opportunity_stages")
+}
+
+model OpportunitySource {
+  id            String        @id @default(cuid())
+  tenantId      String
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  isActive      Boolean       @default(true)
+  opportunities Opportunity[]
+
+  @@unique([tenantId, name])
+  @@map("opportunity_sources")
+}
+
+/// A would-be client. Converting it creates (or links) a Client.
+model Prospect {
+  id              String           @id @default(cuid())
+  tenantId        String
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  contactName     String?
+  contactEmail    String?
+  contactPhone    String?
+  city            String?
+  state           String?
+  countryCode     String           @default("IN")
+  currency        String           @default("INR")
+  /// Employee id.
+  ownerId         String?
+  /// Set once converted.
+  clientId        String?
+  client          Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  opportunities   Opportunity[]
+  projectRequests ProjectRequest[]
+
+  @@unique([tenantId, name])
+  @@index([clientId])
+  @@map("prospects")
+}
+
+model Opportunity {
+  id                   String                @id @default(cuid())
+  tenantId             String
+  tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// OPP-0001
+  number               String
+  name                 String
+  description          String?
+  /// Exactly one of clientId / prospectId.
+  clientId             String?
+  client               Client?               @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  prospectId           String?
+  prospect             Prospect?             @relation(fields: [prospectId], references: [id], onDelete: SetNull)
+  sourceId             String?
+  source               OpportunitySource?    @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  stageId              String
+  /// NoAction + DEFERRABLE (see file header): a stage in use cannot be deleted.
+  stage                OpportunityStage      @relation(fields: [stageId], references: [id], onDelete: NoAction)
+  status               OpportunityStatus     @default(OPEN)
+  winProbability       Int                   @default(0)
+  ownerId              String
+  /// NoAction + DEFERRABLE (see file header): an owner cannot be deleted.
+  owner                Employee              @relation("OpportunityOwner", fields: [ownerId], references: [id], onDelete: NoAction)
+  /// All managers shown, owner first. Employee ids.
+  managerIds           String[]              @default([])
+  billingModel         BillingModel          @default(TIME_AND_MATERIAL)
+  currency             String                @default("INR")
+  estimatedRevenue     Decimal               @db.Decimal(18, 2)
+  /// Base-currency units per unit of `currency`, fixed at entry.
+  fxRate               Decimal               @default(1) @db.Decimal(18, 6)
+  startDate            DateTime
+  closeDate            DateTime
+  expectedProjectStart DateTime
+  expectedProjectEnd   DateTime?
+  businessUnitId       String?
+  departmentId         String?
+  locationId           String?
+  closedAt             DateTime?
+  lostReason           String?
+  archivedAt           DateTime?
+  updatedById          String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  estimates            OpportunityEstimate[]
+  comments             OpportunityComment[]
+  projectRequests      ProjectRequest[]
+  resourceRequests     ResourceRequest[]
+  /// The project created from it (Project.opportunityId).
+  project              Project?
+
+  @@unique([tenantId, number])
+  @@index([tenantId, status])
+  @@index([stageId])
+  @@index([clientId])
+  @@index([ownerId])
+  @@index([prospectId])
+  @@map("opportunities")
+}
+
+model OpportunityComment {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  /// User id.
+  authorId      String
+  body          String
+  /// StoredFile id of an attachment.
+  fileId        String?
+  createdAt     DateTime    @default(now())
+
+  @@index([opportunityId, createdAt])
+  @@map("opportunity_comments")
+}
+
+enum EstimateType {
+  TASK
+  RESOURCE
+}
+
+enum EstimateStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum EstimateLineKind {
+  PHASE
+  TASK
+  MILESTONE
+  ROLE
+}
+
+model OpportunityEstimate {
+  id            String         @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity    @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  name          String
+  type          EstimateType
+  status        EstimateStatus @default(DRAFT)
+  rateCardId    String?
+  rateCard      RateCard?      @relation(fields: [rateCardId], references: [id], onDelete: SetNull)
+  /// Totals, recomputed on each line save.
+  hours         Decimal        @default(0) @db.Decimal(12, 2)
+  billingAmount Decimal        @default(0) @db.Decimal(18, 2)
+  cost          Decimal        @default(0) @db.Decimal(18, 2)
+  startDate     DateTime?
+  endDate       DateTime?
+  publishedAt   DateTime?
+  updatedById   String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  lines         EstimateLine[]
+
+  @@unique([opportunityId, name])
+  @@map("opportunity_estimates")
+}
+
+model EstimateLine {
+  id                String              @id @default(cuid())
+  estimateId        String
+  estimate          OpportunityEstimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+  kind              EstimateLineKind
+  /// A task's phase (another EstimateLine id; plain column).
+  parentId          String?
+  name              String
+  billingRoleId     String?
+  billingRole       BillingRole?        @relation(fields: [billingRoleId], references: [id], onDelete: SetNull)
+  employeeId        String?
+  headcount         Int                 @default(1)
+  startDate         DateTime?
+  endDate           DateTime?
+  allocationPercent Decimal             @default(100) @db.Decimal(9, 2)
+  hours             Decimal             @default(0) @db.Decimal(12, 2)
+  billRate          Decimal             @default(0) @db.Decimal(18, 2)
+  costRate          Decimal             @default(0) @db.Decimal(18, 2)
+  /// Billing value of the line (a milestone's amount).
+  amount            Decimal             @default(0) @db.Decimal(18, 2)
+  cost              Decimal             @default(0) @db.Decimal(18, 2)
+  sequence          Int                 @default(0)
+
+  @@index([estimateId])
+  @@map("estimate_lines")
+}
+
+enum ProjectRequestSource {
+  OPPORTUNITY
+  PROJECT
+}
+
+/// NEW = awaiting "Convert as project"; PENDING = form raised, awaiting approval.
+enum ProjectRequestStatus {
+  NEW
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model ProjectRequest {
+  id               String               @id @default(cuid())
+  tenantId         String
+  tenant           Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  source           ProjectRequestSource
+  opportunityId    String?
+  opportunity      Opportunity?         @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  name             String
+  clientId         String?
+  client           Client?              @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  prospectId       String?
+  prospect         Prospect?            @relation(fields: [prospectId], references: [id], onDelete: SetNull)
+  billingModel     BillingModel
+  currency         String               @default("INR")
+  estimatedRevenue Decimal?             @db.Decimal(18, 2)
+  status           ProjectRequestStatus @default(NEW)
+  /// The project form as raised; validated again on approval.
+  payload          Json?
+  /// User id.
+  requestedById    String
+  requestedAt      DateTime             @default(now())
+  decidedById      String?
+  decidedAt        DateTime?
+  rejectReason     String?
+  projectId        String?              @unique
+  project          Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@index([opportunityId])
+  @@map("project_requests")
+}
+
+// ---------------------------------------------------------------------------
+//  RESOURCING
+// ---------------------------------------------------------------------------
+
+model BillingRole {
+  id               String            @id @default(cuid())
+  tenantId         String
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  estimateLines    EstimateLine[]
+  resourceRequests ResourceRequest[]
+
+  @@unique([tenantId, name])
+  @@map("billing_roles")
+}
+
+enum ResourceRequestType {
+  ROLE
+  RESOURCE
+}
+
+enum ResourceRequestStatus {
+  OPEN
+  HIRING
+  ALLOCATED
+  REJECTED
+  CANCELLED
+}
+
+model ResourceRequest {
+  id                 String                @id @default(cuid())
+  tenantId           String
+  tenant             Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId          String?
+  project            Project?              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  opportunityId      String?
+  opportunity        Opportunity?          @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  /// The estimate line it was sent from (plain id).
+  estimateLineId     String?
+  type               ResourceRequestType
+  billingRoleId      String
+  /// NoAction + DEFERRABLE (see file header): a role in use cannot be deleted.
+  billingRole        BillingRole           @relation(fields: [billingRoleId], references: [id], onDelete: NoAction)
+  /// The named person, for type RESOURCE.
+  employeeId         String?
+  count              Int                   @default(1)
+  allocationPercent  Decimal               @default(100) @db.Decimal(9, 2)
+  /// "Available from".
+  startDate          DateTime
+  endDate            DateTime?
+  skills             String[]              @default([])
+  businessUnitIds    String[]              @default([])
+  departmentIds      String[]              @default([])
+  minExperienceYears Int                   @default(0)
+  priority           TaskPriority          @default(MEDIUM)
+  status             ResourceRequestStatus @default(OPEN)
+  /// User id.
+  requestedById      String
+  notes              String?
+  /// The Requisition raised by "Mark as hiring" (plain id).
+  requisitionId      String?
+  closedAt           DateTime?
+  closedById         String?
+  closeReason        String?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  @@index([tenantId, status, startDate])
+  @@index([projectId])
+  @@index([opportunityId])
+  @@index([billingRoleId])
+  @@map("resource_requests")
+}
+
+enum ResourceCostType {
+  HOURLY
+  MONTHLY
+  ANNUAL
+}
+
+/// Capacity and cost for one employee ("Cost & capacity").
+model ResourceProfile {
+  id                String            @id @default(cuid())
+  tenantId          String
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId        String            @unique
+  employee          Employee          @relation("ResourceProfile", fields: [employeeId], references: [id], onDelete: Cascade)
+  /// Hours available Sunday..Saturday; 0 = weekly off.
+  capacity          Json              @default("[0,8,8,8,8,8,0]")
+  costType          ResourceCostType?
+  costAmount        Decimal?          @db.Decimal(18, 2)
+  currency          String            @default("INR")
+  /// costAmount reduced to an hour of capacity; used when an allocation has no costRate.
+  hourlyCost        Decimal?          @db.Decimal(18, 2)
+  targetUtilization Int?
+  updatedAt         DateTime          @updatedAt
+
+  @@index([tenantId])
+  @@map("resource_profiles")
+}
+
+// ---------------------------------------------------------------------------
+//  BILLING
+// ---------------------------------------------------------------------------
+
+enum ChargeKind {
+  TIME
+  MILESTONE
+  RETAINER
+  EXPENSE
+  ADHOC
+}
+
+enum ChargeStatus {
+  UNBILLED
+  INVOICED
+  CANCELLED
+}
+
+/// How a charge's invoice lines are grouped.
+enum ChargeTemplate {
+  NONE
+  TASK
+  ROLE
+  EMPLOYEE
+}
+
+enum CreditNoteStatus {
+  OPEN
+  APPLIED
+  VOID
+}
+
+model ProjectCharge {
+  id          String         @id @default(cuid())
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// CHR-12
+  number      String
+  projectId   String
+  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  kind        ChargeKind
+  /// How its invoice lines are grouped.
+  template    ChargeTemplate @default(NONE)
+  periodStart DateTime?
+  periodEnd   DateTime?
+  quantity    Decimal        @default(1) @db.Decimal(12, 2)
+  amount      Decimal        @db.Decimal(18, 2)
+  currency    String         @default("INR")
+  status      ChargeStatus   @default(UNBILLED)
+  invoiceId   String?
+  invoice     Invoice?       @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  /// { timeEntryIds } | { milestoneId } | { expenseClaimId }
+  sourceRefs  Json?
+  createdAt   DateTime       @default(now())
+
+  @@unique([tenantId, number])
+  @@index([projectId, status])
+  @@index([invoiceId])
+  @@map("project_charges")
+}
+
+model CreditNote {
+  id          String           @id @default(cuid())
+  tenantId    String
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  number      String
+  clientId    String
+  client      Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  invoiceId   String?
+  invoice     Invoice?         @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  issueDate   DateTime
+  amount      Decimal          @db.Decimal(18, 2)
+  taxAmount   Decimal          @default(0) @db.Decimal(18, 2)
+  currency    String           @default("INR")
+  reason      String
+  status      CreditNoteStatus @default(OPEN)
+  appliedAt   DateTime?
+  /// User id.
+  createdById String
+  createdAt   DateTime         @default(now())
+
+  @@unique([tenantId, number])
+  @@index([clientId])
+  @@index([invoiceId])
+  @@map("credit_notes")
+}
+
+/// Project-billing setup of a LegalEntity ("Ready" once it exists).
+model BillingEntitySetting {
+  id                     String   @id @default(cuid())
+  tenantId               String
+  tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// LegalEntity id (plain column).
+  legalEntityId          String   @unique
+  invoicePrefix          String   @default("INV-")
+  invoiceSuffix          String?
+  nextInvoiceNumber      Int      @default(1)
+  proformaPrefix         String   @default("PINV-")
+  nextProformaNumber     Int      @default(1)
+  creditNotePrefix       String   @default("CRN-")
+  nextCreditNoteNumber   Int      @default(1)
+  defaultPaymentTermDays Int      @default(30)
+  bankDetails            String?
+  footer                 String?
+  updatedAt              DateTime @updatedAt
+
+  @@index([tenantId])
+  @@map("billing_entity_settings")
+}
+
+// ---------------------------------------------------------------------------
+//  DASHBOARDS AND SETTINGS
+// ---------------------------------------------------------------------------
+
+/// Per-user PSA board layout. Not the same thing as DashboardWidget (org-wide Home).
+model PsaDashboardLayout {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// User id.
+  userId    String
+  /// BUSINESS | FINANCE | RESOURCES
+  board     String
+  /// Ordered [{ "id": "funnel", "settings": { "viewBy": "AMOUNT", "sourceId": null } }]
+  widgets   Json
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, board])
+  @@index([tenantId])
+  @@map("psa_dashboard_layouts")
+}
+
+/// "Explain with AI" output per board, cached 6 h.
+model PsaInsightCache {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  board       String
+  input       Json
+  output      Json
+  generatedAt DateTime @default(now())
+
+  @@unique([tenantId, board])
+  @@map("psa_insight_cache")
+}
+
+model PsaSetting {
+  id                           String             @id @default(cuid())
+  tenantId                     String             @unique
+  tenant                       Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  criticalRequestDays          Int                @default(10)
+  projectCreationNeedsApproval Boolean            @default(false)
+  defaultRevenueRecognition    RevenueRecognition @default(INCOME_TO_DATE)
+  updatedAt                    DateTime           @updatedAt
+
+  @@map("psa_settings")
+}

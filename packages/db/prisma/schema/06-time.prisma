@@ -45,85 +45,95 @@ enum YearEndAction {
 }
 
 model LeaveType {
-  id                String           @id @default(cuid())
-  tenantId          String
-  tenant            Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name              String
-  code              String
-  category          LeaveCategory    @default(REGULAR)
-  unit              LeaveUnit        @default(DAYS)
-  color             String?
+  id       String        @id @default(cuid())
+  tenantId String
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  code     String
+  category LeaveCategory @default(REGULAR)
+  unit     LeaveUnit     @default(DAYS)
+  color    String?
 
   /// Paid leave does not create LOP; unpaid leave does.
-  isPaid            Boolean          @default(true)
+  isPaid Boolean @default(true)
 
   // --- Accrual ---
-  accrualFrequency  AccrualFrequency @default(MONTHLY)
+  accrualFrequency AccrualFrequency @default(MONTHLY)
   /// Day of the period on which the credit lands.
-  accrualDay        Int              @default(1)
-  annualQuota       Decimal          @default(0) @db.Decimal(9, 2)
+  accrualDay       Int              @default(1)
+  annualQuota      Decimal          @default(0) @db.Decimal(9, 2)
   /// Each period may carry its own value, including zero.
-  unevenAccrual     Json?
-  isUnlimited       Boolean          @default(false)
+  unevenAccrual    Json?
+  isUnlimited      Boolean          @default(false)
 
   // --- On joining ---
-  prorateOnJoining  Boolean          @default(true)
+  prorateOnJoining      Boolean @default(true)
   /// No leave awarded if the employee joins after this day of the month.
   noAwardIfJoinAfterDay Int?
 
   // --- Probation ---
-  accrueDuringProbation Boolean      @default(true)
-  probationWaitDays Int?
-  maxDaysDuringProbation Decimal?    @db.Decimal(9, 2)
+  accrueDuringProbation  Boolean  @default(true)
+  probationWaitDays      Int?
+  maxDaysDuringProbation Decimal? @db.Decimal(9, 2)
 
   // --- On exit ---
-  prorateOnExit     Boolean          @default(true)
-  accrueDuringNotice Boolean         @default(true)
+  prorateOnExit             Boolean  @default(true)
+  accrueDuringNotice        Boolean  @default(true)
   /// Leave taken during notice extends the notice period by this multiplier.
   noticeExtensionMultiplier Decimal? @db.Decimal(9, 2)
 
   // --- Stop conditions ---
   expiryDaysAfterCredit Int?
-  maxAccumulation   Decimal?         @db.Decimal(9, 2)
+  maxAccumulation       Decimal? @db.Decimal(9, 2)
 
   // --- Negative balance ---
-  allowNegativeBalance Boolean       @default(false)
-  maxNegativeDays   Decimal?         @db.Decimal(9, 2)
+  allowNegativeBalance Boolean  @default(false)
+  maxNegativeDays      Decimal? @db.Decimal(9, 2)
 
   // --- Application rules ---
-  allowHalfDay      Boolean          @default(true)
-  allowQuarterDay   Boolean          @default(false)
-  allowBackdated    Boolean          @default(true)
-  priorNoticeDays   Int?
-  requireComment    Boolean          @default(false)
-  attachmentAboveDays Decimal?       @db.Decimal(9, 2)
+  allowHalfDay            Boolean  @default(true)
+  allowQuarterDay         Boolean  @default(false)
+  allowBackdated          Boolean  @default(true)
+  priorNoticeDays         Int?
+  requireComment          Boolean  @default(false)
+  attachmentAboveDays     Decimal? @db.Decimal(9, 2)
   /// Hidden from employees — admin or manager applied only.
-  isHiddenFromEmployee Boolean       @default(false)
-  maxConsecutiveDays Decimal?        @db.Decimal(9, 2)
-  maxDaysPerMonth   Decimal?         @db.Decimal(9, 2)
+  isHiddenFromEmployee    Boolean  @default(false)
+  maxConsecutiveDays      Decimal? @db.Decimal(9, 2)
+  maxDaysPerMonth         Decimal? @db.Decimal(9, 2)
   minGapBetweenLeavesDays Int?
 
   // --- Sandwich rules ---
   /// Five independent weekly-off triggers and five holiday triggers.
   /// { weeklyOff: { between, before, after, eitherSide, dayBetweenLeaves },
   ///   holiday:   { ... }, threshold, excludeHalfDay, clubAcrossLeaveTypes }
-  sandwichConfig    Json?
+  sandwichConfig Json?
 
   // --- Year end ---
-  yearEndAction     YearEndAction    @default(CARRY_FORWARD_ALL)
-  carryForwardMax   Decimal?         @db.Decimal(9, 2)
+  yearEndAction          YearEndAction @default(CARRY_FORWARD_ALL)
+  carryForwardMax        Decimal?      @db.Decimal(9, 2)
   carryForwardExpiryDays Int?
-  encashmentEnabled Boolean          @default(false)
+  encashmentEnabled      Boolean       @default(false)
   /// Formula linking encashment to salary components, e.g. "[BASIC] / 30".
-  encashmentFormula String?
+  encashmentFormula      String?
 
-  isActive          Boolean          @default(true)
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  // --- Keka parity (time-inbox) ---
+  /// Shown in the leave drawer and policy explanation.
+  description              String?
+  /// COMP_OFF: days after the worked day within which credit may be requested.
+  compOffRequestWindowDays Int?
+  /// Employees may request encashment in service.
+  allowEncashmentRequest   Boolean  @default(false)
+  encashmentMaxDaysPerYear Decimal? @db.Decimal(9, 2)
 
-  planLinks         LeavePlanType[]
-  balances          LeaveBalance[]
-  requests          LeaveRequest[]
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  planLinks          LeavePlanType[]
+  balances           LeaveBalance[]
+  requests           LeaveRequest[]
+  encashmentRequests LeaveEncashmentRequest[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -138,20 +148,20 @@ enum LeaveYearBasis {
 }
 
 model LeavePlan {
-  id           String         @id @default(cuid())
-  tenantId     String
-  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name         String
-  description  String?
-  yearBasis    LeaveYearBasis @default(FINANCIAL_APR)
-  isDefault    Boolean        @default(false)
-  isActive     Boolean        @default(true)
+  id          String         @id @default(cuid())
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  yearBasis   LeaveYearBasis @default(FINANCIAL_APR)
+  isDefault   Boolean        @default(false)
+  isActive    Boolean        @default(true)
 
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  types        LeavePlanType[]
-  assignments  LeavePlanAssignment[]
+  types       LeavePlanType[]
+  assignments LeavePlanAssignment[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -159,13 +169,13 @@ model LeavePlan {
 }
 
 model LeavePlanType {
-  id          String    @id @default(cuid())
-  planId      String
-  plan        LeavePlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  leaveTypeId String
-  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  id            String    @id @default(cuid())
+  planId        String
+  plan          LeavePlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  leaveTypeId   String
+  leaveType     LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
   /// Overrides the leave type's default quota for this plan.
-  quotaOverride Decimal? @db.Decimal(9, 2)
+  quotaOverride Decimal?  @db.Decimal(9, 2)
 
   @@unique([planId, leaveTypeId])
   @@index([planId])
@@ -186,23 +196,23 @@ model LeavePlanAssignment {
 }
 
 model LeaveBalance {
-  id            String    @id @default(cuid())
-  employeeId    String
-  leaveTypeId   String
-  leaveType     LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  employeeId  String
+  leaveTypeId String
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
 
   /// Leave year this balance belongs to.
-  yearStart     DateTime
-  opening       Decimal   @default(0) @db.Decimal(9, 2)
-  accrued       Decimal   @default(0) @db.Decimal(9, 2)
-  used          Decimal   @default(0) @db.Decimal(9, 2)
-  encashed      Decimal   @default(0) @db.Decimal(9, 2)
-  lapsed        Decimal   @default(0) @db.Decimal(9, 2)
+  yearStart      DateTime
+  opening        Decimal  @default(0) @db.Decimal(9, 2)
+  accrued        Decimal  @default(0) @db.Decimal(9, 2)
+  used           Decimal  @default(0) @db.Decimal(9, 2)
+  encashed       Decimal  @default(0) @db.Decimal(9, 2)
+  lapsed         Decimal  @default(0) @db.Decimal(9, 2)
   carriedForward Decimal  @default(0) @db.Decimal(9, 2)
   /// opening + accrued + carriedForward - used - encashed - lapsed
-  available     Decimal   @default(0) @db.Decimal(9, 2)
+  available      Decimal  @default(0) @db.Decimal(9, 2)
 
-  updatedAt     DateTime  @updatedAt
+  updatedAt DateTime @updatedAt
 
   @@unique([employeeId, leaveTypeId, yearStart])
   @@index([employeeId])
@@ -225,39 +235,41 @@ enum DayPortion {
 }
 
 model LeaveRequest {
-  id           String             @id @default(cuid())
-  tenantId     String
-  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId   String
-  leaveTypeId  String
-  leaveType    LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String
+  leaveTypeId String
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
 
   fromDate     DateTime
   toDate       DateTime
-  fromPortion  DayPortion         @default(FULL_DAY)
-  toPortion    DayPortion         @default(FULL_DAY)
+  fromPortion  DayPortion @default(FULL_DAY)
+  toPortion    DayPortion @default(FULL_DAY)
   /// Net days after portions and sandwich rules.
-  totalDays    Decimal            @db.Decimal(9, 2)
+  totalDays    Decimal    @db.Decimal(9, 2)
   /// Extra days added purely by the sandwich rule.
-  sandwichDays Decimal            @default(0) @db.Decimal(9, 2)
+  sandwichDays Decimal    @default(0) @db.Decimal(9, 2)
 
-  reason       String?
+  reason        String?
   attachmentUrl String?
-  status       LeaveRequestStatus @default(PENDING)
+  status        LeaveRequestStatus @default(PENDING)
 
-  approvedBy   String?
-  approvedAt   DateTime?
-  rejectReason String?
+  approvedBy        String?
+  approvedAt        DateTime?
+  rejectReason      String?
   /// Employee who raised it, when an administrator applied on someone's behalf.
-  requestedBy  String?
+  requestedBy       String?
   /// Employee who cancelled or withdrew it, and when.
-  cancelledBy  String?
-  cancelledAt  DateTime?
+  cancelledBy       String?
+  cancelledAt       DateTime?
+  /// Employees copied on the request (Keka "Notify"): ["<employeeId>", ...]
+  notifyEmployeeIds Json?
 
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  days         LeaveRequestDay[]
+  days LeaveRequestDay[]
 
   @@index([tenantId, employeeId, fromDate])
   @@index([status])
@@ -286,17 +298,17 @@ model LeaveRequestDay {
 // ---------------------------------------------------------------------------
 
 model HolidayCalendar {
-  id         String    @id @default(cuid())
-  tenantId   String
-  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name       String
-  year       Int
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  year        Int
   /// Locations this calendar applies to.
   locationIds Json?
-  isDefault  Boolean   @default(false)
+  isDefault   Boolean @default(false)
 
-  createdAt  DateTime  @default(now())
-  holidays   Holiday[]
+  createdAt DateTime  @default(now())
+  holidays  Holiday[]
 
   @@unique([tenantId, name, year])
   @@index([tenantId])
@@ -323,30 +335,32 @@ model Holiday {
 // ---------------------------------------------------------------------------
 
 model Shift {
-  id             String   @id @default(cuid())
-  tenantId       String
-  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name           String
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
   /// Used as the key for Excel roster import.
-  code           String
-  startTime      String
-  endTime        String
+  code            String
+  startTime       String
+  endTime         String
   /// Flexible shifts count total hours rather than fixed in/out times.
-  isFlexible     Boolean  @default(false)
+  isFlexible      Boolean  @default(false)
   /// Required hours for a flexible shift.
-  requiredHours  Decimal? @db.Decimal(9, 2)
-  breakMinutes   Int      @default(60)
+  requiredHours   Decimal? @db.Decimal(9, 2)
+  breakMinutes    Int      @default(60)
   /// Auto clock-out after this many minutes in a single slot.
-  maxSlotMinutes Int?
+  maxSlotMinutes  Int?
   /// Per-day overrides so a shift can differ Mon-Sun.
-  daySchedule    Json?
+  daySchedule     Json?
   /// The shift ends on the following calendar day.
-  crossesMidnight Boolean @default(false)
-  color          String?
-  isActive       Boolean  @default(true)
+  crossesMidnight Boolean  @default(false)
+  color           String?
+  isActive        Boolean  @default(true)
 
-  createdAt      DateTime @default(now())
-  assignments    ShiftAssignment[]
+  createdAt   DateTime          @default(now())
+  assignments ShiftAssignment[]
+  /// SHIFT_CHANGE requests asking for this shift (21-time-requests).
+  requests    ShiftRequest[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -354,11 +368,11 @@ model Shift {
 }
 
 model ShiftAssignment {
-  id         String   @id @default(cuid())
-  employeeId String
-  shiftId    String
-  shift      Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
-  date       DateTime
+  id            String   @id @default(cuid())
+  employeeId    String
+  shiftId       String
+  shift         Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  date          DateTime
   /// WO = full day off, WOF = first half, WOS = second half.
   weeklyOffCode String?
 
@@ -368,19 +382,19 @@ model ShiftAssignment {
 }
 
 model WeeklyOffPolicy {
-  id          String   @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name        String
+  id        String  @id @default(cuid())
+  tenantId  String
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
   /// Per-weekday instance rules — the primitive behind alternate-Saturday
   /// and nth-week patterns.
   /// { "SAT": { instances: [2, 4], portion: "FULL_DAY" }, "SUN": { instances: "ALL" } }
-  config      Json
-  isDefault   Boolean  @default(false)
-  version     Int      @default(1)
-  isActive    Boolean  @default(true)
+  config    Json
+  isDefault Boolean @default(false)
+  version   Int     @default(1)
+  isActive  Boolean @default(true)
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([tenantId, name, version])
   @@index([tenantId])
@@ -407,15 +421,26 @@ enum CaptureSource {
   KIOSK
   API
   MANUAL
+  /// Remote Clock-In — held for approval when the policy says so.
+  REMOTE
+}
+
+enum PunchStatus {
+  /// Counts toward the day.
+  VALID
+  /// A remote punch awaiting approval; processing ignores it.
+  PENDING
+  /// Rejected remote punch, kept for the audit trail, never counted.
+  REJECTED
 }
 
 /// One row per employee per day. This is what payroll step 1 reads.
 model AttendanceRecord {
-  id             String           @id @default(cuid())
-  tenantId       String
-  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId     String
-  date           DateTime
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  date       DateTime
 
   status         AttendanceStatus @default(NO_ATTENDANCE)
   shiftId        String?
@@ -428,19 +453,19 @@ model AttendanceRecord {
   overtimeHours  Decimal          @default(0) @db.Decimal(9, 2)
 
   /// Payable fraction of the day: 1.0, 0.5 or 0.
-  payableValue   Decimal          @default(1) @db.Decimal(9, 2)
+  payableValue  Decimal @default(1) @db.Decimal(9, 2)
   /// LOP contribution from this day.
-  lopValue       Decimal          @default(0) @db.Decimal(9, 2)
+  lopValue      Decimal @default(0) @db.Decimal(9, 2)
   /// Set when a penalisation policy produced the LOP.
-  penaltyReason  String?
+  penaltyReason String?
 
-  isRegularised  Boolean          @default(false)
-  remark         String?
+  isRegularised Boolean @default(false)
+  remark        String?
 
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  logs           AttendanceLog[]
+  logs AttendanceLog[]
 
   @@unique([employeeId, date])
   @@index([tenantId, date])
@@ -450,52 +475,57 @@ model AttendanceRecord {
 
 /// Raw punches. Ingested from devices or the attendance API.
 model AttendanceLog {
-  id         String            @id @default(cuid())
-  recordId   String?
-  record     AttendanceRecord? @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  id       String            @id @default(cuid())
+  recordId String?
+  record   AttendanceRecord? @relation(fields: [recordId], references: [id], onDelete: Cascade)
 
-  tenantId   String
+  tenantId String
 
-  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId String
-  timestamp  DateTime
+  tenant              Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId          String
+  timestamp           DateTime
   /// 0 = IN, 1 = OUT.
-  direction  Int
-  source     CaptureSource     @default(WEB)
-  deviceId   String?
-  latitude   Decimal?          @db.Decimal(10, 7)
-  longitude  Decimal?          @db.Decimal(10, 7)
-  ipAddress  String?
-  selfieUrl  String?
-  comment    String?
+  direction           Int
+  source              CaptureSource @default(WEB)
+  deviceId            String?
+  latitude            Decimal?      @db.Decimal(10, 7)
+  longitude           Decimal?      @db.Decimal(10, 7)
+  ipAddress           String?
+  selfieUrl           String?
+  comment             String?
+  /// Only VALID punches count toward the day.
+  status              PunchStatus   @default(VALID)
+  /// The REMOTE_CLOCK_IN AttendanceRequest this punch belongs to.
+  attendanceRequestId String?
 
-  createdAt  DateTime          @default(now())
+  createdAt DateTime @default(now())
 
   @@index([tenantId, employeeId, timestamp])
   @@index([recordId])
+  @@index([attendanceRequestId])
   @@map("attendance_logs")
 }
 
 /// Manual LOP override — the third documented LOP driver.
 /// Also carries LOP reversals from previous months.
 model LopAdjustment {
-  id          String   @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId  String
+  id               String  @id @default(cuid())
+  tenantId         String
+  tenant           Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId       String
   /// Pay period the adjustment applies to.
-  year        Int
-  month       Int
+  year             Int
+  month            Int
   /// Positive adds LOP days, negative reverses them.
-  days        Decimal  @db.Decimal(9, 2)
+  days             Decimal @db.Decimal(9, 2)
   /// The month the reversed LOP originally fell in.
   reversalForYear  Int?
   reversalForMonth Int?
-  note        String?
-  runId       String?
+  note             String?
+  runId            String?
 
-  createdAt   DateTime @default(now())
-  createdBy   String?
+  createdAt DateTime @default(now())
+  createdBy String?
 
   @@index([tenantId, employeeId, year, month])
   @@map("lop_adjustments")
@@ -503,22 +533,22 @@ model LopAdjustment {
 
 /// Overtime recorded for a pay period, priced by the OT pay code.
 model OvertimeEntry {
-  id         String   @id @default(cuid())
-  tenantId   String
-  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId String
-  year       Int
-  month      Int
-  hours      Decimal  @db.Decimal(9, 2)
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String
+  year        Int
+  month       Int
+  hours       Decimal @db.Decimal(9, 2)
   /// Rate per hour, typically annual basic / 2920.
-  rate       Decimal  @db.Decimal(18, 4)
-  amount     Decimal  @db.Decimal(18, 2)
+  rate        Decimal @db.Decimal(18, 4)
+  amount      Decimal @db.Decimal(18, 2)
   /// PAY | VOID | PAID_OUTSIDE
-  payAction  String   @default("PAY")
-  runId      String?
+  payAction   String  @default("PAY")
+  runId       String?
   isProcessed Boolean @default(false)
 
-  createdAt  DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([tenantId, employeeId, year, month])
   @@map("overtime_entries")
@@ -526,21 +556,21 @@ model OvertimeEntry {
 
 /// Shift allowance earned in a pay period.
 model ShiftAllowanceEntry {
-  id         String   @id @default(cuid())
-  tenantId   String
-  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId String
-  year       Int
-  month      Int
-  shiftCode  String?
-  days       Decimal  @default(0) @db.Decimal(9, 2)
-  amount     Decimal  @db.Decimal(18, 2)
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String
+  year        Int
+  month       Int
+  shiftCode   String?
+  days        Decimal @default(0) @db.Decimal(9, 2)
+  amount      Decimal @db.Decimal(18, 2)
   /// PAY | HOLD | VOID | PAID_OUTSIDE
-  payAction  String   @default("PAY")
-  runId      String?
+  payAction   String  @default("PAY")
+  runId       String?
   isProcessed Boolean @default(false)
 
-  createdAt  DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([tenantId, employeeId, year, month])
   @@map("shift_allowance_entries")

@@ -1,0 +1,179 @@
+// ============================================================================
+//  KEKA — Perform (1:1 meetings) and Learn (courses, modules, assessments)
+// ============================================================================
+//  Spec: performance-learning.
+//  1:1s are Meeting rows with meetingType ONE_ON_ONE (07-workplace); this file
+//  adds agenda templates, talking points and private notes.
+//  A Learn COURSE is a TrainingProgram with format "COURSE" (07-workplace);
+//  this file adds its sections, modules, questions, progress and attempts.
+//  AiGeneration (the AI quota/audit log) is in 14-platform.
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+//  1:1 MEETINGS
+// ---------------------------------------------------------------------------
+
+model MeetingAgendaTemplate {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  purpose     String?
+  /// One agenda item per line.
+  items       String
+  /// Shipped template ("System template"): read-only.
+  isSystem    Boolean   @default(false)
+  createdById String?
+  createdAt   DateTime  @default(now())
+  meetings    Meeting[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("meeting_agenda_templates")
+}
+
+model MeetingTalkingPoint {
+  id           String   @id @default(cuid())
+  meetingId    String
+  meeting      Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  authorId     String
+  author       Employee @relation("TalkingPointAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  text         String
+  isDone       Boolean  @default(false)
+  displayOrder Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([meetingId])
+  @@index([authorId])
+  @@map("meeting_talking_points")
+}
+
+/// Seen only by its author — never by the other participant, skip-levels, or AI.
+model MeetingPrivateNote {
+  id        String   @id @default(cuid())
+  meetingId String
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    Employee @relation("PrivateNoteAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  body      String
+  updatedAt DateTime @updatedAt
+
+  @@unique([meetingId, authorId])
+  @@index([authorId])
+  @@map("meeting_private_notes")
+}
+
+// ---------------------------------------------------------------------------
+//  LEARN
+// ---------------------------------------------------------------------------
+
+enum CourseModuleType {
+  DOCUMENT
+  VIDEO
+  PAGE
+  ASSESSMENT
+}
+
+enum QuestionType {
+  SINGLE_CHOICE
+  MULTIPLE_CHOICE
+  TRUE_FALSE
+}
+
+model CourseSection {
+  id           String          @id @default(cuid())
+  programId    String
+  program      TrainingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  title        String
+  displayOrder Int             @default(0)
+  modules      CourseModule[]
+
+  @@index([programId])
+  @@map("course_sections")
+}
+
+model CourseModule {
+  id              String           @id @default(cuid())
+  programId       String
+  program         TrainingProgram  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  /// Null = top-level module.
+  sectionId       String?
+  section         CourseSection?   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  type            CourseModuleType
+  title           String
+  displayOrder    Int              @default(0)
+  durationMinutes Int              @default(0)
+  /// PAGE text (rendered escaped, markdown-lite).
+  body            String?
+  /// VIDEO https link.
+  url             String?
+  /// DOCUMENT StoredFile id, served via /files/[id].
+  fileId          String?
+  /// ASSESSMENT pass mark, 0–100.
+  passPercent     Int?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  questions AssessmentQuestion[]
+  progress  ModuleProgress[]
+  attempts  AssessmentAttempt[]
+
+  @@index([programId, displayOrder])
+  @@index([sectionId])
+  @@map("course_modules")
+}
+
+model AssessmentQuestion {
+  id               String       @id @default(cuid())
+  moduleId         String
+  module           CourseModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  type             QuestionType @default(SINGLE_CHOICE)
+  prompt           String
+  /// [{ id, text }], 2–6 options.
+  options          Json
+  /// Option ids. Never sent to a learner's browser.
+  correctOptionIds Json
+  explanation      String?
+  /// EASY | MEDIUM | HARD
+  difficulty       String?
+  /// MANUAL | AI | BULK
+  source           String       @default("MANUAL")
+  displayOrder     Int          @default(0)
+  createdAt        DateTime     @default(now())
+
+  @@index([moduleId, displayOrder])
+  @@map("assessment_questions")
+}
+
+/// A learner's completion of one module.
+model ModuleProgress {
+  id          String            @id @default(cuid())
+  enrolmentId String
+  enrolment   TrainingEnrolment @relation(fields: [enrolmentId], references: [id], onDelete: Cascade)
+  moduleId    String
+  module      CourseModule      @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  completedAt DateTime          @default(now())
+
+  @@unique([enrolmentId, moduleId])
+  @@index([moduleId])
+  @@map("course_module_progress")
+}
+
+model AssessmentAttempt {
+  id           String            @id @default(cuid())
+  enrolmentId  String
+  enrolment    TrainingEnrolment @relation(fields: [enrolmentId], references: [id], onDelete: Cascade)
+  moduleId     String
+  module       CourseModule      @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  /// { [questionId]: optionId[] }
+  answers      Json
+  correctCount Int
+  totalCount   Int
+  scorePercent Decimal           @db.Decimal(5, 2)
+  passed       Boolean
+  submittedAt  DateTime          @default(now())
+
+  @@index([enrolmentId, moduleId])
+  @@index([moduleId])
+  @@map("assessment_attempts")
+}

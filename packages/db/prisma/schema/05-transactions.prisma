@@ -19,24 +19,24 @@ enum ArrearSource {
 
 /// Arrears arise from exactly four documented sources.
 model Arrear {
-  id            String       @id @default(cuid())
-  employeeId    String
-  employee      Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  source        ArrearSource
+  source      ArrearSource
   /// The month the arrear relates to.
-  forYear       Int
-  forMonth      Int
+  forYear     Int
+  forMonth    Int
   /// The run that pays it out. Null until picked up.
-  paidInRunId   String?
+  paidInRunId String?
 
-  amount        Decimal      @db.Decimal(18, 2)
+  amount    Decimal @db.Decimal(18, 2)
   /// Per-component breakdown: [{ code, name, amount }].
-  breakdown     Json?
-  note          String?
+  breakdown Json?
+  note      String?
 
-  isProcessed   Boolean      @default(false)
-  createdAt     DateTime     @default(now())
+  isProcessed Boolean  @default(false)
+  createdAt   DateTime @default(now())
 
   @@index([employeeId, isProcessed])
   @@index([paidInRunId])
@@ -57,9 +57,9 @@ enum AdhocTaxTreatment {
 
 /// Added in step 4 of the run, individually or by Excel import.
 model AdhocTransaction {
-  id            String            @id @default(cuid())
-  employeeId    String
-  employee      Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   type          AdhocType
   /// Free-text label or a linked component code.
@@ -69,22 +69,22 @@ model AdhocTransaction {
   taxTreatment  AdhocTaxTreatment @default(TAXABLE)
 
   /// Target pay period.
-  year          Int
-  month         Int
-  runId         String?
-  comment       String?
+  year    Int
+  month   Int
+  runId   String?
+  comment String?
 
   /// Pay outside Keka payroll rather than in the run.
-  isPaidOutside Boolean           @default(false)
-  isProcessed   Boolean           @default(false)
+  isPaidOutside Boolean @default(false)
+  isProcessed   Boolean @default(false)
 
   /// What raised it — an ExpenseClaim, a CashAdvance — so settling the
   /// payroll month can settle that record too.
-  sourceType    String?
-  sourceId      String?
+  sourceType String?
+  sourceId   String?
 
-  createdAt     DateTime          @default(now())
-  createdBy     String?
+  createdAt DateTime @default(now())
+  createdBy String?
 
   @@index([employeeId, year, month])
   @@index([runId])
@@ -101,20 +101,20 @@ enum BonusPayAction {
 }
 
 model BonusType {
-  id           String   @id @default(cuid())
-  tenantId     String
-  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name         String
-  description  String?
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
   /// Part of annual salary rather than over and above it.
-  isPartOfCtc  Boolean  @default(false)
-  isTaxable    Boolean  @default(true)
+  isPartOfCtc Boolean @default(false)
+  isTaxable   Boolean @default(true)
   /// Include in the ESI wage base.
-  affectsEsi   Boolean  @default(false)
-  isActive     Boolean  @default(true)
+  affectsEsi  Boolean @default(false)
+  isActive    Boolean @default(true)
 
-  createdAt    DateTime @default(now())
-  bonuses      EmployeeBonus[]
+  createdAt DateTime        @default(now())
+  bonuses   EmployeeBonus[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -122,24 +122,24 @@ model BonusType {
 }
 
 model EmployeeBonus {
-  id           String         @id @default(cuid())
-  employeeId   String
-  employee     Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  bonusTypeId  String
-  bonusType    BonusType      @relation(fields: [bonusTypeId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  bonusTypeId String
+  bonusType   BonusType @relation(fields: [bonusTypeId], references: [id], onDelete: Cascade)
 
-  amount       Decimal        @db.Decimal(18, 2)
+  amount      Decimal        @db.Decimal(18, 2)
   /// Set when partially paying.
-  paidAmount   Decimal?       @db.Decimal(18, 2)
-  payoutYear   Int
-  payoutMonth  Int
-  payAction    BonusPayAction @default(PAY)
+  paidAmount  Decimal?       @db.Decimal(18, 2)
+  payoutYear  Int
+  payoutMonth Int
+  payAction   BonusPayAction @default(PAY)
 
-  runId        String?
-  isProcessed  Boolean        @default(false)
-  note         String?
+  runId       String?
+  isProcessed Boolean @default(false)
+  note        String?
 
-  createdAt    DateTime       @default(now())
+  createdAt DateTime @default(now())
 
   @@index([employeeId, payoutYear, payoutMonth])
   @@map("employee_bonuses")
@@ -157,22 +157,22 @@ enum ClaimStatus {
 /// reimbursements. Unclaimed reimbursement amounts convert to taxable income
 /// under Special Allowance at year end.
 model ComponentClaim {
-  id            String          @id @default(cuid())
-  employeeId    String
-  employee      Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  componentId   String
-  component     SalaryComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
+  id          String          @id @default(cuid())
+  employeeId  String
+  employee    Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  componentId String
+  component   SalaryComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
 
   fyStartYear   Int
-  claimedAmount Decimal         @db.Decimal(18, 2)
+  claimedAmount Decimal     @db.Decimal(18, 2)
   /// Editable by the reviewer in step 4.
-  payableAmount Decimal?        @db.Decimal(18, 2)
-  status        ClaimStatus     @default(SUBMITTED)
+  payableAmount Decimal?    @db.Decimal(18, 2)
+  status        ClaimStatus @default(SUBMITTED)
 
   /// Which run pays it out.
-  payoutYear    Int?
-  payoutMonth   Int?
-  runId         String?
+  payoutYear  Int?
+  payoutMonth Int?
+  runId       String?
 
   attachmentUrl String?
   billDate      DateTime?
@@ -182,7 +182,7 @@ model ComponentClaim {
   reviewedBy    String?
   reviewedAt    DateTime?
 
-  createdAt     DateTime        @default(now())
+  createdAt DateTime @default(now())
 
   @@index([employeeId, fyStartYear])
   @@index([status])
@@ -200,22 +200,22 @@ enum PerkValuationMethod {
 
 /// Perquisites — company car, meal card, skill development reimbursement.
 model Perk {
-  id               String              @id @default(cuid())
-  componentId      String              @unique
-  component        SalaryComponent     @relation(fields: [componentId], references: [id], onDelete: Cascade)
+  id          String          @id @default(cuid())
+  componentId String          @unique
+  component   SalaryComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
 
-  category         String
-  isTaxable        Boolean             @default(true)
+  category               String
+  isTaxable              Boolean @default(true)
   /// Who bears the tax on the perquisite.
-  taxBorneByEmployer Boolean           @default(false)
+  taxBorneByEmployer     Boolean @default(false)
   /// Exclusion under s.192(1A) when the employer pays the tax.
-  section192_1aExclusion Boolean       @default(false)
+  section192_1aExclusion Boolean @default(false)
 
-  valuationMethod  PerkValuationMethod @default(FIXED_FOR_ALL)
-  fixedAmount      Decimal?            @db.Decimal(18, 2)
-  formula          String?
+  valuationMethod PerkValuationMethod @default(FIXED_FOR_ALL)
+  fixedAmount     Decimal?            @db.Decimal(18, 2)
+  formula         String?
 
-  createdAt        DateTime            @default(now())
+  createdAt DateTime @default(now())
 
   @@map("perks")
 }
@@ -232,55 +232,58 @@ enum InterestType {
 }
 
 model LoanCategory {
-  id           String   @id @default(cuid())
-  tenantId     String
-  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name         String
-  description  String?
-  icon         String?
-  color        String?
+  id               String   @id @default(cuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
+  icon             String?
+  color            String?
   /// Concessional loans are valued as a perquisite against the SBI benchmark rate.
-  isConcessional Boolean @default(false)
+  isConcessional   Boolean  @default(false)
   sbiBenchmarkRate Decimal? @db.Decimal(9, 4)
-  isActive     Boolean  @default(true)
+  isActive         Boolean  @default(true)
+  /// Short code shown beside the name: "Personal (PL001)".
+  code             String?
 
-  createdAt    DateTime @default(now())
+  createdAt DateTime @default(now())
 
-  policyRules  LoanPolicyRule[]
-  loans        Loan[]
+  policyRules LoanPolicyRule[]
+  loans       Loan[]
 
   @@unique([tenantId, name])
+  @@unique([tenantId, code])
   @@index([tenantId])
   @@map("loan_categories")
 }
 
 model LoanPolicy {
-  id                    String   @id @default(cuid())
-  tenantId              String
-  tenant                Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name                  String
-  description           String?
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
 
   // --- Eligibility ---
-  requireProbationComplete Boolean @default(true)
-  minDaysFromJoining    Int?
-  minAnnualSalary       Decimal? @db.Decimal(18, 2)
-  maxAnnualSalary       Decimal? @db.Decimal(18, 2)
+  requireProbationComplete Boolean  @default(true)
+  minDaysFromJoining       Int?
+  minAnnualSalary          Decimal? @db.Decimal(18, 2)
+  maxAnnualSalary          Decimal? @db.Decimal(18, 2)
   /// Block applications from employees serving notice.
-  blockOnNoticePeriod   Boolean  @default(true)
+  blockOnNoticePeriod      Boolean  @default(true)
 
   // --- Approval ---
   /// Ordered role ids.
-  approverRoleIds       Json?
+  approverRoleIds      Json?
   /// Auto-approve or skip a level after N days of inaction.
-  autoApproveAfterDays  Int?
-  autoApproveAction     String?  @default("APPROVE")
+  autoApproveAfterDays Int?
+  autoApproveAction    String? @default("APPROVE")
 
-  isActive              Boolean  @default(true)
-  createdAt             DateTime @default(now())
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
 
-  rules                 LoanPolicyRule[]
-  loans                 Loan[]
+  rules LoanPolicyRule[]
+  loans Loan[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -289,22 +292,22 @@ model LoanPolicy {
 
 /// Per-category rules within a policy.
 model LoanPolicyRule {
-  id                String       @id @default(cuid())
-  policyId          String
-  policy            LoanPolicy   @relation(fields: [policyId], references: [id], onDelete: Cascade)
-  categoryId        String
-  category          LoanCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  id         String       @id @default(cuid())
+  policyId   String
+  policy     LoanPolicy   @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   LoanCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
-  interestType      InterestType @default(NONE)
-  interestRate      Decimal?     @db.Decimal(9, 4)
-  maxInstallments   Int          @default(12)
+  interestType       InterestType @default(NONE)
+  interestRate       Decimal?     @db.Decimal(9, 4)
+  maxInstallments    Int          @default(12)
   /// Months after disbursal before the first EMI.
-  commencementMonths Int         @default(1)
+  commencementMonths Int          @default(1)
 
   /// Limit as a fixed amount or a percentage of annual salary.
-  maxAmount         Decimal?     @db.Decimal(18, 2)
-  maxPercentOfSalary Decimal?    @db.Decimal(9, 4)
-  requiresDocuments Boolean      @default(false)
+  maxAmount          Decimal? @db.Decimal(18, 2)
+  maxPercentOfSalary Decimal? @db.Decimal(9, 4)
+  requiresDocuments  Boolean  @default(false)
 
   @@unique([policyId, categoryId])
   @@index([policyId])
@@ -320,44 +323,50 @@ enum LoanStatus {
   ACTIVE
   CLOSED
   FORECLOSED
+  /// The employee withdrew the request before a decision.
+  WITHDRAWN
 }
 
 model Loan {
-  id              String       @id @default(cuid())
-  employeeId      String
-  employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  categoryId      String
-  category        LoanCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  policyId        String?
-  policy          LoanPolicy?  @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  id         String       @id @default(cuid())
+  employeeId String
+  employee   Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   LoanCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  policyId   String?
+  policy     LoanPolicy?  @relation(fields: [policyId], references: [id], onDelete: SetNull)
 
-  principal       Decimal      @db.Decimal(18, 2)
-  interestType    InterestType @default(NONE)
-  interestRate    Decimal      @default(0) @db.Decimal(9, 4)
-  installments    Int
-  emiAmount       Decimal      @db.Decimal(18, 2)
+  principal    Decimal      @db.Decimal(18, 2)
+  interestType InterestType @default(NONE)
+  interestRate Decimal      @default(0) @db.Decimal(9, 4)
+  installments Int
+  emiAmount    Decimal      @db.Decimal(18, 2)
 
-  status          LoanStatus   @default(REQUESTED)
-  requestedAt     DateTime     @default(now())
-  approvedAt      DateTime?
-  approvedBy      String?
-  disbursedAt     DateTime?
+  status           LoanStatus @default(REQUESTED)
+  requestedAt      DateTime   @default(now())
+  approvedAt       DateTime?
+  approvedBy       String?
+  disbursedAt      DateTime?
   /// Disbursal handled outside Keka payroll.
-  disbursedOutside Boolean     @default(false)
+  disbursedOutside Boolean    @default(false)
 
-  /// First EMI period.
-  startYear       Int?
-  startMonth      Int?
+  /// First EMI period. At request time this holds the employee's requested
+  /// "EMI Starts From"; approval keeps it unless it is already past.
+  startYear     Int?
+  startMonth    Int?
+  /// "Expected Month (Payroll Month)": the payroll month the money is wanted in.
+  expectedYear  Int?
+  expectedMonth Int?
 
-  outstanding     Decimal      @default(0) @db.Decimal(18, 2)
-  totalRepaid     Decimal      @default(0) @db.Decimal(18, 2)
-  closedAt        DateTime?
-  purpose         String?
-  documentUrl     String?
+  outstanding  Decimal   @default(0) @db.Decimal(18, 2)
+  totalRepaid  Decimal   @default(0) @db.Decimal(18, 2)
+  closedAt     DateTime?
+  purpose      String?
+  documentUrl  String?
   /// Why it was rejected, or a note on approval.
-  decisionNote    String?
+  decisionNote String?
 
-  schedule        LoanInstallment[]
+  schedule LoanInstallment[]
 
   @@index([employeeId, status])
   @@map("loans")
@@ -374,21 +383,21 @@ enum InstallmentStatus {
 }
 
 model LoanInstallment {
-  id            String            @id @default(cuid())
-  loanId        String
-  loan          Loan              @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  loanId String
+  loan   Loan   @relation(fields: [loanId], references: [id], onDelete: Cascade)
 
   sequence      Int
   year          Int
   month         Int
-  principalPart Decimal           @db.Decimal(18, 2)
-  interestPart  Decimal           @default(0) @db.Decimal(18, 2)
-  totalAmount   Decimal           @db.Decimal(18, 2)
-  balanceAfter  Decimal           @db.Decimal(18, 2)
+  principalPart Decimal @db.Decimal(18, 2)
+  interestPart  Decimal @default(0) @db.Decimal(18, 2)
+  totalAmount   Decimal @db.Decimal(18, 2)
+  balanceAfter  Decimal @db.Decimal(18, 2)
 
-  status        InstallmentStatus @default(SCHEDULED)
-  runId         String?
-  deductedAt    DateTime?
+  status     InstallmentStatus @default(SCHEDULED)
+  runId      String?
+  deductedAt DateTime?
 
   @@unique([loanId, sequence])
   @@index([loanId, year, month])
@@ -421,35 +430,40 @@ enum ExitStatus {
 }
 
 model ExitRecord {
-  id                String     @id @default(cuid())
-  employeeId        String     @unique
-  employee          Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  employeeId String   @unique
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  type              ExitType   @default(RESIGNATION)
-  reason            String?
-  status            ExitStatus @default(INITIATED)
+  type       ExitType    @default(RESIGNATION)
+  /// Free text; shown as "Comments" once a structured reason is picked.
+  reason     String?
+  /// Structured exit reason (22-analytics ExitReason master).
+  reasonId   String?
+  exitReason ExitReason? @relation(fields: [reasonId], references: [id], onDelete: SetNull)
+  status     ExitStatus  @default(INITIATED)
 
   /// When the resignation or termination was communicated.
-  noticeDate        DateTime
+  noticeDate       DateTime
   /// Auto-calculated from the notice-period policy, overridable.
-  lastWorkingDay    DateTime
+  lastWorkingDay   DateTime
   /// Shortfall bought out rather than served.
-  noticeBuyoutDays  Decimal?   @db.Decimal(9, 2)
+  noticeBuyoutDays Decimal? @db.Decimal(9, 2)
 
   /// Whether management met the departing employee.
-  hadDiscussion     Boolean    @default(false)
-  discussionNote    String?
-  isRehireEligible  Boolean?
-  attachmentUrl     String?
+  hadDiscussion    Boolean  @default(false)
+  discussionNote   String?
+  isRehireEligible Boolean?
+  attachmentUrl    String?
 
-  initiatedBy       String?
-  approvedBy        String?
-  approvedAt        DateTime?
+  initiatedBy String?
+  approvedBy  String?
+  approvedAt  DateTime?
 
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
+  @@index([reasonId])
   @@map("exit_records")
 }
 
@@ -473,80 +487,80 @@ enum SettlementStatus {
 /// Reimbursements & Expenses · Attendance · Assets.
 /// Payroll must be locked for the settlement to proceed.
 model FnfSettlement {
-  id                String           @id @default(cuid())
-  employeeId        String           @unique
-  employee          Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  employeeId String   @unique
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  mode              SettlementMode   @default(ONE_TIME)
-  status            SettlementStatus @default(PENDING)
-  settlementYear    Int?
-  settlementMonth   Int?
+  mode            SettlementMode   @default(ONE_TIME)
+  status          SettlementStatus @default(PENDING)
+  settlementYear  Int?
+  settlementMonth Int?
 
   // --- Payable groups ---
-  leaveEncashment   Decimal @default(0) @db.Decimal(18, 2)
-  lopReversal       Decimal @default(0) @db.Decimal(18, 2)
-  salaryArrears     Decimal @default(0) @db.Decimal(18, 2)
-  pendingSalary     Decimal @default(0) @db.Decimal(18, 2)
-  bonusPayable      Decimal @default(0) @db.Decimal(18, 2)
-  gratuity          Decimal @default(0) @db.Decimal(18, 2)
-  noticeBuyoutPay   Decimal @default(0) @db.Decimal(18, 2)
-  reimbursements    Decimal @default(0) @db.Decimal(18, 2)
-  overtimeAndShift  Decimal @default(0) @db.Decimal(18, 2)
+  leaveEncashment  Decimal @default(0) @db.Decimal(18, 2)
+  lopReversal      Decimal @default(0) @db.Decimal(18, 2)
+  salaryArrears    Decimal @default(0) @db.Decimal(18, 2)
+  pendingSalary    Decimal @default(0) @db.Decimal(18, 2)
+  bonusPayable     Decimal @default(0) @db.Decimal(18, 2)
+  gratuity         Decimal @default(0) @db.Decimal(18, 2)
+  noticeBuyoutPay  Decimal @default(0) @db.Decimal(18, 2)
+  reimbursements   Decimal @default(0) @db.Decimal(18, 2)
+  overtimeAndShift Decimal @default(0) @db.Decimal(18, 2)
 
   // --- Recovery groups ---
   noticeShortfallRecovery Decimal @default(0) @db.Decimal(18, 2)
-  loanRecovery      Decimal @default(0) @db.Decimal(18, 2)
-  assetDamageRecovery Decimal @default(0) @db.Decimal(18, 2)
-  advanceRecovery   Decimal @default(0) @db.Decimal(18, 2)
-  otherDeductions   Decimal @default(0) @db.Decimal(18, 2)
+  loanRecovery            Decimal @default(0) @db.Decimal(18, 2)
+  assetDamageRecovery     Decimal @default(0) @db.Decimal(18, 2)
+  advanceRecovery         Decimal @default(0) @db.Decimal(18, 2)
+  otherDeductions         Decimal @default(0) @db.Decimal(18, 2)
 
   // --- Statutory on the settlement ---
-  pfDeduction       Decimal @default(0) @db.Decimal(18, 2)
-  esiDeduction      Decimal @default(0) @db.Decimal(18, 2)
-  ptDeduction       Decimal @default(0) @db.Decimal(18, 2)
-  lwfDeduction      Decimal @default(0) @db.Decimal(18, 2)
-  tdsDeduction      Decimal @default(0) @db.Decimal(18, 2)
+  pfDeduction  Decimal @default(0) @db.Decimal(18, 2)
+  esiDeduction Decimal @default(0) @db.Decimal(18, 2)
+  ptDeduction  Decimal @default(0) @db.Decimal(18, 2)
+  lwfDeduction Decimal @default(0) @db.Decimal(18, 2)
+  tdsDeduction Decimal @default(0) @db.Decimal(18, 2)
 
-  totalPayable      Decimal @default(0) @db.Decimal(18, 2)
-  totalRecovery     Decimal @default(0) @db.Decimal(18, 2)
-  netSettlement     Decimal @default(0) @db.Decimal(18, 2)
+  totalPayable  Decimal @default(0) @db.Decimal(18, 2)
+  totalRecovery Decimal @default(0) @db.Decimal(18, 2)
+  netSettlement Decimal @default(0) @db.Decimal(18, 2)
 
   /// Gratuity is enabled per exit inside F&F.
-  gratuityEligible  Boolean @default(false)
+  gratuityEligible   Boolean @default(false)
   /// Covered by the Gratuity Act (10+ employees) or not.
   gratuityActCovered Boolean @default(true)
 
-  breakdown         Json?
-  statementUrl      String?
-  finalizedAt       DateTime?
-  finalizedBy       String?
+  breakdown    Json?
+  statementUrl String?
+  finalizedAt  DateTime?
+  finalizedBy  String?
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("fnf_settlements")
 }
 
 /// Notice period rules, which can vary by role or policy.
 model NoticePeriodPolicy {
-  id             String   @id @default(cuid())
-  tenantId       String
-  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name           String
+  id              String  @id @default(cuid())
+  tenantId        String
+  tenant          Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
   /// Days of notice required on resignation.
   resignationDays Int     @default(60)
   /// Days of notice given on termination.
   terminationDays Int     @default(30)
   /// Notice during probation is usually shorter.
-  probationDays  Int      @default(15)
+  probationDays   Int     @default(15)
   /// Buyout is permitted for the shortfall.
-  allowBuyout    Boolean  @default(true)
+  allowBuyout     Boolean @default(true)
   /// Basis for the buyout amount, e.g. "BASIC" or "GROSS".
-  buyoutBasis    String   @default("GROSS")
-  isDefault      Boolean  @default(false)
-  isActive       Boolean  @default(true)
+  buyoutBasis     String  @default("GROSS")
+  isDefault       Boolean @default(false)
+  isActive        Boolean @default(true)
 
-  createdAt      DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -568,41 +582,41 @@ enum JournalVoucherStatus {
 /// accounts; debits must equal credits for a successful post. JVs cannot be
 /// deleted after export, only regenerated — superseded versions are archived.
 model JournalVoucher {
-  id           String               @id @default(cuid())
-  runId        String
-  run          PayrollRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
+  id    String     @id @default(cuid())
+  runId String
+  run   PayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
-  status       JournalVoucherStatus @default(DRAFT)
-  version      Int                  @default(1)
-  totalDebit   Decimal              @default(0) @db.Decimal(18, 2)
-  totalCredit  Decimal              @default(0) @db.Decimal(18, 2)
-  isBalanced   Boolean              @default(false)
+  status      JournalVoucherStatus @default(DRAFT)
+  version     Int                  @default(1)
+  totalDebit  Decimal              @default(0) @db.Decimal(18, 2)
+  totalCredit Decimal              @default(0) @db.Decimal(18, 2)
+  isBalanced  Boolean              @default(false)
 
   /// Target system: ZOHO_BOOKS | TALLY | QUICKBOOKS | XLSX.
-  target       String?
-  exportedAt   DateTime?
-  fileUrl      String?
+  target     String?
+  exportedAt DateTime?
+  fileUrl    String?
 
-  createdAt    DateTime             @default(now())
+  createdAt DateTime @default(now())
 
-  entries      JournalEntry[]
+  entries JournalEntry[]
 
   @@index([runId])
   @@map("journal_vouchers")
 }
 
 model JournalEntry {
-  id         String         @id @default(cuid())
-  voucherId  String
-  voucher    JournalVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  id        String         @id @default(cuid())
+  voucherId String
+  voucher   JournalVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
 
-  accountCode String
-  accountName String
-  narration  String?
-  debit      Decimal        @default(0) @db.Decimal(18, 2)
-  credit     Decimal        @default(0) @db.Decimal(18, 2)
+  accountCode   String
+  accountName   String
+  narration     String?
+  debit         Decimal @default(0) @db.Decimal(18, 2)
+  credit        Decimal @default(0) @db.Decimal(18, 2)
   componentCode String?
-  costCenterId String?
+  costCenterId  String?
 
   @@index([voucherId])
   @@map("journal_entries")
@@ -610,15 +624,15 @@ model JournalEntry {
 
 /// Maps a salary component to a GL account for JV generation.
 model AccountMapping {
-  id            String  @id @default(cuid())
+  id            String @id @default(cuid())
   tenantId      String
   tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   componentCode String
   accountCode   String
   accountName   String
   /// DEBIT or CREDIT.
-  side          String  @default("DEBIT")
-  target        String  @default("XLSX")
+  side          String @default("DEBIT")
+  target        String @default("XLSX")
 
   @@unique([tenantId, target, componentCode])
   @@index([tenantId])

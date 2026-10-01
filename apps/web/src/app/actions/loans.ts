@@ -23,11 +23,21 @@ async function loanInScope(viewer: Viewer, loanId: string, permission: (typeof P
   return canAccessEmployee(viewer, loan.employee, permission) ? loan : null;
 }
 
+const zMonth = () => z.string().optional().transform((v, ctx) => {
+  if (!v) return null;
+  const m = /^(\d{4})-(\d{2})$/.exec(v);
+  if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Pick a payroll month" }); return null; }
+  return { year: Number(m[1]), month: Number(m[2]) };
+});
+
 const applySchema = z.object({
   categoryId: zId(),
   amount: zRequiredNumber({ min: 1000, max: 10_000_000 }),
   installments: zRequiredNumber({ min: 1, max: 120 }),
   purpose: zOptional(500),
+  /** "Expected Month (Payroll Month)" and "EMI Starts From (Payroll Month)", as YYYY-MM. */
+  expectedMonth: zMonth(),
+  startMonth: zMonth(),
   intent: z.enum(["preview", "apply"]).default("apply"),
 });
 
@@ -51,10 +61,13 @@ export async function applyLoanAction(_prev: ActionState, formData: FormData): P
         (e.maxAmount ? ` You can borrow up to ₹${e.maxAmount.toLocaleString("en-IN")}.` : ""),
     };
   }
-  const res = await requestLoan({ employeeId: viewer.employee.id, categoryId: d.categoryId, amount: d.amount, installments: d.installments, purpose: d.purpose });
+  const res = await requestLoan({
+    employeeId: viewer.employee.id, categoryId: d.categoryId, amount: d.amount, installments: d.installments, purpose: d.purpose,
+    expected: d.expectedMonth, start: d.startMonth,
+  });
   if (!res.ok) return { ok: false, message: res.message, values };
-  await writeAudit(viewer, { module: "PAYROLL", action: "CREATE", entityType: "Loan", entityId: res.loanId, summary: `Requested a loan of ₹${d.amount}` });
-  return done(["/me/loans", "/payroll/loans", "/inbox"], res.message);
+  await writeAudit(viewer, { module: "PAYROLL", action: "CREATE", entityType: "Loan", entityId: res.loanId, summary: `Requested a loan of ₹${d.amount}`, newValue: { categoryId: d.categoryId, amount: d.amount, installments: d.installments, expected: d.expectedMonth, start: d.startMonth } });
+  return done(["/finances/loans", "/payroll/loans", "/inbox"], res.message);
 }
 
 export async function decideLoanAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -69,7 +82,7 @@ export async function decideLoanAction(_prev: ActionState, formData: FormData): 
   const res = decision === "approve" ? await approveLoan(loanId, viewer.user.id, note) : await rejectLoan(loanId, viewer.user.id, note!);
   if (!res.ok) return { ok: false, message: res.message };
   await writeAudit(viewer, { module: "PAYROLL", action: decision === "approve" ? "APPROVE" : "REJECT", entityType: "Loan", entityId: loanId, summary: res.message });
-  return done(["/payroll/loans", "/inbox", "/me/loans"], res.message);
+  return done(["/payroll/loans", "/inbox", "/finances/loans"], res.message);
 }
 
 export async function loanOperationAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -87,11 +100,13 @@ export async function loanOperationAction(_prev: ActionState, formData: FormData
   else return { ok: false, message: "Unknown operation." };
   if (!res.ok) return { ok: false, message: res.message };
   await writeAudit(viewer, { module: "PAYROLL", action: "UPDATE", entityType: "Loan", entityId: loanId, summary: `${op}: ${res.message}` });
-  return done(["/payroll/loans", "/me/loans"], res.message);
+  return done(["/payroll/loans", "/finances/loans"], res.message);
 }
 
 const categorySchema = z.object({
   id: zOptionalId(), name: zName(60), description: zOptional(200),
+  code: z.string().trim().max(12).optional().transform((v) => (v ? v.toUpperCase() : null))
+    .refine((v) => v === null || /^[A-Z0-9-]{2,12}$/.test(v), "Letters, digits and dashes, 2–12 characters"),
   isConcessional: zBool(), sbiBenchmarkRate: zNumber({ min: 0, max: 30 }),
 });
 
@@ -101,9 +116,16 @@ export async function saveLoanCategoryAction(_prev: ActionState, formData: FormD
   if (parsed.state) return parsed.state;
   const { id, ...d } = parsed.data;
   try {
-    if (id) await prisma.loanCategory.updateMany({ where: { id, tenantId: viewer.tenantId }, data: d });
-    else await prisma.loanCategory.create({ data: { ...d, tenantId: viewer.tenantId } });
-    return done(["/payroll/loans"], `Saved ${d.name}.`);
+    if (d.code && await prisma.loanCategory.findFirst({ where: { tenantId: viewer.tenantId, code: d.code, ...(id ? { id: { not: id } } : {}) } })) {
+      return { ok: false, message: `Another category already uses the code ${d.code}.`, errors: { code: "Already in use" } };
+    }
+    let savedId = id;
+    if (id) {
+      const u = await prisma.loanCategory.updateMany({ where: { id, tenantId: viewer.tenantId }, data: d });
+      if (!u.count) return { ok: false, message: "Category not found." };
+    } else savedId = (await prisma.loanCategory.create({ data: { ...d, tenantId: viewer.tenantId } })).id;
+    await writeAudit(viewer, { module: "PAYROLL", action: id ? "UPDATE" : "CREATE", entityType: "LoanCategory", entityId: savedId, summary: `Saved loan category ${d.name}${d.code ? ` (${d.code})` : ""}` });
+    return done(["/payroll/loans", "/finances/loans"], `Saved ${d.name}.`);
   } catch (err) { return toErrorState(err); }
 }
 

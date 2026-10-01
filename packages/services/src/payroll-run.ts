@@ -6,6 +6,7 @@ import {
 } from "@keka/payroll";
 import { daysInMonth, fyStartYear, endOfMonth, startOfMonth } from "@keka/shared";
 import { cappedDeductions } from "./declarations";
+import { previousIncomeApplies } from "./finances-math";
 
 /**
  * The bridge between the database and the pure payroll engine.
@@ -455,6 +456,7 @@ export async function calculateRun(runId: string): Promise<{
       ? Number(decl.hraDetail.annualRent ?? 0) || Object.values((decl.hraDetail.monthlyRent ?? {}) as Record<string, number>).reduce((a, v) => a + Number(v || 0), 0)
       : 0;
     const ytd = ytdByEmp.get(emp.id) ?? { gross: 0, tds: 0, pt: 0 };
+    const previousApplies = previousIncomeApplies(emp.dateOfJoining, fyStart, 4);
 
     const input: CalculatePayrollInput = {
       employeeId: emp.id,
@@ -543,9 +545,10 @@ export async function calculateRun(runId: string): Promise<{
         config: tables.taxConfigs.get(regime)!,
         ytdTaxableIncome: ytd.gross,
         ytdTdsDeducted: ytd.tds,
-        previousEmployerIncome: emp.statutoryProfile?.previousEmployerIncome
+        // Previous-employer figures count only in the FY the employee joined.
+        previousEmployerIncome: previousApplies && emp.statutoryProfile?.previousEmployerIncome
           ? Number(emp.statutoryProfile.previousEmployerIncome) : undefined,
-        previousEmployerTds: (Number(emp.statutoryProfile?.previousEmployerTds ?? 0) + declared.otherTds) || undefined,
+        previousEmployerTds: ((previousApplies ? Number(emp.statutoryProfile?.previousEmployerTds ?? 0) : 0) + declared.otherTds) || undefined,
         chapterViaDeductions: declared.chapterVia || undefined,
         employerNpsDeduction: declared.employerNps || undefined,
         housePropertyIncome: declared.houseProperty || undefined,

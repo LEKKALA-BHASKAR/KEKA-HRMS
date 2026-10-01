@@ -1,0 +1,67 @@
+// ============================================================================
+//  KEKA — Shared platform: AI call log, scheduled reports
+// ============================================================================
+//  Cross-area infrastructure introduced by the Keka-parity specs. Each model
+//  here is deliberately generic so every area can use it:
+//    - AiGeneration: one row per AI call — quota ("(3)" remaining) and an audit
+//      of what left the server. Any area may log here (feature is free text).
+//    - ScheduledReport: a report key + params mailed on a schedule; first used
+//      by Assets, reusable by /reports and Helpdesk reports.
+// ============================================================================
+
+/// One row per AI call: powers per-item quotas and audits what left the server.
+/// Spec: performance-learning. Shared: any area may log its AI calls here.
+model AiGeneration {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// User id (plain column, like other actor ids).
+  userId     String
+  /// GOAL_SUGGEST | MEETING_AGENDA | MEETING_SUMMARY | COURSE_DESCRIPTION | ASSESSMENT_QUESTIONS
+  /// (performance-learning). Other areas add their own keys, e.g. HIRE_JD,
+  /// HIRE_QUESTIONS, HELPDESK_DRAFT, WALL_POLISH, ASSET_TRIAGE, LEAVE_PARSE.
+  feature    String
+  /// Meeting, course or module id; a client draft key before a record exists.
+  subjectId  String?
+  inputChars Int
+  ok         Boolean
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, userId, feature, subjectId, createdAt])
+  @@map("ai_generations")
+}
+
+enum ReportFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+/// A report mailed on a schedule (job "scheduled-reports").
+/// Spec: assets. Generic: reportKey names any report in lib/reports.ts.
+model ScheduledReport {
+  id         String          @id @default(cuid())
+  tenantId   String
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// e.g. "asset-inventory", "asset-warranty", a helpdesk report key.
+  reportKey  String
+  name       String
+  /// Report filters.
+  params     Json?
+  /// Email addresses: ["ritu.saxena@acme.test", ...]
+  recipients Json
+  frequency  ReportFrequency
+  /// WEEKLY: weekday, 1-7 with Mon=1 (as HelpdeskBusinessHours.schedule).
+  dayOfWeek  Int?
+  /// MONTHLY: day of the month.
+  dayOfMonth Int?
+  nextRunAt  DateTime
+  lastRunAt  DateTime?
+  isActive   Boolean         @default(true)
+  createdBy  String?
+  createdAt  DateTime        @default(now())
+
+  @@index([tenantId, reportKey])
+  @@index([isActive, nextRunAt])
+  @@map("scheduled_reports")
+}

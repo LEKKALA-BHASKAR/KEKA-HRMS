@@ -7,7 +7,7 @@ import { SubTabs } from "@/components/subtabs";
 import { Panel, SectionTitle, Notice, EmptyState } from "@/components/keka";
 import { IconFile, IconReceipt } from "@/components/icons";
 import { ClaimForm, ClaimOps, AdvanceForm, TripForm, TripOps } from "../../expenses/forms";
-import { SheetButton } from "./sheet";
+import { SheetButton } from "@/components/sheet";
 import { RowMenu } from "./row-menu";
 import s from "./expenses.module.css";
 

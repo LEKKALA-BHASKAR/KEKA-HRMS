@@ -10,7 +10,6 @@ import { notify, usersWithPermission } from "./lifecycle";
  */
 
 const DAY = 86_400_000;
-const r2 = (n: number) => Math.round(n * 100) / 100;
 type Result = { ok: boolean; message: string };
 
 export async function decideRequisition(opts: { requisitionId: string; approve: boolean; byUserId: string; reason?: string | null }): Promise<Result> {
@@ -34,13 +33,16 @@ export async function openJobFromRequisition(requisitionId: string, extra: { des
   if (opened >= r.positions) return { ok: false, message: "Every approved position already has a job." };
   const flow = await prisma.hiringFlow.findFirst({ where: { tenantId: r.tenantId, isActive: true }, orderBy: { isDefault: "desc" } });
   const count = await prisma.job.count({ where: { tenantId: r.tenantId } });
+  // The job carries the requisition's description, experience, type and hiring team.
+  const employmentType = r.jobType === "PART_TIME" ? "PART_TIME" : r.employmentType === "CONTRACT" || r.employmentType === "CONSULTANT" ? "CONTRACT" : r.employmentType === "INTERN" ? "INTERNSHIP" : "FULL_TIME";
   const job = await prisma.job.create({
     data: {
       tenantId: r.tenantId, requisitionId: r.id, flowId: flow?.id ?? null, title: r.title, code: `JOB-${1001 + count}`,
-      description: extra.description ?? r.justification, departmentId: r.departmentId, locationId: r.locationId,
+      description: extra.description ?? r.description ?? r.justification, departmentId: r.departmentId, locationId: r.locationId,
       businessUnitId: r.businessUnitId, legalEntityId: r.legalEntityId, openings: r.positions - opened,
       minAnnualCtc: r.minAnnualCtc, maxAnnualCtc: r.maxAnnualCtc, status: "OPEN", isPublished: true, publishedAt: new Date(),
-      hiringManagerId: extra.hiringManagerId ?? null, recruiterId: extra.recruiterId ?? null,
+      minExperienceYears: r.minExperienceYears, employmentType,
+      hiringManagerId: extra.hiringManagerId ?? r.hiringManagerId ?? null, recruiterId: extra.recruiterId ?? r.recruiterId ?? null,
     },
   });
   return { ok: true, message: `Opened ${job.code}.`, jobId: job.id };
@@ -81,7 +83,8 @@ export async function applyCandidate(input: {
 export async function moveStage(opts: { applicationId: string; stageId: string; byUserId: string; note?: string | null }): Promise<Result> {
   const app = await prisma.application.findUnique({
     where: { id: opts.applicationId },
-    include: { job: { include: { flow: { include: { stages: true } } } }, stageHistory: { where: { exitedAt: null } }, interviews: { include: { scorecards: true } } },
+    // Drafts are invisible to everyone but their author and count for nothing.
+    include: { job: { include: { flow: { include: { stages: true } } } }, stageHistory: { where: { exitedAt: null } }, interviews: { include: { scorecards: { where: { status: "SUBMITTED" } } } } },
   });
   if (!app) return { ok: false, message: "Application not found." };
   if (app.status !== "ACTIVE" && app.status !== "ON_HOLD") return { ok: false, message: `This application is ${app.status.toLowerCase().replace(/_/g, " ")}.` };
@@ -154,26 +157,8 @@ export async function scheduleInterview(opts: {
   return { ok: true, message: `Scheduled round ${interview.round}; the panel has been invited.`, interviewId: interview.id };
 }
 
-const RECOMMENDATIONS = ["STRONG_NO", "NO", "YES", "STRONG_YES"];
-
-export async function submitScorecard(opts: {
-  interviewId: string; panelistEmployeeId: string; overallScore: number; recommendation: string; strengths?: string | null; concerns?: string | null;
-}): Promise<Result> {
-  const iv = await prisma.interview.findUnique({ where: { id: opts.interviewId }, include: { panel: true, scorecards: true } });
-  if (!iv) return { ok: false, message: "Interview not found." };
-  if (!iv.panel.some((p) => p.employeeId === opts.panelistEmployeeId)) return { ok: false, message: "Only the interview panel can give feedback." };
-  if (iv.scorecards.some((s) => s.panelistId === opts.panelistEmployeeId)) return { ok: false, message: "You have already submitted feedback." };
-  if (iv.status === "CANCELLED") return { ok: false, message: "This interview was cancelled." };
-  if (iv.scheduledAt.getTime() > Date.now()) return { ok: false, message: "Feedback opens once the interview has started." };
-  if (!(opts.overallScore >= 1 && opts.overallScore <= 5)) return { ok: false, message: "Score from 1 to 5." };
-  if (!RECOMMENDATIONS.includes(opts.recommendation)) return { ok: false, message: "Choose a recommendation." };
-  await prisma.scorecard.create({ data: { interviewId: iv.id, panelistId: opts.panelistEmployeeId, overallScore: opts.overallScore, recommendation: opts.recommendation, strengths: opts.strengths ?? null, concerns: opts.concerns ?? null } });
-  const all = await prisma.scorecard.findMany({ where: { interview: { applicationId: iv.applicationId } } });
-  const avg = r2(all.reduce((s, x) => s + Number(x.overallScore ?? 0), 0) / all.length);
-  await prisma.application.update({ where: { id: iv.applicationId }, data: { averageScore: avg } });
-  if (all.filter((s) => s.interviewId === iv.id).length >= iv.panel.length) await prisma.interview.update({ where: { id: iv.id }, data: { status: "COMPLETED" } });
-  return { ok: true, message: "Feedback submitted." };
-}
+/* Interview feedback lives in hire.ts (`saveScorecard`): Keka's five-level decision,
+   ratings per skill by section, drafts — and it no longer writes the legacy values. */
 
 /**
  * Draft an offer. Within the job's approved range it is approved at once;

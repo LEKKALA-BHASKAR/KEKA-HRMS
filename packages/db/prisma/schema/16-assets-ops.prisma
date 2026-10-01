@@ -1,0 +1,131 @@
+// ============================================================================
+//  KEKA — Asset operations: request approvals, asset event log, bulk import,
+//  settings
+// ============================================================================
+//  Spec: assets. The inventory models (AssetCategory, AssetType, Asset,
+//  AssetAssignment, AssetRequest) live in 07-workplace; this file holds what
+//  runs them. ScheduledReport (used for asset reports) is in 14-platform.
+// ============================================================================
+
+enum AssetApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  /// "Skipped due to already approved" (AssetSettings.skipDuplicateApprover).
+  SKIPPED
+}
+
+enum AssetEventKind {
+  CREATED
+  UPDATED
+  IMPORTED
+  ASSIGNED
+  ACKNOWLEDGED
+  ACK_REMINDED
+  RETURNED
+  CONDITION_CHANGED
+  STATUS_CHANGED
+  REQUEST_FULFILLED
+}
+
+enum AssetImportMode {
+  ADD
+  UPDATE
+}
+
+enum AssetImportStatus {
+  UPLOADED
+  MAPPED
+  VALIDATED
+  IMPORTED
+  FAILED
+}
+
+/// One level of an asset request's approval chain.
+model AssetRequestApproval {
+  id           String              @id @default(cuid())
+  tenantId     String
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requestId    String
+  request      AssetRequest        @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  level        Int
+  /// REPORTING_MANAGER | ASSET_MANAGER | EMPLOYEE
+  approverKind String
+  /// Resolved employee; null for ASSET_MANAGER (any ASSET_MANAGE holder acts).
+  approverId   String?
+  status       AssetApprovalStatus @default(PENDING)
+  actedById    String?
+  actedAt      DateTime?
+  note         String?
+  createdAt    DateTime            @default(now())
+
+  @@unique([requestId, level])
+  @@index([tenantId, status, approverId])
+  @@map("asset_request_approvals")
+}
+
+/// Per-asset audit trail ("View Audit History").
+model AssetEvent {
+  id         String         @id @default(cuid())
+  tenantId   String
+  tenant     Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetId    String
+  asset      Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  kind       AssetEventKind
+  /// Employee the event concerns (holder, requester).
+  employeeId String?
+  actorId    String?
+  actorLabel String?
+  fromValue  Json?
+  toValue    Json?
+  note       String?
+  createdAt  DateTime       @default(now())
+
+  @@index([assetId, createdAt])
+  @@index([tenantId, kind, createdAt])
+  @@map("asset_events")
+}
+
+/// Bulk add/update wizard: upload → map → validate → import.
+model AssetImport {
+  id          String            @id @default(cuid())
+  tenantId    String
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  mode        AssetImportMode
+  /// Set when started from a type's "Bulk add/update" button.
+  assetTypeId String?
+  /// StoredFile id of the uploaded CSV.
+  fileId      String
+  status      AssetImportStatus @default(UPLOADED)
+  headers     Json
+  /// { "<column header>": "assetTag" | "name" | "location" | ... }
+  mapping     Json?
+  rows        Json?
+  /// [{ row, field, message }]
+  errors      Json?
+  totalRows   Int               @default(0)
+  okRows      Int               @default(0)
+  createdBy   String?
+  createdAt   DateTime          @default(now())
+  committedAt DateTime?
+
+  @@index([tenantId, createdAt])
+  @@map("asset_imports")
+}
+
+model AssetSettings {
+  id                    String   @id @default(cuid())
+  tenantId              String   @unique
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Ordered levels; [] = straight to "Approved. Assignment pending".
+  requestApprovalChain  Json     @default("[\"REPORTING_MANAGER\",\"ASSET_MANAGER\"]")
+  /// Produces "Skipped due to already approved".
+  skipDuplicateApprover Boolean  @default(true)
+  allowEmployeeRequests Boolean  @default(true)
+  /// Null = never remind.
+  ackReminderDays       Int?     @default(3)
+  warrantyAlertDays     Int      @default(30)
+  updatedAt             DateTime @updatedAt
+
+  @@map("asset_settings")
+}

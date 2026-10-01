@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ActionForm, Field, TextInput, SelectInput, TextArea, FormBanner, useForm } from "@/components/form";
 import {
-  saveGoalAction, checkInAction, setGoalStatusAction, createCycleAction, cycleOpAction,
+  saveGoalAction, checkInAction, setGoalStatusAction, createCycleAction, cycleOpAction, publishDraftGoalAction,
   submitReviewAction, calibrateAction, acknowledgeAction, createPipAction, closePipAction,
 } from "@/app/actions/performance";
 
@@ -83,6 +83,17 @@ export function GoalStatus({ goalId, cancelled }: { goalId: string; cancelled: b
     <form action={action}>
       <input type="hidden" name="goalId" value={goalId} />
       <button className="btn sm ghost" name="op" value={cancelled ? "reopen" : "cancel"} disabled={pending}>{cancelled ? "Reopen" : "Cancel"}</button>
+    </form>
+  );
+}
+
+export function PublishDraftGoal({ goalId }: { goalId: string }) {
+  const [state, action, pending] = useForm(publishDraftGoalAction);
+  return (
+    <form action={action} className="stack gap-2">
+      <input type="hidden" name="goalId" value={goalId} />
+      <button className="btn sm primary" disabled={pending} style={{ alignSelf: "flex-start" }}>{pending ? "Publishing…" : "Publish this goal"}</button>
+      {state.message ? <div className={`text-xs ${state.ok ? "pos" : "neg"}`}>{state.message}</div> : null}
     </form>
   );
 }

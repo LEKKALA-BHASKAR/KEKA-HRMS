@@ -105,7 +105,11 @@ export default async function DeclarationPage({ searchParams }: { searchParams: 
       <div className={s.windows}>
         <section className={`${s.boxed} ${s.windowCard}`} aria-label="Investment declaration window">
           <div className={s.windowHead}><h2 className={s.windowTitle}>Investment Declaration</h2>{statusChip(win.declaration.open)}</div>
-          <p className={s.windowNote}>{win.declaration.note}</p>
+          {win.declaration.open && win.declaration.rows?.length ? (
+            <div className={s.windowRows}>
+              {win.declaration.rows.map(([k, v]) => <div key={k} className={s.windowMeta}><span className={s.muted}>{k}</span><span>{v}</span></div>)}
+            </div>
+          ) : <p className={s.windowNote}>{win.declaration.note}</p>}
         </section>
         <section className={`${s.boxed} ${s.windowCard}`} aria-label="Proof submission window">
           <div className={s.windowHead}><h2 className={s.windowTitle}>Proof Submission</h2>{statusChip(win.proof.open)}</div>

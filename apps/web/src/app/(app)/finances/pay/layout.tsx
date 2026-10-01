@@ -7,8 +7,9 @@ export default function MyPayLayout({ children }: { children: ReactNode }) {
     <>
       <SubTabs items={[
         { label: "My Salary", href: "/finances/pay" },
-        { label: "Payslips", href: "/finances/pay/payslips" },
+        { label: "Pay Slips", href: "/finances/pay/payslips" },
         { label: "Income Tax", href: "/finances/pay/tax" },
+        { label: "Component Claim", href: "/finances/pay/component-claims" },
       ]} />
       {children}
     </>

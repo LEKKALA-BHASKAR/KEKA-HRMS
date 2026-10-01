@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@keka/db";
-import { ageAtFyEnd } from "@keka/services";
+import { ageAtFyEnd, previousIncomeApplies } from "@keka/services";
 import { fyStartYear, formatINR } from "@keka/shared";
 import { requireViewer, type Viewer } from "@/lib/context";
 import { saveFile, sniffUpload, MAX_UPLOAD_BYTES } from "@/lib/storage";
@@ -237,6 +237,9 @@ export async function savePreviousIncomeAction(_prev: ActionState, formData: For
     const parsed = parseForm(previousSchema, formData);
     if (parsed.state) return parsed.state;
     const c = await context(viewer);
+    if (!previousIncomeApplies(c.emp.dateOfJoining, c.fy, viewer.tenant.fyStartMonth)) {
+      return { ok: false, message: "Previous employment details are not required for this financial year, as you joined before it began." };
+    }
     if (!c.windows.declaration.open) return { ok: false, message: c.windows.declaration.note };
     const d = parsed.data;
     const data = {
