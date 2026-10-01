@@ -6,6 +6,7 @@ import { IconChevronDown, IconSearch, IconInbox } from "@/components/icons";
 import { EmptyState } from "@/components/keka";
 import { formatDateTime, relativeTime } from "./format";
 import type { PersonRef } from "./people";
+import { SelectAll, RowCheck } from "./bulk";
 import s from "../inbox.module.css";
 
 /**
@@ -136,17 +137,22 @@ export interface ListItem {
   tagTone?: "danger" | "success";
 }
 
-export function ListPane({ label, nav, items, activeId, empty, hidden, toolbar }: {
+export function ListPane({ label, nav, items, activeId, empty, hidden, toolbar, selectable }: {
   label: string; nav: InboxNav; items: ListItem[]; activeId?: string; empty: string;
   /** Hidden inputs to carry with a search (beyond cat and sort). */
   hidden?: Record<string, string>;
   /** Filters shown under the search box. */
   toolbar?: ReactNode;
+  /** Checkboxes for bulk decisions; needs a BulkScope around the panes. */
+  selectable?: boolean;
 }) {
   return (
     <section className={s.list} aria-label={label}>
       <div className={s.listHead}>
-        <span className={s.listTitle}>{label}</span>
+        <span className={s.listHeadMain}>
+          {selectable ? <SelectAll label={label} /> : null}
+          <span className={s.listTitle}>{label}</span>
+        </span>
         <details className={s.sort} key={nav.sort}>
           <summary aria-label={`Sort: ${nav.sort}`}>{nav.sort} <IconChevronDown width={14} height={14} /></summary>
           <div className={s.sortMenu}>
@@ -175,7 +181,8 @@ export function ListPane({ label, nav, items, activeId, empty, hidden, toolbar }
             const active = it.id === activeId;
             const name = it.heading ?? it.person?.name ?? "";
             return (
-              <li key={it.id}>
+              <li key={it.id} className={selectable ? s.itemWrap : undefined}>
+                {selectable ? <RowCheck id={it.id} label={`${name}: ${it.title}`} /> : null}
                 <Link href={hrefFor(nav, { id: it.id })} scroll={false}
                   className={`${s.item}${active ? ` ${s.itemActive}` : ""}${it.unread ? ` ${s.itemUnread}` : ""}`}
                   aria-current={active ? "true" : undefined}>
@@ -216,17 +223,24 @@ export interface ActivityEntry {
   note?: string | null;
 }
 
-export function DetailPane({ title, sub, status, children, actions, activity }: {
+export function DetailPane({ title, sub, status, children, actions, activity, avatar, footer }: {
   title: string; sub?: ReactNode; status?: { label: string; tone: Tone };
   children?: ReactNode; actions?: ReactNode; activity: ActivityEntry[];
+  /** A person beside the title, as Keka heads a request with who raised it. */
+  avatar?: PersonRef;
+  /** A bar pinned to the foot of the pane (comment, approve, reject). */
+  footer?: ReactNode;
 }) {
   const timeline = activity.filter((a) => a.at).sort((a, b) => a.at!.getTime() - b.at!.getTime());
-  return (
+  const pane = (
     <article className={s.detail} aria-label={title}>
       <header className={s.dHead}>
-        <div style={{ minWidth: 0 }}>
-          <h2 className={s.dTitle}>{title}</h2>
-          {sub ? <div className={s.dSub}>{sub}</div> : null}
+        <div style={{ minWidth: 0, display: "flex", gap: 14, alignItems: "center" }}>
+          {avatar ? <Avatar name={avatar.name} photoUrl={avatar.photoUrl} size={46} /> : null}
+          <div style={{ minWidth: 0 }}>
+            <h2 className={s.dTitle}>{title}</h2>
+            {sub ? <div className={s.dSub}>{sub}</div> : null}
+          </div>
         </div>
         {status ? (
           <div className={s.dStatus}>
@@ -265,6 +279,7 @@ export function DetailPane({ title, sub, status, children, actions, activity }: 
       </section>
     </article>
   );
+  return footer ? <div className={s.detailCol}>{pane}{footer}</div> : pane;
 }
 
 /** The right pane when nothing is selected, or the selection has moved on. */

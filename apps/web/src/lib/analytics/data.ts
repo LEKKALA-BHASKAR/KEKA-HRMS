@@ -1,8 +1,8 @@
 import "server-only";
 import {
   loadPopulation, ratingAt, monthsSinceRaiseAt, onBooks, headcountAt, leaversIn, joinersIn, monthsIn, averageHeadcount,
-  growthKpis, previousWindow, windowMonths, tenureBand, ageBand, sinceRaiseBand, perfBin, countBy, yearsBetween, monthsBetween,
-  suppressSmall, TENURE_BANDS, AGE_BANDS, SINCE_RAISE_BANDS, PERF_BINS, utcDay,
+  growthKpis, previousWindow, windowMonths, attritionTenureBand, attritionAgeBand, sinceRaiseBand, perfBin, countBy, yearsBetween, monthsBetween,
+  suppressSmall, ATTRITION_TENURE_BANDS, ATTRITION_AGE_BANDS, SINCE_RAISE_BANDS, PERF_BINS, utcDay,
   type PopEmployee, type Window,
 } from "@keka/services";
 import type { Prisma } from "@keka/db";
@@ -61,8 +61,8 @@ export function dimValue(dim: Dimension, e: PopEmployee, d: Date): string {
     case "worker": return e.workerType;
     case "band": return e.band;
     case "gender": return e.gender ? GENDER_LABEL[e.gender] ?? "Not specified" : "Not specified";
-    case "age": { const a = ageAt(e, d); return a === null ? "Not specified" : ageBand(a); }
-    case "tenure": return TENURE_LABEL[tenureBand(yearsBetween(e.dateOfJoining, d))];
+    case "age": { const a = ageAt(e, d); return a === null ? "Not specified" : attritionAgeBand(a); }
+    case "tenure": return TENURE_LABEL[attritionTenureBand(yearsBetween(e.dateOfJoining, d))];
     case "sinceRaise": return sinceRaiseBand(monthsSinceRaiseAt(e, d));
     case "exitType": return e.exitType ? EXIT_TYPE_LABEL[e.exitType] ?? e.exitType : "—";
     case "exitReason": return e.exitReason ?? "Not recorded";
@@ -71,7 +71,7 @@ export function dimValue(dim: Dimension, e: PopEmployee, d: Date): string {
 }
 
 const ORDER: Partial<Record<Dimension, readonly string[]>> = {
-  tenure: TENURE_BANDS.map((b) => TENURE_LABEL[b]), age: AGE_BANDS, sinceRaise: SINCE_RAISE_BANDS, performance: PERF_BINS,
+  tenure: ATTRITION_TENURE_BANDS.map((b) => TENURE_LABEL[b]), age: ATTRITION_AGE_BANDS, sinceRaise: SINCE_RAISE_BANDS, performance: PERF_BINS,
   gender: ["Female", "Male", "Non-binary", "Prefer not to respond", "Not specified"],
 };
 
@@ -107,7 +107,7 @@ export function leaversFor(pop: PopEmployee[], w: Window, f: AnalyticsFilters): 
     if (f.post.xr.length && !f.post.xr.includes(e.exitReasonId ?? "none")) return false;
     if (f.post.g.length && !f.post.g.includes(e.gender ? GENDER_TOKEN[e.gender] ?? "none" : "none")) return false;
     if (f.post.perf.length) { const b = perfBin(ratingAt(e, at)); if (!f.post.perf.includes(b === "Not rated" ? "none" : b)) return false; }
-    if (f.post.ten.length && !f.post.ten.some((tk) => TEN_TOKEN[tk] === tenureBand(yearsBetween(e.dateOfJoining, at)))) return false;
+    if (f.post.ten.length && !f.post.ten.some((tk) => TEN_TOKEN[tk] === attritionTenureBand(yearsBetween(e.dateOfJoining, at)))) return false;
     return true;
   });
 }

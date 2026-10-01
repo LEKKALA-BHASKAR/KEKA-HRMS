@@ -2,7 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   leavingDate, onBooks, headcountAt, averageHeadcount, leaversIn, growthKpis, monthsIn, presetWindow, previousWindow,
-  windowMonths, tenureBand, ageBand, sinceRaiseBand, perfBin, countBy, scoreRisk, riskBand, riskFeaturesAt, riskEligible,
+  windowMonths, attritionTenureBand, attritionAgeBand, sinceRaiseBand, perfBin, countBy, scoreRisk, riskBand, riskFeaturesAt, riskEligible,
   suppressSmall, ungroundedNumbers, redactQuestion, namesSomeone, monthsBetween, RISK_FACTORS,
   type PopMember, type RiskFeatures, type RiskInputs,
 } from "../src/analytics-math";
@@ -63,13 +63,13 @@ describe("Leavers and headcount", () => {
 
 describe("Bands", () => {
   test("each value lands in exactly one band", () => {
-    assert.equal(tenureBand(0.5), "<1");
-    assert.equal(tenureBand(1), "1-2");
-    assert.equal(tenureBand(4.99), "3-5");
-    assert.equal(tenureBand(12), "10+");
-    assert.equal(ageBand(21), "<22");
-    assert.equal(ageBand(25), "22-25");
-    assert.equal(ageBand(56), "55+");
+    assert.equal(attritionTenureBand(0.5), "<1");
+    assert.equal(attritionTenureBand(1), "1-2");
+    assert.equal(attritionTenureBand(4.99), "3-5");
+    assert.equal(attritionTenureBand(12), "10+");
+    assert.equal(attritionAgeBand(21), "<22");
+    assert.equal(attritionAgeBand(25), "22-25");
+    assert.equal(attritionAgeBand(56), "55+");
     assert.equal(sinceRaiseBand(null), "Never");
     assert.equal(sinceRaiseBand(12), "12-18");
     assert.equal(sinceRaiseBand(30), "24+");
@@ -80,7 +80,7 @@ describe("Bands", () => {
     assert.equal(monthsBetween(d("2025-04-15"), d("2026-10-01")), 17);
   });
   test("countBy keeps the band order and can drop empty bins", () => {
-    const rows = countBy([1, 25, 25, 40], (n) => ageBand(n), ["<22", "22-25", "26-30", "31-40"], true);
+    const rows = countBy([1, 25, 25, 40], (n) => attritionAgeBand(n), ["<22", "22-25", "26-30", "31-40"], true);
     assert.deepEqual(rows, [{ label: "<22", value: 1 }, { label: "22-25", value: 2 }, { label: "31-40", value: 1 }]);
   });
 });
