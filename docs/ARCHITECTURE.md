@@ -145,6 +145,9 @@ through payroll's existing transaction tables rather than through direct couplin
 09-performance   indicators, goals, review cycles, calibration, skills, PIP
 10-projects      clients, projects, tasks, milestones, timesheets, invoices
 11-accounting    chart of accounts, double-entry ledger, expenses, travel
+12-time-ops      attendance policies and requests, the leave ledger
+13-lifecycle     journeys, exits, helpdesk, notifications, outbox
+14-engage-learn  surveys, courses, career paths, comp-off and encashment requests
 ```
 
 ### Why cross-module effects route through payroll transactions

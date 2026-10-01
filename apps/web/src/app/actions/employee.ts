@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { selectStructureForCtc } from "@keka/payroll";
-import { startJourney, recomputeProfileCompletion } from "@keka/services";
+import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses } from "@keka/services";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
 import {
@@ -324,6 +324,8 @@ export async function createEmployee(_prev: ActionState, formData: FormData): Pr
       employeeId, trigger: "JOINING", anchorDate: d.dateOfJoining, createdBy: viewer.user.id,
       sourceType: "Employee", sourceId: employeeId,
     });
+    // ...and enrol them in the courses everyone must take.
+    await enrolInMandatoryCourses(viewer.tenantId, employeeId, viewer.employee?.id ?? null);
 
     return done(
       ["/employees", "/org", "/", "/onboarding"],

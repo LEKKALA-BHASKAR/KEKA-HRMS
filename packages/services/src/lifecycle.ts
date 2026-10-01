@@ -465,7 +465,7 @@ export interface SettlementComputation {
   monthlyBasic: number;
 }
 
-function specsOf(revision: Prisma.SalaryRevisionGetPayload<{ include: { structure: { include: { components: { include: { component: true } } } } } }>): StructureComponentSpec[] {
+export function specsOf(revision: Prisma.SalaryRevisionGetPayload<{ include: { structure: { include: { components: { include: { component: true } } } } } }>): StructureComponentSpec[] {
   return (revision.structure?.components ?? []).filter((sc) => sc.isActive).map((sc) => ({
     code: sc.component.code, name: sc.component.name, type: sc.component.type,
     calculationType: sc.calculationType, formula: sc.formula,

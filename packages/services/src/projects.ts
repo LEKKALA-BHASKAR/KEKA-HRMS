@@ -130,7 +130,7 @@ export async function draftInvoice(opts: { projectId: string; periodStart: Date;
   }
   if (lines.length === 0) return { ok: false, message: "Nothing to bill for that period — no approved billable time or completed milestones." };
   const subtotal = r2(lines.reduce((s, l) => s + l.amount, 0));
-  const entity = await prisma.legalEntity.findFirst({ where: { tenantId: p.tenantId } });
+  const entity = await prisma.legalEntity.findFirst({ where: { tenantId: p.tenantId }, orderBy: { createdAt: "asc" } });
   const tax = gst(subtotal, stateCode(entity?.state), p.client.countryCode === "IN" ? stateCode(p.client.state) : null);
   const invoice = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT id FROM tenants WHERE id = ${p.tenantId} FOR UPDATE`;
@@ -177,7 +177,7 @@ export async function sendInvoice(invoiceId: string, save: (pdf: Buffer, filenam
   await prisma.invoice.update({ where: { id: inv.id }, data: { status: "SENT", sentAt: new Date(), fileUrl: url } });
   // Sending is when the revenue is earned in the books: the same GST split
   // the draft priced it with.
-  const entity = await prisma.legalEntity.findFirst({ where: { tenantId: inv.tenantId } });
+  const entity = await prisma.legalEntity.findFirst({ where: { tenantId: inv.tenantId }, orderBy: { createdAt: "asc" } });
   const split = gst(Number(inv.subtotal), stateCode(entity?.state), inv.client.countryCode === "IN" ? stateCode(inv.client.state) : null);
   await postInvoice(inv.id, split);
   if (inv.client.contactEmail) {

@@ -31,6 +31,8 @@ const config: NextConfig = {
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
       "connect-src 'self'",
+      // Course videos: YouTube's privacy-enhanced player only.
+      "frame-src https://www.youtube-nocookie.com",
       "frame-ancestors 'none'",
       "form-action 'self'",
       "base-uri 'self'",

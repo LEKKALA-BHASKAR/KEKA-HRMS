@@ -1,5 +1,6 @@
 import { describeRules, dateLabel, daysLower, KIND_LABEL, num, r2, type TypeRules } from "../_lib";
 import s from "../leave.module.css";
+import { CompOffClaim, WithdrawButton, EncashForm } from "./timeoff-forms";
 
 export interface CatalogueType {
   id: string; name: string; code: string; colour: string; quota: number; unlimited: boolean;
@@ -46,70 +47,114 @@ export function PolicyExplanation({ plan, types }: {
   );
 }
 
-/** Encashment: there is no in-service request flow, so say so plainly. */
-export function EncashmentInfo({ types }: { types: CatalogueType[] }) {
-  const encashable = types.filter((t) => t.rules.encashmentEnabled);
+const STATUS_TONE: Record<string, string> = { PENDING: "warning", APPROVED: "success", REJECTED: "danger", CANCELLED: "neutral" };
+const statusBadge = (st: string) => <span className={`badge ${STATUS_TONE[st] ?? "neutral"}`}>{st.charAt(0) + st.slice(1).toLowerCase()}</span>;
+
+export interface EncashableType { id: string; name: string; encashable: number; perDay: number; formula: string | null }
+export interface EncashmentRow { id: string; type: string; days: number; amount: number; status: string; raisedOn: Date; note: string | null }
+
+/** Encashment while in service: sell back part of a balance, paid in the next payroll. */
+export function EncashmentInfo({ types, history }: { types: EncashableType[]; history: EncashmentRow[] }) {
   return (
     <>
-      <div className="callout warning" style={{ marginBottom: 16 }}>
-        <div>
-          <div className="callout-title">Leave encashment can&apos;t be requested here yet</div>
-          There is no self-service encashment request in this workspace. Encashable balances are paid out
-          automatically in your full &amp; final settlement when you leave; for anything else, raise it with HR.
-        </div>
-      </div>
-      {encashable.length === 0 ? (
-        <div className="muted">None of your leave types are encashable under your plan.</div>
+      {types.length === 0 ? (
+        <div className="muted" style={{ marginBottom: 14 }}>None of your leave types are encashable under your plan. Encashable balances are otherwise paid out in your full &amp; final settlement.</div>
       ) : (
-        <table className={s.mini}>
-          <thead><tr><th>Encashable leave</th><th className={s.r}>Available now</th><th>Rate</th></tr></thead>
-          <tbody>
-            {encashable.map((t) => (
-              <tr key={t.id}>
-                <td>{t.name}</td>
-                <td className={s.r}>{t.available === null ? "∞" : daysLower(t.available)}</td>
-                <td className="muted">{rateOf(t.encashmentFormula)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          <div className="text-sm muted" style={{ marginBottom: 12 }}>
+            Days you encash come off your balance once HR approves, and the amount is paid with your next salary.
+            Encashment while in service is fully taxable. Days held by pending leave cannot be encashed.
+          </div>
+          <EncashForm types={types.map((t) => ({ id: t.id, name: t.name, encashable: t.encashable, perDay: t.perDay }))} />
+          <table className={s.mini} style={{ marginTop: 14 }}>
+            <thead><tr><th>Encashable leave</th><th className={s.r}>Available to encash</th><th>Rate</th></tr></thead>
+            <tbody>
+              {types.map((t) => (
+                <tr key={t.id}><td>{t.name}</td><td className={s.r}>{daysLower(t.encashable)}</td><td className="muted">{rateOf(t.formula)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
+      {history.length ? (
+        <>
+          <div className="label" style={{ marginTop: 16 }}>Your encashment requests</div>
+          <table className={s.mini}>
+            <thead><tr><th>Raised</th><th>Leave</th><th className={s.r}>Days</th><th className={s.r}>Amount</th><th>Status</th><th /></tr></thead>
+            <tbody>
+              {history.map((h) => (
+                <tr key={h.id}>
+                  <td>{dateLabel(h.raisedOn)}</td><td>{h.type}</td><td className={s.r}>{h.days}</td>
+                  <td className={s.r}>₹{h.amount.toLocaleString("en-IN")}</td>
+                  <td>{statusBadge(h.status)}{h.note ? <div className="text-xs muted">{h.note}</div> : null}</td>
+                  <td>{h.status === "PENDING" ? <WithdrawButton kind="encash" requestId={h.id} /> : null}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
     </>
   );
 }
 
-/** Comp-off credit: show the days that would qualify, and who can credit them. */
-export function CompOffInfo({ worked, hasCompOff }: {
-  worked: Array<{ date: Date; status: string; hours: number }>;
+export interface CompOffRow { id: string; workedOn: Date; days: number; status: string; dayType: string; expiresOn: Date | null; note: string | null }
+
+/** Comp-off credit: the off days you worked, each claimable once, and your claims. */
+export function CompOffInfo({ worked, hasCompOff, history }: {
+  worked: Array<{ date: Date; key: string; status: string; hours: number; claimable: boolean; maxDays: 1 | 0.5; claimed: string | null }>;
   hasCompOff: boolean;
+  history: CompOffRow[];
 }) {
   return (
     <>
-      <div className="callout warning" style={{ marginBottom: 16 }}>
-        <div>
-          <div className="callout-title">Comp-off credit requests aren&apos;t available yet</div>
-          {hasCompOff
-            ? "Your plan includes Compensatory Off, but there is no request flow for it in this workspace. HR credits comp-off to your balance as an adjustment — share the days below with them."
-            : "Your leave plan doesn't include Compensatory Off, so working on an off day isn't credited as leave. Ask HR if you think it should be."}
+      {!hasCompOff ? (
+        <div className="callout warning" style={{ marginBottom: 16 }}>
+          <div>Your leave plan doesn&apos;t include Compensatory Off, so working on an off day isn&apos;t credited as leave. Ask HR if you think it should be.</div>
         </div>
-      </div>
+      ) : (
+        <div className="text-sm muted" style={{ marginBottom: 12 }}>
+          Worked on a weekly off or a holiday? Claim it within 30 days. Your manager approves it, the day is credited
+          to Compensatory Off, and it must be used before it expires.
+        </div>
+      )}
       <div className="label">Off days you worked this leave year</div>
       {worked.length === 0 ? (
         <div className="muted text-sm">None — you haven&apos;t punched in on a weekly off or holiday this leave year.</div>
       ) : (
         <table className={s.mini}>
-          <thead><tr><th>Date</th><th>Day</th><th className={s.r}>Hours worked</th></tr></thead>
+          <thead><tr><th>Date</th><th>Day</th><th className={s.r}>Hours worked</th><th /></tr></thead>
           <tbody>
             {worked.map((w) => (
-              <tr key={w.date.toISOString()}>
+              <tr key={w.key}>
                 <td>{dateLabel(w.date)}</td>
                 <td>{w.status === "HOLIDAY" ? "Holiday" : "Weekly off"}</td>
                 <td className={s.r}>{Math.floor(w.hours)}h {Math.round((w.hours % 1) * 60)}m</td>
+                <td>{w.claimed ? statusBadge(w.claimed) : hasCompOff && w.claimable ? <CompOffClaim date={w.key} maxDays={w.maxDays} /> : <span className="text-xs muted">{hasCompOff ? "Outside the 30-day window" : ""}</span>}</td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+      {history.length ? (
+        <>
+          <div className="label" style={{ marginTop: 16 }}>Your comp-off claims</div>
+          <table className={s.mini}>
+            <thead><tr><th>Worked on</th><th className={s.r}>Days</th><th>Status</th><th>Use by</th><th /></tr></thead>
+            <tbody>
+              {history.map((h) => (
+                <tr key={h.id}>
+                  <td>{dateLabel(h.workedOn)} <span className="text-xs muted">· {h.dayType.toLowerCase()}</span></td>
+                  <td className={s.r}>{h.days}</td>
+                  <td>{statusBadge(h.status)}{h.note ? <div className="text-xs muted">{h.note}</div> : null}</td>
+                  <td>{h.status === "APPROVED" && h.expiresOn ? dateLabel(h.expiresOn) : "—"}</td>
+                  <td>{h.status === "PENDING" ? <WithdrawButton kind="compoff" requestId={h.id} /> : null}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
     </>
   );
 }

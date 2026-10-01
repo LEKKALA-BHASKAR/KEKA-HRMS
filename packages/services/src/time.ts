@@ -163,7 +163,7 @@ export function leaveYearStart(at: Date, basis: string, joinDate?: Date | null):
   return new Date(Date.UTC(m >= 4 ? y : y - 1, 3, 1));
 }
 
-async function planFor(employeeId: string, at: Date) {
+export async function planFor(employeeId: string, at: Date) {
   return prisma.leavePlanAssignment.findFirst({
     where: {
       employeeId, effectiveFrom: { lte: at },

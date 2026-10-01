@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@keka/db";
-import { leaveYearStart, localDateKey, tzOffsetMinutes } from "@keka/services";
+import { leaveYearStart, localDateKey, tzOffsetMinutes, encashmentQuote, resolveTimePolicy, classifyDay, COMP_OFF_CLAIM_WINDOW_DAYS } from "@keka/services";
 import { requireViewer } from "@/lib/context";
 import { SubTabs } from "@/components/subtabs";
 import { Ring, Donut, Bars, EmptyState } from "@/components/keka";
@@ -230,10 +230,24 @@ export default async function MyLeavePage({ searchParams }: { searchParams: Prom
   const detailType = sp.details ? types.find((x) => x.t.id === sp.details) : undefined;
   const compOffDays = sp.compoff
     ? await prisma.attendanceRecord.findMany({
-        where: { tenantId, employeeId, date: { gte: ys, lte: new Date(Math.min(ye.getTime(), today.getTime())) }, status: { in: ["WEEKLY_OFF", "HOLIDAY"] }, effectiveHours: { gt: 0 } },
+        where: { tenantId, employeeId, date: { gte: ys, lt: new Date(Math.min(ye.getTime() + 86_400_000, today.getTime())) }, status: { in: ["WEEKLY_OFF", "HOLIDAY"] }, effectiveHours: { gt: 0 } },
         orderBy: { date: "desc" }, select: { date: true, status: true, effectiveHours: true },
       })
     : [];
+  const compOffHistory = sp.compoff
+    ? await prisma.compOffRequest.findMany({ where: { tenantId, employeeId }, orderBy: { workedOn: "desc" }, take: 20 })
+    : [];
+  const timePolicy = sp.compoff ? await resolveTimePolicy(employeeId, today) : null;
+  const encashTypes = sp.encash
+    ? (await Promise.all(types.filter((x) => x.t.encashmentEnabled).map(async (x) => {
+        const q = await encashmentQuote(employeeId, x.t.id, now);
+        return q ? { id: x.t.id, name: x.t.name, encashable: q.encashable, perDay: q.perDayRate, formula: x.t.encashmentFormula } : null;
+      }))).filter((x): x is NonNullable<typeof x> => !!x)
+    : [];
+  const encashHistory = sp.encash
+    ? await prisma.leaveEncashmentRequest.findMany({ where: { tenantId, employeeId }, orderBy: { createdAt: "desc" }, take: 20 })
+    : [];
+  const typeName = new Map(types.map((x) => [x.t.id, x.t.name]));
 
   return (
     <>
@@ -411,14 +425,26 @@ export default async function MyLeavePage({ searchParams }: { searchParams: Prom
       ) : null}
       {sp.encash ? (
         <UrlModal title="Request Leave Encashment" closeHref={href({ encash: null })} width={560}>
-          <EncashmentInfo types={applicable.map(toCatalogue)} />
+          <EncashmentInfo
+            types={encashTypes}
+            history={encashHistory.map((h) => ({ id: h.id, type: typeName.get(h.leaveTypeId) ?? "Leave", days: num(h.days), amount: num(h.amount), status: h.status, raisedOn: h.createdAt, note: h.decisionNote }))}
+          />
         </UrlModal>
       ) : null}
       {sp.compoff ? (
         <UrlModal title="Request Credit for Compensatory Off" closeHref={href({ compoff: null })} width={560}>
           <CompOffInfo
             hasCompOff={applicable.some((x) => x.t.category === "COMP_OFF")}
-            worked={compOffDays.map((d) => ({ date: d.date, status: d.status, hours: num(d.effectiveHours) }))}
+            worked={compOffDays.map((d) => {
+              const claim = compOffHistory.find((c) => c.workedOn.getTime() === d.date.getTime() && c.status !== "CANCELLED" && c.status !== "REJECTED");
+              const half = timePolicy ? classifyDay(d.date, timePolicy.calendar) === "HALF_WEEKLY_OFF" : false;
+              return {
+                date: d.date, key: d.date.toISOString().slice(0, 10), status: d.status, hours: num(d.effectiveHours),
+                claimed: claim?.status ?? null, maxDays: (half ? 0.5 : 1) as 1 | 0.5,
+                claimable: today.getTime() - d.date.getTime() <= COMP_OFF_CLAIM_WINDOW_DAYS * 86_400_000,
+              };
+            })}
+            history={compOffHistory.map((h) => ({ id: h.id, workedOn: h.workedOn, days: num(h.days), status: h.status, dayType: h.dayType, expiresOn: h.expiresOn, note: h.decisionNote }))}
           />
         </UrlModal>
       ) : null}

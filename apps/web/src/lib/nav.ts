@@ -45,6 +45,8 @@ export interface NavCounts {
   acks: number;
   sheets: number;
   notifications: number;
+  surveys: number;
+  learning: number;
 }
 
 const path = (href: string) => href.split("?")[0];
@@ -67,6 +69,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: { hasExit: boo
         { label: "Attendance", href: "/me/attendance" },
         { label: "Leave", href: "/me/leave" },
         { label: "Performance", href: "/me/performance" },
+        { label: "Skills & Career", href: "/me/career" },
         { label: "Expenses & Travel", href: "/me/expenses" },
         { label: "Apps", href: "/me/apps", paths: ["/me/apps", "/me/loans", "/me/exit"] },
       ],
@@ -116,10 +119,15 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: { hasExit: boo
   const engage = tabs([
     can(viewer, P.ANNOUNCEMENT_VIEW) && { label: "Announcements", href: "/announcements", count: counts.acks },
     can(viewer, P.AWARD_VIEW) && { label: "Praise & Awards", href: "/awards" },
+    (me || canAny(viewer, [P.SURVEY_MANAGE, P.SURVEY_RESULTS])) && { label: "Surveys & Polls", href: "/engage/surveys", count: counts.surveys },
     can(viewer, P.TRAINING_VIEW) && { label: "Training", href: "/training" },
     can(viewer, P.MEETING_VIEW) && { label: "Meetings", href: "/meetings" },
   ]);
   if (engage.length) sections.push({ key: "engage", label: "Engage", icon: "engage", href: engage[0].href, tabs: engage });
+
+  if (can(viewer, P.LEARNING_VIEW)) {
+    sections.push({ key: "learn", label: "Learn", icon: "learn", href: "/learn", count: counts.learning, tabs: [{ label: "Learning", href: "/learn", count: counts.learning }] });
+  }
 
   // ---- Admin workspaces ----------------------------------------------------
   const people = tabs([
@@ -141,8 +149,18 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: { hasExit: boo
     sections.push({ key: "hire", label: "Hire", icon: "hire", href: "/hiring", tabs: [{ label: "Recruitment", href: "/hiring" }], admin: true });
   }
 
-  if (isManager || canAny(viewer, [P.PERFORMANCE_MANAGE, P.PERFORMANCE_CALIBRATE, P.GOALS_MANAGE, P.PIP_MANAGE])) {
-    sections.push({ key: "performance", label: "Performance", icon: "performance", href: "/performance", tabs: [{ label: "Goals & Reviews", href: "/performance" }], admin: true });
+  if (isManager || canAny(viewer, [P.PERFORMANCE_MANAGE, P.PERFORMANCE_CALIBRATE, P.GOALS_MANAGE, P.PIP_MANAGE, P.CAREER_PATH_MANAGE, P.SKILL_MANAGE])) {
+    sections.push({
+      key: "performance", label: "Performance", icon: "performance", href: "/performance", admin: true,
+      tabs: tabs([
+        { label: "Goals & Reviews", href: "/performance" },
+        (isManager || canAny(viewer, [P.CAREER_PATH_MANAGE, P.SKILL_MANAGE])) && { label: "Skills & Career Paths", href: "/performance/careers" },
+      ]),
+    });
+  }
+
+  if (can(viewer, P.ANALYTICS_VIEW)) {
+    sections.push({ key: "analytics", label: "Analytics", icon: "analytics", href: "/analytics", tabs: [{ label: "Workforce Insights", href: "/analytics" }], admin: true });
   }
 
   // Line managers approve timesheets from the inbox; the workspace is for project people.
@@ -211,6 +229,11 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     can(viewer, P.EMPLOYEE_CREATE) && { label: "Add an employee", href: "/employees/new", keywords: "hire onboard new joinee" },
     can(viewer, P.LEDGER_VIEW) && { label: "Accounting", href: "/accounting", keywords: "ledger books journal trial balance" },
     can(viewer, P.REPORT_VIEW) && { label: "Reports", href: "/reports", keywords: "analytics headcount attrition" },
+    can(viewer, P.ANALYTICS_VIEW) && { label: "Workforce analytics", href: "/analytics", keywords: "dashboard headcount attrition diversity cost insights" },
+    me && { label: "Take a survey", href: "/engage/surveys", keywords: "survey poll pulse feedback enps" },
+    me && { label: "My learning", href: "/learn", keywords: "course training lms learn quiz" },
+    me && { label: "Claim comp-off", href: "/me/leave?compoff=1", keywords: "comp off compensatory weekend holiday worked" },
+    me && { label: "Encash leave", href: "/me/leave?encash=1", keywords: "encash encashment sell leave" },
   ];
   return list.filter((x): x is { label: string; href: string; keywords: string } => !!x);
 }

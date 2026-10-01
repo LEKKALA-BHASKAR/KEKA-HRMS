@@ -8,10 +8,10 @@ research in `02-corehr-payroll.md` and `Keka-Platform-Teardown.pdf`.
 ```bash
 createdb keka_dev          # Postgres 14+ on localhost:5432
 npm install
-npm run db:migrate         # creates 191 tables
+npm run db:migrate         # creates 207 tables
 npm run db:seed            # one tenant, 30 employees, Apr–Aug payroll finalised, Sep open
 npm run dev                # http://localhost:3100
-npm run test:all           # 275 unit tests + 17 integration suites (558 checks) against the seeded DB
+npm run test:all           # 301 unit tests + 18 integration suites (625 checks) against the seeded DB
 ```
 
 After any migration, restart `npm run dev`: the generated Prisma client is a cached
@@ -34,7 +34,7 @@ Sign in at `/signin` (email first, then password). Every seeded account uses the
 
 ```
 packages/shared      Decimal money, Indian FY dates — no float arithmetic anywhere
-packages/db          Prisma multi-file schema (191 tables, every tenant table cascades) + seed
+packages/db          Prisma multi-file schema (207 tables, every tenant table cascades) + seed
 packages/rbac        124 permissions, 11 built-in roles, 3 implicit roles, scope resolution
 packages/payroll     Pure engine: formulas, structures, PF/ESI/PT/LWF/TDS/gratuity, loan schedules
 packages/time        Pure engine: calendars, leave counting and sandwich rule, accrual, attendance
@@ -80,13 +80,14 @@ payslip release, and rollback that un-consumes every input and archives journal 
 | **Gratuity** | 5-year eligibility, Act-covered (15 days ÷ 26) vs not-covered (÷ 30), part-year over six months rounds up, ₹20L exemption ceiling |
 
 ### Verification
-- **275 unit tests**, all passing — `npm test` (payroll, time, RBAC, documents and the pure
+- **301 unit tests**, all passing — `npm test` (payroll, time, RBAC, documents and the pure
   parts of services, no database)
-- **17 integration suites, 558 checks** — `npm run test:smoke` — drive the real server actions
+- **18 integration suites, 625 checks** — `npm run test:smoke` — drive the real server actions
   through the genuine session → viewer → permission chain, clean up after themselves, and pass
   when run twice in a row: seams, master data, employee lifecycle, payroll config, leave &
   attendance (engine and actions), exits/journeys/helpdesk, loans, authentication, statutory
-  filings, performance, hiring, expenses, projects, accounting, self-service, and tenant isolation
+  filings, performance, hiring, expenses, projects, accounting, self-service, engagement and
+  learning, and tenant isolation
 - **Production build passes** with full TypeScript checking, no `ignoreBuildErrors`
 - **479 page/persona combinations** (every page, and every detail page with a real record, for
   up to seven personas) return only 200, 403, 404 or a deliberate redirect — never a 500
@@ -215,6 +216,28 @@ one section for a given person, so the right rail item and tab light up for any 
 - Demo data reaches the day you seed: attendance through yesterday, this morning's
   clock-ins, someone on leave, working from home and on duty today, and a birthday.
 
+## Phase 6 — engagement, learning, careers and time off
+
+The modules on Keka's published product list that the platform did not yet have.
+
+| Module | What works end to end |
+|---|---|
+| **Surveys & polls** (Engage) | Pulse, engagement and eNPS surveys created from tested templates and edited before launch; quick polls; audience by department; launch notifies everyone invited; one response per person; results with participation, favourable %, eNPS, engagement-driver scores, per-question charts, comments and a department breakdown |
+| **Anonymity** | An anonymous response stores no employee, a day-only timestamp and random ids, so it cannot be joined to the participant row that stops double voting. Any figure drawn from fewer people than the survey's minimum group size, overall or per department, is withheld rather than computed |
+| **Learning** (Learn) | Courses of articles, videos (YouTube plays in place), documents and quizzes; publish checks; mandatory courses assigned to everyone on publish and to every new joiner; HR and managers assign within their scope with due dates; self-enrolment from the catalogue; course player with progress; quizzes marked server-side (answers never reach the browser), best score kept, a pass never undone; completion tracking with overdue lists |
+| **Skills & career paths** | Skill catalogue with named levels; employees self-rate and managers confirm; course completion records the course's skill; career ladders with the skills each rung needs; "you are here" placement by job title; a chosen target role; readiness as the share of requirements met by confirmed skills; courses that would close each gap; a team readiness table and skill matrix |
+| **Comp-off** | Claim a weekly off or holiday you worked, within 30 days. The day is checked against your own calendar, and the punches must reach the full-day or half-day threshold of your attendance policy. Your manager approves it from the inbox, and the leave ledger is credited exactly once, with an expiry date |
+| **Leave encashment** | Sell back encashable leave in service, priced from your current salary structure by the leave type's formula. Days tied up in pending leave or encashment can't be sold twice. HR approves it from the inbox, the days leave the balance and the amount lands in the open payroll run as a taxable payment in one transaction, and TDS follows |
+| **Workforce Insights** (Analytics) | Headcount trend, joiners and leavers, trailing-twelve-month attrition from effective dates, tenure, age, gender, department, location and worker-type composition, gender mix by department, attendance and late marks, leave taken by month and type, eNPS and learning completion; payroll cost to company by month and department for viewers with payroll access; filterable by department and scoped to what the viewer may see |
+
+`scripts/smoke-engage-learn.ts` drives all of it through the real actions — **67 checks**, rerunnable.
+
+Two bugs fixed along the way: invoicing picked the tenant's legal entity with an unordered
+`findFirst`, so GST could flip between CGST+SGST and IGST depending on the table's
+physical order; it now takes the first-created entity. And comp-off and encashment were
+first written to skip any run with a rollback stamp, but a rollback reopens the run, so the
+stamp is history, not state.
+
 ## Known limitations
 
 - **Statutory reference tables need verification before go-live.** PT slabs, LWF rules and
@@ -229,8 +252,11 @@ one section for a given person, so the right rail item and tab light up for any 
   single-function swap in `apps/web/src/lib/mail.ts`.
 - **Seeded "today" data only inside the demo year.** Seeding between 27 Sep 2026 and 31 Mar
   2027 brings attendance up to the day; outside that window the data ends on 25 Sep 2026.
-- **Not built from the Keka screens:** single sign-on (Google, Microsoft, mobile OTP), leave
-  encashment and comp-off requests as their own flows, and real photos (avatars are initials).
+- **Not built from the Keka screens:** single sign-on (Google, Microsoft, mobile OTP) and real
+  photos (avatars are initials).
+- **Survey anonymity is an application guarantee.** Responses carry no name and are only
+  shown in groups of the minimum size, but someone with direct database access and the
+  insertion order could still try to correlate rows. Use a separate store if that matters.
 - **India only.** The statutory engine is structured so US and GCC packs could be added, but
   nothing outside India is implemented.
 - **One set of books per tenant.** Ledger entries carry a legal entity column, but the screens

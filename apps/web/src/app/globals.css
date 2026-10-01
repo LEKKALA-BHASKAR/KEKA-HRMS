@@ -824,7 +824,7 @@ table.data tr.subtotal td {
 .k-field-value { font-size: 15px; color: var(--text); }
 .k-ring { position: relative; display: inline-grid; place-items: center; }
 .k-ring svg { display: block; }
-.k-ring-label { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-size: 13.5px; line-height: 1.35; }
+.k-ring-label { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 0; text-align: center; font-size: 13.5px; line-height: 1.35; }
 .k-bars-plot { display: flex; align-items: flex-end; gap: 6px; border-bottom: 1px solid var(--border); }
 .k-bar-col { flex: 1; height: 100%; display: flex; align-items: flex-end; }
 .k-bar { width: 100%; border-radius: 2px 2px 0 0; }
@@ -880,3 +880,46 @@ table.data tr.subtotal td {
   .k-topbar, .k-rail, .k-tabbar, .k-subtabs { display: none !important; }
   .k-shell .content { padding: 0; }
 }
+
+/* ---- Survey scales ------------------------------------------------------ */
+.scale-opt { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; }
+.scale-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.scale-opt span { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; height: 36px; padding: 0 10px;
+  border: 1px solid var(--border-strong, var(--border)); border-radius: var(--radius-sm); font-weight: 600; background: var(--surface); }
+.scale-opt.nps span { min-width: 40px; padding: 0; }
+.scale-opt small { font-size: 11px; color: var(--text-subtle); max-width: 84px; text-align: center; }
+.scale-opt input:checked + span { background: var(--brand-500); border-color: var(--brand-500); color: #fff; }
+.scale-opt input:focus-visible + span { outline: 2px solid var(--brand-500); outline-offset: 2px; }
+
+/* ---- Learning ----------------------------------------------------------- */
+.course-card { display: block; padding: 0; overflow: hidden; color: inherit; text-decoration: none; }
+a.course-card:hover { box-shadow: var(--shadow-md, 0 4px 14px rgba(0,0,0,.08)); }
+.course-cover { position: relative; height: 84px; display: flex; align-items: flex-end; justify-content: space-between; padding: 10px 12px;
+  color: #fff; font-size: 12px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase;
+  background-image: linear-gradient(135deg, rgba(255,255,255,.18), rgba(0,0,0,.12)); }
+.course-flag { background: rgba(0,0,0,.28); border-radius: 999px; padding: 2px 8px; font-size: 11px; text-transform: none; }
+.learn-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; }
+@media (max-width: 900px) { .learn-layout { grid-template-columns: 1fr; } }
+.lesson-list { list-style: none; margin: 0; padding: 6px 0; }
+.lesson-list li a { display: flex; gap: 10px; align-items: flex-start; padding: 9px 14px; color: inherit; text-decoration: none; }
+.lesson-list li a:hover { background: var(--surface-sunken); }
+.lesson-list li.active a { background: var(--surface-sunken); box-shadow: inset 3px 0 0 var(--brand-500); }
+.lesson-check { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border); display: inline-flex;
+  align-items: center; justify-content: center; font-size: 11px; color: var(--text-subtle); }
+.lesson-check.done { background: var(--success); border-color: var(--success); color: #fff; }
+.lesson-body p { margin: 0 0 12px; line-height: 1.6; max-width: 72ch; }
+.video-frame { position: relative; padding-top: 56.25%; margin-bottom: 14px; border-radius: var(--radius-sm); overflow: hidden; background: #000; }
+.video-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+/* ---- Career paths ------------------------------------------------------- */
+.career-ladder { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 2px solid var(--border); }
+.career-ladder li { position: relative; padding: 6px 0 6px 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.career-ladder li::before { content: ""; position: absolute; left: -21px; top: 11px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--surface); border: 2px solid var(--border); }
+.career-ladder li.past::before { background: var(--text-subtle); border-color: var(--text-subtle); }
+.career-ladder li.here::before { background: var(--brand-500); border-color: var(--brand-500); }
+.career-ladder li.target::before { border-color: var(--success); }
+.career-step { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; }
+.career-step-num { width: 22px; height: 22px; border-radius: 50%; background: var(--surface-sunken); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; }
+.skill-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--surface-sunken); font-size: 12px; }
+.skill-chip form { display: inline; }
