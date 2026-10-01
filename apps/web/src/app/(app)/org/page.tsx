@@ -392,7 +392,7 @@ export default async function OrgPage({
             <Card title={editLocation ? `Edit ${editLocation.name}` : "Add a location"}>
               {editLocation ? (
                 <>
-                  <LocationForm location={editLocation} />
+                  <LocationForm location={{ ...editLocation, latitude: editLocation.latitude?.toString() ?? null, longitude: editLocation.longitude?.toString() ?? null }} />
                   <div style={{ marginTop: 10 }}>
                     <Link className="btn ghost sm" href="/org?tab=locations">Done editing</Link>
                   </div>

@@ -107,6 +107,19 @@ async function TodayTab({ viewer, scope }: { viewer: Viewer; scope: Record<strin
   const weekend = dow === 0 || dow === 6;
 
   type Row = { e: (typeof employees)[number]; state: string; tone: "success" | "warning" | "danger" | "info" | "neutral"; first?: Date; last?: Date; late?: number };
+  // How the latest punch was captured: device, place and selfie, for review.
+  const capture = (id: string) => {
+    const l = logsOf.get(id) ?? [];
+    const p = l[l.length - 1];
+    if (!p) return null;
+    return (
+      <span className="text-xs subtle row gap-2" style={{ justifyContent: "flex-end" }}>
+        {p.source.toLowerCase()}
+        {p.latitude != null && p.longitude != null ? <a href={`https://www.openstreetmap.org/?mlat=${p.latitude}&mlon=${p.longitude}#map=17/${p.latitude}/${p.longitude}`} target="_blank" rel="noreferrer">map</a> : null}
+        {p.selfieUrl ? <a href={p.selfieUrl}>selfie</a> : null}
+      </span>
+    );
+  };
   const rows: Row[] = employees.map((e) => {
     const l = logsOf.get(e.id) ?? [];
     const first = l.find((x) => x.direction === 0)?.timestamp;
@@ -152,7 +165,7 @@ async function TodayTab({ viewer, scope }: { viewer: Viewer; scope: Record<strin
                     <td><Badge tone={r.tone} dot>{r.state}</Badge></td>
                     <td className="num text-sm">{istTime(r.first)}{r.late ? <span className="text-xs neg"> +{r.late}m</span> : null}</td>
                     <td className="num text-sm">{istTime(r.last)}</td>
-                    <td />
+                    <td className="right">{capture(r.e.id)}</td>
                   </tr>
                 ))}
               </tbody>

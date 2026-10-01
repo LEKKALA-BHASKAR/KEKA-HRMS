@@ -61,6 +61,9 @@ export interface ResolvedTimePolicy {
   regularisationWindowDays: number;
   allowRemoteClockIn: boolean;
   remoteClockInNeedsApproval: boolean;
+  requireGeofence: boolean;
+  requireSelfie: boolean;
+  allowMobileClockIn: boolean;
   allowHalfDayRemoteWork: boolean;
   allowHourlyRemoteWork: boolean;
   overtimeNeedsRequest: boolean;
@@ -154,6 +157,9 @@ export async function resolveTimePolicy(employeeId: string, at: Date): Promise<R
     regularisationWindowDays: policy?.regularisationWindowDays ?? 30,
     allowRemoteClockIn: policy?.allowRemoteClockIn ?? false,
     remoteClockInNeedsApproval: policy?.remoteClockInNeedsApproval ?? true,
+    requireGeofence: policy?.requireGeofence ?? false,
+    allowMobileClockIn: policy?.allowMobileClockIn ?? true,
+    requireSelfie: policy?.requireSelfie ?? false,
     allowHalfDayRemoteWork: policy?.allowHalfDayRemoteWork ?? true,
     allowHourlyRemoteWork: policy?.allowHourlyRemoteWork ?? false,
     overtimeNeedsRequest: policy?.overtimeNeedsRequest ?? true,
@@ -749,7 +755,22 @@ export interface PunchInput {
   longitude?: number | null;
   comment?: string | null;
   deviceId?: string | null;
+  /** /files/<id> of a selfie taken at the punch. */
+  selfieUrl?: string | null;
+  /** Reported GPS accuracy in metres, used as tolerance at the fence edge. */
+  accuracyM?: number | null;
 }
+
+/** Great-circle distance in metres. */
+export function distanceMetres(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6_371_000, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/** The largest GPS error we will give the benefit of the doubt for. */
+const MAX_ACCURACY_TOLERANCE_M = 100;
 
 export async function recordPunch(input: PunchInput): Promise<{ ok: boolean; message: string; pendingApproval?: boolean; requestId?: string }> {
   const at = input.at ?? new Date();
@@ -768,6 +789,29 @@ export async function recordPunch(input: PunchInput): Promise<{ ok: boolean; mes
     if (policy.requireClockInComment && !input.comment) {
       return { ok: false, message: "A comment is required to clock in." };
     }
+  }
+  if (source === "MOBILE" && !policy.allowMobileClockIn) return { ok: false, message: "Mobile clock-in is not enabled for your attendance policy." };
+  // Geo-fence: web and mobile punches from inside the work location's radius,
+  // when the location has one set. A fix's own accuracy, up to a limit, is
+  // given as tolerance so someone at the door is not turned away.
+  if ((source === "WEB" || source === "MOBILE") && policy.requireGeofence) {
+    const office = await prisma.employee.findUnique({
+      where: { id: input.employeeId },
+      select: { location: { select: { name: true, latitude: true, longitude: true, geofenceRadiusM: true } } },
+    }).then((e) => e?.location);
+    if (office?.latitude != null && office.longitude != null && office.geofenceRadiusM) {
+      if (input.latitude == null || input.longitude == null) {
+        return { ok: false, message: "Your attendance policy needs your location to clock in. Allow location access and try again." };
+      }
+      const d = distanceMetres({ lat: input.latitude, lng: input.longitude }, { lat: Number(office.latitude), lng: Number(office.longitude) });
+      const slack = Math.min(Math.max(input.accuracyM ?? 0, 0), MAX_ACCURACY_TOLERANCE_M);
+      if (d - slack > office.geofenceRadiusM) {
+        return { ok: false, message: `You are about ${d >= 1000 ? `${(d / 1000).toFixed(1)} km` : `${Math.round(d)} m`} from ${office.name}. Clock in within ${office.geofenceRadiusM} m of the office, or use remote clock-in.` };
+      }
+    }
+  }
+  if ((source === "WEB" || source === "MOBILE" || source === "REMOTE") && policy.requireSelfie && !input.selfieUrl) {
+    return { ok: false, message: "Your attendance policy needs a selfie with each clock-in. Take one and try again." };
   }
   // Remote Clock-In: from anywhere, but held for approval when the policy says so.
   if (source === "REMOTE") {
@@ -817,6 +861,7 @@ export async function recordPunch(input: PunchInput): Promise<{ ok: boolean; mes
       timestamp: at, direction: input.direction, source,
       ipAddress: input.ipAddress ?? null, deviceId: input.deviceId ?? null,
       latitude: input.latitude ?? null, longitude: input.longitude ?? null,
+      selfieUrl: input.selfieUrl ?? null,
       comment: input.comment ?? null,
       status: held ? "PENDING" : "VALID",
       attendanceRequestId: requestId,

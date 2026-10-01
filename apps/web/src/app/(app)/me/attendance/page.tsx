@@ -288,6 +288,7 @@ export default async function MyAttendancePage({ searchParams }: { searchParams:
               <ClockPanel
                 tzOffset={tz} clockedInSince={openSince} closedMinutes={Math.round(closedToday)}
                 allowed={policy.allowWebClockIn} requireComment={policy.requireClockInComment}
+                requireLocation={policy.requireGeofence} requireSelfie={policy.requireSelfie}
               />
               <nav className={s.links} aria-label="Attendance actions">
                 <Link href={href({ request: "WFH", date: null })} scroll={false} className={s.link}>

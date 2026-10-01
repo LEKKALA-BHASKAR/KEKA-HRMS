@@ -167,6 +167,10 @@ model Location {
   state        String?
   postalCode   String?
   countryCode  String  @default("IN")
+  /// Office coordinates and radius for geo-fenced clock-in.
+  latitude        Decimal? @db.Decimal(10, 7)
+  longitude       Decimal? @db.Decimal(10, 7)
+  geofenceRadiusM Int?
   timezone     String  @default("Asia/Kolkata")
 
   isActive  Boolean  @default(true)

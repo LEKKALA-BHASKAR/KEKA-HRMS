@@ -335,6 +335,7 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     can(viewer, P.EXIT_MANAGE) && { label: "Notice periods and exit reasons", href: "/admin/settings?tab=exits", keywords: "notice period policy exit reason resignation settings" },
     can(viewer, P.LEDGER_VIEW) && { label: "Accounting", href: "/accounting", keywords: "ledger books journal trial balance" },
     can(viewer, P.REPORT_VIEW) && { label: "Reports", href: "/reports", keywords: "employee reports export" },
+    !!viewer.employee && { label: "Clock in from phone", href: "/me/clock", keywords: "mobile clock in out punch selfie location app" },
     can(viewer, P.ANALYTICS_VIEW) && { label: "Org analytics", href: "/analytics", keywords: "analytics headcount attrition dashboard" },
     can(viewer, P.ANALYTICS_VIEW) && { label: "Attrition storyboard", href: "/storyboards/attrition", keywords: "attrition storyboard exits" },
     canAny(viewer, [P.REQUISITION_MANAGE, P.REQUISITION_VIEW]) && { label: "Raise a requisition", href: "/hiring/requisitions?new=1", keywords: "requisition hire headcount position" },

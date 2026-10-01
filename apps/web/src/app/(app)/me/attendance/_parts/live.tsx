@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useForm } from "@/components/form";
 import { clockAction } from "@/app/actions/time";
+import { ClockCapture } from "../../../_time/clock-capture";
 import s from "./parts.module.css";
 
 /** The current instant, ticking. Null until mounted so server and client agree. */
@@ -32,8 +33,12 @@ function local(ms: number, tz: number) {
  * posting to the shared clock action.
  */
 export function ClockPanel({
-  tzOffset, clockedInSince, closedMinutes, allowed, requireComment,
+  tzOffset, clockedInSince, closedMinutes, allowed, requireComment, requireLocation = false, requireSelfie = false, mode = "web",
 }: {
+  requireLocation?: boolean;
+  requireSelfie?: boolean;
+  /** "mobile" from the installable clock page. */
+  mode?: "web" | "mobile";
   tzOffset: number;
   clockedInSince: string | null;
   /** Completed in/out pairs today. */
@@ -63,12 +68,14 @@ export function ClockPanel({
       {allowed ? (
         <form action={formAction} className={s.clockForm}>
           <input type="hidden" name="direction" value={since ? "out" : "in"} />
+          {mode === "mobile" ? <input type="hidden" name="mode" value="mobile" /> : null}
+          <ClockCapture locate={requireLocation} selfie={requireSelfie} />
           {requireComment ? (
             <input className="input" name="comment" required placeholder="Where are you working from?"
               aria-label="Clock-in comment" style={{ marginBottom: 8 }} />
           ) : null}
           <button type="submit" className={`${s.clockBtn}${since ? ` ${s.clockBtnOut}` : ""}`} disabled={pending}>
-            {pending ? "Recording…" : since ? "Web Clock-Out" : "Web Clock-In"}
+            {pending ? "Recording…" : `${mode === "mobile" ? "" : "Web "}${since ? "Clock-Out" : "Clock-In"}`}
           </button>
           {since && sinceL ? (
             <div className={s.clockMeta} suppressHydrationWarning>
