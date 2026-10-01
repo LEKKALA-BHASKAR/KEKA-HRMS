@@ -19,6 +19,7 @@ async function denied(fn: () => Promise<unknown>) {
 
 async function main() {
   const a = await import("../apps/web/src/app/actions/hiring");
+  const svc = await import("@keka/services");
   const { STORAGE_DIR } = await import("../apps/web/src/lib/storage");
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { subdomain: "acme" } });
   const emp = (n: string) => prisma.employee.findFirstOrThrow({ where: { tenantId: tenant.id, employeeNumber: n } });
@@ -33,15 +34,20 @@ async function main() {
     await signInAs("meera.krishnan@acme.test");
     check("An employee cannot raise a requisition", await denied(() => a.raiseRequisitionAction({}, fd({ title: "x" }))));
     await signInAs("priya.sharma@acme.test");
-    const raised = await a.raiseRequisitionAction({}, fd({ title: "Smoke SRE", type: "NEW_HIRE", departmentId: dept.id, positions: 2, minAnnualCtc: 2000000, maxAnnualCtc: 3000000, justification: "Smoke test" }));
+    const raised = await a.raiseRequisitionAction({}, fd({
+      title: "Smoke SRE", departmentId: dept.id, newHire: true, newPositions: 2,
+      currency: "INR", salaryMin: 2000000, salaryMax: 3000000, salaryFrequency: "ANNUAL",
+      description: "Run the platform's reliability practice: on-call, SLOs and capacity.", justification: "Smoke test",
+    }));
     const req = await prisma.requisition.findFirstOrThrow({ where: { tenantId: tenant.id, title: "Smoke SRE" } });
     ids.req = req.id;
-    check("HR raises a requisition for approval", raised.ok === true && req.status === "PENDING_APPROVAL", raised.message);
+    check("HR raises a requisition for approval", raised.ok === true && req.status === "PENDING_APPROVAL" && req.positions === 2 && Number(req.maxAnnualCtc) === 3000000, raised.message);
+    check("…routed to an approver other than herself", !!req.approverUserId && req.approverUserId !== req.raisedBy);
     const self = await a.decideRequisitionAction({}, fd({ id: req.id, decision: "approve" }));
     check("…but cannot approve her own", self.ok === false, self.message);
     await signInAs("vikram.menon@acme.test");
     const ok = await a.decideRequisitionAction({}, fd({ id: req.id, decision: "approve" }));
-    check("Leadership approves it", ok.ok === true);
+    check("Leadership approves it", ok.ok === true, ok.message);
     await signInAs("priya.sharma@acme.test");
     const opened = await a.openJobAction({}, fd({ requisitionId: req.id, hiringManagerId: sneha.id }));
     const job = await prisma.job.findFirstOrThrow({ where: { requisitionId: req.id } });
@@ -81,17 +87,28 @@ async function main() {
     const clash = await a.scheduleInterviewAction({}, g);
     check("A second interview that overlaps a panellist is refused", clash.ok === false && /already interviewing/.test(clash.message ?? ""), clash.message);
 
+    // Feedback is a Keka scorecard: a five-level decision, written notes, and 1–5 stars per kit skill (the score is their mean).
+    const kit = await svc.interviewKit(job.id);
+    const stars = (n: number) => JSON.stringify(kit.flatMap((sec) => sec.skills.map((k) => ({ section: sec.section, skill: k.name, rating: n, comment: null }))));
+    const card = (rating: number, recommendation: string, notes: string) =>
+      fd({ interviewId: iv.id, recommendation, notes, ratings: stars(rating), intent: "submit" });
     await signInAs("meera.krishnan@acme.test");
-    const early = await a.scorecardAction({}, fd({ interviewId: iv.id, overallScore: 4, recommendation: "YES" }));
+    const early = await a.saveScorecardAction({}, card(4, "HIRE", "Good grasp of distributed systems basics."));
     check("Feedback cannot be given before the interview", early.ok === false, early.message);
     await prisma.interview.update({ where: { id: iv.id }, data: { scheduledAt: new Date(Date.now() - 2 * 3_600_000) } });
-    const sc = await a.scorecardAction({}, fd({ interviewId: iv.id, overallScore: 4, recommendation: "STRONG_YES", strengths: "Solid systems thinking" }));
+    const thin = await a.saveScorecardAction({}, card(4, "MUST_HIRE", "Solid"));
+    check("Submitting needs written feedback", thin.ok === false && /20 characters/.test(thin.message ?? ""), thin.message);
+    const legacy = await a.saveScorecardAction({}, card(4, "STRONG_YES", "Solid systems thinking throughout the round."));
+    check("Only Keka's five decisions are accepted", legacy.ok === false, legacy.message);
+    const sc = await a.saveScorecardAction({}, card(4, "MUST_HIRE", "Solid systems thinking throughout the round."));
     check("A panellist gives feedback after it", sc.ok === true, sc.message);
+    const twice = await a.saveScorecardAction({}, card(5, "MUST_HIRE", "Changing my mind after the fact, upwards."));
+    check("…and a submitted scorecard is final", twice.ok === false, twice.message);
     await signInAs("ramesh.iyer@acme.test");
-    const outsider = await a.scorecardAction({}, fd({ interviewId: iv.id, overallScore: 1, recommendation: "STRONG_NO" }));
+    const outsider = await a.saveScorecardAction({}, card(1, "NO_HIRE", "Not convinced by the design answers at all."));
     check("Someone not on the panel cannot", outsider.ok === false, outsider.message);
     await signInAs("sneha.reddy@acme.test");
-    await a.scorecardAction({}, fd({ interviewId: iv.id, overallScore: 5, recommendation: "STRONG_YES", strengths: "Excellent" }));
+    await a.saveScorecardAction({}, card(5, "MUST_HIRE", "Excellent on incident handling and trade-offs."));
     const after = await prisma.application.findUniqueOrThrow({ where: { id: app.id } });
     check("The average score is 4.5 and the interview is complete",
       Number(after.averageScore) === 4.5 && (await prisma.interview.findUniqueOrThrow({ where: { id: iv.id } })).status === "COMPLETED");

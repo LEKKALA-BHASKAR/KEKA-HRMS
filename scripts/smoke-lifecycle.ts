@@ -174,16 +174,24 @@ async function main() {
     // -----------------------------------------------------------------
     section("Helpdesk");
     await signInAs("meera.krishnan@acme.test");
-    const cat = await prisma.helpdeskCategory.findFirstOrThrow({ where: { tenantId: tenant.id, name: "Payroll & salary" } });
+    // Categories with subcategories take tickets only at the leaf.
+    const parentCat = await prisma.helpdeskCategory.findFirstOrThrow({ where: { tenantId: tenant.id, name: "Payroll & salary", parentId: null } });
+    const cat = await prisma.helpdeskCategory.findFirstOrThrow({ where: { tenantId: tenant.id, name: "Payslip queries", parentId: parentCat.id } });
+    const atParent = await a.raiseTicketAction({}, fd({ categoryId: parentCat.id, subject: "Smoke test ticket", description: "Testing the queue" }));
+    check("A category with subcategories asks for a subcategory", atParent.ok === false && /subcategory/i.test(atParent.message ?? ""), atParent.message);
     const raised = await a.raiseTicketAction({}, fd({ categoryId: cat.id, subject: "Smoke test ticket", description: "Testing the queue", priority: "HIGH" }));
     const tk = await prisma.helpdeskTicket.findFirstOrThrow({ where: { tenantId: tenant.id, subject: "Smoke test ticket" }, orderBy: { createdAt: "desc" } });
     createdTickets.push(tk.id);
     const maxBefore = await prisma.helpdeskTicket.aggregate({ where: { tenantId: tenant.id, id: { not: tk.id } }, _max: { number: true } });
     check("An employee raises a ticket with the next number", raised.ok === true && tk.number === (maxBefore._max.number ?? 1000) + 1, raised.message);
-    check("A high-priority ticket targets 24 hours", Math.abs((tk.dueAt.getTime() - tk.createdAt.getTime()) / 3_600_000 - 24) < 0.1);
+    // Targets now come from the category (first response + resolution hours, in its business hours), not the priority.
+    const due = await svc.helpdeskDueDates(tenant.id, cat.id, tk.createdAt);
+    check("The ticket's targets follow its category's business-hours SLA",
+      Math.abs(tk.dueAt.getTime() - due.dueAt.getTime()) < 1000 && Math.abs((tk.firstResponseDueAt?.getTime() ?? 0) - due.firstResponseDueAt.getTime()) < 1000,
+      `due ${tk.dueAt.toISOString()}`);
     const selfInternal = await a.replyTicketAction({}, fd({ ticketId: tk.id, body: "Adding context", isInternal: true }));
-    const c1 = await prisma.helpdeskComment.findFirst({ where: { ticketId: tk.id }, orderBy: { createdAt: "desc" } });
-    check("An employee's reply is never an internal note", selfInternal.ok === true && c1?.isInternal === false);
+    const c1 = await prisma.helpdeskComment.findFirst({ where: { ticketId: tk.id, isSystem: false }, orderBy: { createdAt: "desc" } });
+    check("An employee's reply is never an internal note", selfInternal.ok === true && c1?.isInternal === false, selfInternal.message);
 
     await signInAs("sneha.reddy@acme.test");
     const nosy = await a.replyTicketAction({}, fd({ ticketId: tk.id, body: "Hi" }));
@@ -197,16 +205,20 @@ async function main() {
     const t2 = await prisma.helpdeskTicket.findUniqueOrThrow({ where: { id: tk.id } });
     check("An agent's public reply records the first response and picks it up", !!t2.firstResponseAt && t2.status === "IN_PROGRESS");
     const resolved = await a.ticketStatusAction({}, fd({ ticketId: tk.id, status: "RESOLVED" }));
-    check("The agent resolves it", resolved.ok === true);
+    const t3 = await prisma.helpdeskTicket.findUniqueOrThrow({ where: { id: tk.id }, include: { closingReason: true } });
+    check("The agent resolves it (closed with the Resolved reason)", resolved.ok === true && t3.status === "CLOSED" && t3.closingReason?.name === "Resolved", resolved.message);
 
     await signInAs("meera.krishnan@acme.test");
-    const notes = await prisma.notification.findMany({ where: { userId: meera.userId!, readAt: null, link: `/helpdesk/${tk.id}` } });
+    const notes = await prisma.notification.findMany({ where: { userId: meera.userId!, readAt: null, link: `/me/helpdesk/${tk.id}` } });
     check("The employee is notified of the reply and the resolution", notes.length >= 2, `${notes.length} notification(s)`);
-    const reopenAsEmp = await a.ticketStatusAction({}, fd({ ticketId: tk.id, status: "WAITING_ON_EMPLOYEE" }));
-    check("An employee can only close or reopen, nothing else", reopenAsEmp.ok === false, reopenAsEmp.message);
+    const holdAsEmp = await a.ticketStatusAction({}, fd({ ticketId: tk.id, status: "WAITING_ON_EMPLOYEE" }));
+    check("An employee can only close or reopen, nothing else", holdAsEmp.ok === false, holdAsEmp.message);
+    const reopen = await a.ticketStatusAction({}, fd({ ticketId: tk.id, status: "OPEN" }));
+    const t4 = await prisma.helpdeskTicket.findUniqueOrThrow({ where: { id: tk.id } });
+    check("The employee can reopen a recently closed ticket", reopen.ok === true && t4.status === "OPEN" && t4.reopenCount === 1, reopen.message);
     const close = await a.ticketStatusAction({}, fd({ ticketId: tk.id, status: "CLOSED" }));
     const rate = await a.rateTicketAction({}, fd({ ticketId: tk.id, rating: 5 }));
-    check("The employee closes and rates it", close.ok === true && rate.ok === true);
+    check("The employee closes and rates it", close.ok === true && rate.ok === true, `${close.message} / ${rate.message}`);
     const after = await a.replyTicketAction({}, fd({ ticketId: tk.id, body: "One more thing" }));
     check("A closed ticket takes no more replies", after.ok === false, after.message);
     await a.markNotificationsReadAction({}, fd({}));
@@ -239,6 +251,9 @@ async function main() {
     await prisma.assetAssignment.updateMany({ where: { id: { in: poojaAssets.map((x) => x.id) } }, data: { returnedOn: null, conditionIn: null } });
     for (const id of [meera.id, pooja.id]) await svc.trueUpExitAccrual(id);
     await prisma.journey.deleteMany({ where: { id: { in: createdJourneys } } });
+    await prisma.notification.deleteMany({ where: { tenantId: tenant.id, kind: { in: ["EXIT", "JOURNEY"] }, createdAt: { gte: ledgerFrom } } });
+    await prisma.emailOutbox.deleteMany({ where: { tenantId: tenant.id, createdAt: { gte: ledgerFrom } } });
+    await prisma.notification.deleteMany({ where: { OR: createdTickets.flatMap((id) => [{ link: `/helpdesk/tickets/${id}` }, { link: `/me/helpdesk/${id}` }]) } });
     await prisma.helpdeskTicket.deleteMany({ where: { id: { in: createdTickets } } });
     const ticketsAfter = await prisma.helpdeskTicket.count({ where: { tenantId: tenant.id } });
     if (ticketsAfter !== ticketsBefore) console.log(`  (warning: ${ticketsAfter - ticketsBefore} ticket(s) left behind)`);

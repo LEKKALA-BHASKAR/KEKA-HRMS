@@ -7,6 +7,7 @@
  */
 import { signInAs, formData as fd, check, section, report } from "./_test-bootstrap";
 import { PrismaClient } from "@prisma/client";
+import { fyStartYear } from "@keka/shared";
 import { NextRequest } from "next/server";
 import { unlink } from "node:fs/promises";
 import path from "node:path";
@@ -46,7 +47,7 @@ async function main() {
   try {
     // -------------------------------------------------------------------------
     section("Component claims");
-    const fy = svc.fyStartYear(today, tenant.fyStartMonth);
+    const fy = fyStartYear(today, tenant.fyStartMonth);
     const before = await svc.componentClaimSummary(meera.id, fy, today);
     const fuel = before.rows.find((r) => r.code === "FUEL_REIMB");
     check("Claimable components are the pay group's flexible-benefit reimbursements", before.rows.length > 0 && !!fuel && before.rows.every((r) => r.typeLabel === "Reimbursement"), before.rows.map((r) => r.code).join(", "));

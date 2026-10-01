@@ -19,12 +19,19 @@ async function main() {
   const eng = await import("../apps/web/src/app/actions/engage");
   const lrn = await import("../apps/web/src/app/actions/learning");
   const car = await import("../apps/web/src/app/actions/career");
-  const tof = await import("../apps/web/src/app/actions/timeoff");
+  const tr = await import("../apps/web/src/app/actions/time-requests");
   const svc = await import("@keka/services");
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { subdomain: "acme" } });
   const emp = (n: string) => prisma.employee.findFirstOrThrow({ where: { tenantId: tenant.id, employeeNumber: n } });
   const meera = await emp("ACM0009"), ramesh = await emp("ACM0002");
   const made = { surveys: [] as string[], courses: [] as string[], logs: [] as string[], compOff: [] as string[], encash: [] as string[], skills: [] as string[] };
+  const started = new Date();
+  const punchedDays: Date[] = [];
+  const runIds = new Set<string>();
+  // Encashment is configured per leave type; the seed leaves EL closed to in-service requests, so open it for the run and put it back after.
+  const compTypeId = (await prisma.leaveType.findFirstOrThrow({ where: { tenantId: tenant.id, category: "COMP_OFF" } })).id;
+  const compBalsBefore = await prisma.leaveBalance.findMany({ where: { employeeId: meera.id, leaveTypeId: compTypeId }, omit: { employeeId: true, leaveTypeId: true, yearStart: true, updatedAt: true } });
+  const elBefore = await prisma.leaveType.findFirstOrThrow({ where: { tenantId: tenant.id, code: "EL" }, select: { id: true, allowEncashmentRequest: true, encashmentMaxDaysPerYear: true } });
 
   console.log("\nEngagement, learning, careers and time off\n" + "=".repeat(72));
   try {
@@ -185,108 +192,165 @@ async function main() {
 
     // -----------------------------------------------------------------------
     section("Comp-off");
+    // Comp-off is now claimed for a date range; the credit is worked out from the processed attendance
+    // (weekly offs and holidays worked, against the shift's full/half-day thresholds) rather than chosen.
     const tz = 330 * 60_000;
     const punch = async (day: Date, inH: number, outH: number) => {
       for (const [h, dir] of [[inH, 0], [outH, 1]] as const) {
         const l = await prisma.attendanceLog.create({ data: { tenantId: tenant.id, employeeId: meera.id, timestamp: new Date(day.getTime() - tz + h * 3_600_000), direction: dir, source: "WEB" } });
         made.logs.push(l.id);
       }
+      punchedDays.push(day);
+      await svc.reprocessRange(meera.id, day, day);
     };
-    const sunday = utc(2026, 9, 27), saturday = utc(2026, 9, 19);
+    const DAY = 86_400_000;
+    const today = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
+    const back = (n: number) => new Date(today.getTime() - n * DAY);
+    const sunday = back(((today.getUTCDay() + 6) % 7) + 1);        // the last Sunday before today
+    const saturday = new Date(sunday.getTime() - 8 * DAY);          // the Saturday of the week before
+    const wednesday = new Date(sunday.getTime() - 4 * DAY);
+    const quietSunday = new Date(sunday.getTime() - 14 * DAY);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const tomorrow = iso(new Date(today.getTime() + DAY));
     await punch(sunday, 9.5, 18);    // 8.5 hours
     await punch(saturday, 10, 14);   // 4 hours
     await signInAs("meera.krishnan@acme.test");
-    const onWeekday = await tof.requestCompOffAction({}, fd({ workedOn: "2026-09-23", days: "1", reason: "x" }));
-    check("A working day cannot be claimed", onWeekday.ok === false && /working day/.test(onWeekday.errors?.workedOn ?? ""), onWeekday.errors?.workedOn);
-    const noPunch = await tof.requestCompOffAction({}, fd({ workedOn: "2026-09-13", days: "1", reason: "x" }));
-    check("An off day with no attendance cannot be claimed", noPunch.ok === false && /No attendance/.test(noPunch.errors?.workedOn ?? ""), noPunch.errors?.workedOn);
-    const shortDay = await tof.requestCompOffAction({}, fd({ workedOn: "2026-09-19", days: "1", reason: "Release" }));
-    check("Four hours is not a full day", shortDay.ok === false && /needs at least/.test(shortDay.errors?.workedOn ?? ""), shortDay.errors?.workedOn);
-    const half = await tof.requestCompOffAction({}, fd({ workedOn: "2026-09-19", days: "0.5", reason: "Release" }));
-    check("…but is a half day", half.ok === true, half.message);
-    const full = await tof.requestCompOffAction({}, fd({ workedOn: "2026-09-27", days: "1", reason: "Payments outage" }));
-    check("A full Sunday is a full day", full.ok === true, full.message);
-    const dup = await tof.requestCompOffAction({}, fd({ workedOn: "2026-09-27", days: "1", reason: "Again" }));
+    const onWeekday = await tr.raiseCompOffAction({}, fd({ fromDate: iso(wednesday), note: "x" }));
+    check("A working day cannot be claimed", onWeekday.ok === false && /weekly off or holiday/.test(onWeekday.message ?? ""), onWeekday.message);
+    const noPunch = await tr.raiseCompOffAction({}, fd({ fromDate: iso(quietSunday), note: "x" }));
+    check("An off day with no attendance cannot be claimed", noPunch.ok === false && /None of these dates/.test(noPunch.message ?? ""), noPunch.message);
+    const future = await tr.raiseCompOffAction({}, fd({ fromDate: tomorrow, note: "x" }));
+    check("A day not yet worked cannot be claimed", future.ok === false && /already worked/.test(future.message ?? ""), future.message);
+    const half = await tr.raiseCompOffAction({}, fd({ fromDate: iso(saturday), note: "Release" }));
+    const satReq0 = await prisma.compOffRequest.findFirst({ where: { employeeId: meera.id, fromDate: saturday, status: "PENDING" } });
+    if (satReq0) made.compOff.push(satReq0.id);
+    check("Four hours on an off day earns a half day, not a full one", half.ok === true && Number(satReq0?.days) === 0.5, half.message);
+    const full = await tr.raiseCompOffAction({}, fd({ fromDate: iso(sunday), note: "Payments outage" }));
+    const sundayReq = await prisma.compOffRequest.findFirstOrThrow({ where: { employeeId: meera.id, fromDate: sunday, status: "PENDING" } });
+    made.compOff.push(sundayReq.id);
+    check("A full Sunday is a full day", full.ok === true && Number(sundayReq.days) === 1, full.message);
+    const dup = await tr.raiseCompOffAction({}, fd({ fromDate: iso(sunday), note: "Again" }));
     check("The same day cannot be claimed twice", dup.ok === false, dup.message);
-    const reqs = await prisma.compOffRequest.findMany({ where: { employeeId: meera.id, workedOn: { in: [sunday, saturday] } } });
-    made.compOff.push(...reqs.map((r) => r.id));
-    const sundayReq = reqs.find((r) => r.workedOn.getTime() === sunday.getTime())!;
-    const satReq = reqs.find((r) => r.workedOn.getTime() === saturday.getTime())!;
 
-    check("She cannot approve her own claim", await denied(() => tof.decideCompOffAction({}, fd({ requestId: sundayReq.id, decision: "approve" }))));
+    await signInAs("ramesh.iyer@acme.test");
+    const notHers = await tr.withdrawTimeRequestAction({}, fd({ entity: "CompOffRequest", requestId: satReq0!.id }));
+    check("Nobody else can withdraw her claim", notHers.ok === false, notHers.message);
+    await signInAs("meera.krishnan@acme.test");
+    const withdrawn = await tr.withdrawTimeRequestAction({}, fd({ entity: "CompOffRequest", requestId: satReq0!.id }));
+    check("She can withdraw her own pending claim", withdrawn.ok === true && (await prisma.compOffRequest.findUniqueOrThrow({ where: { id: satReq0!.id } })).status === "WITHDRAWN", withdrawn.message);
+    const reraised = await tr.raiseCompOffAction({}, fd({ fromDate: iso(saturday), note: "Release" }));
+    const satReq = await prisma.compOffRequest.findFirstOrThrow({ where: { employeeId: meera.id, fromDate: saturday, status: "PENDING" } });
+    made.compOff.push(satReq.id);
+    check("…which frees the day to be claimed again", reraised.ok === true, reraised.message);
+
+    const decide = (requestId: string, decision: string, note?: string) => tr.decideTimeRequestAction({}, fd({ entity: "CompOffRequest", requestId, decision, note }));
+    const own = await decide(sundayReq.id, "approve");
+    check("She cannot approve her own claim", own.ok === false, own.message);
     await signInAs("ramesh.iyer@acme.test");
     // Ramesh approves leave for his own reports, but Meera is not one of them.
-    const outsider = await tof.decideCompOffAction({}, fd({ requestId: sundayReq.id, decision: "approve" }));
-    check("A manager outside her line cannot decide it", outsider.ok === false && /cannot decide/.test(outsider.message ?? ""), outsider.message);
+    const outsider = await decide(sundayReq.id, "approve");
+    check("A manager outside her line cannot decide it", outsider.ok === false && /outside/.test(outsider.message ?? ""), outsider.message);
     await signInAs("manish.tiwari@acme.test");
-    check("Someone with no leave approval at all is refused outright", await denied(() => tof.decideCompOffAction({}, fd({ requestId: sundayReq.id, decision: "approve" }))));
+    const noPerm = await decide(sundayReq.id, "approve");
+    check("Someone with no leave approval at all is refused outright", noPerm.ok === false && /permission/.test(noPerm.message ?? ""), noPerm.message);
     await signInAs("ananya.ghosh@acme.test");
-    const noReason = await tof.decideCompOffAction({}, fd({ requestId: satReq.id, decision: "reject" }));
-    check("Rejecting needs a reason", noReason.ok === false && !!noReason.errors?.note);
-    const rej = await tof.decideCompOffAction({}, fd({ requestId: satReq.id, decision: "reject", note: "Covered by overtime" }));
+    const noReason = await decide(satReq.id, "reject");
+    check("Rejecting needs a reason", noReason.ok === false && !!noReason.errors?.note, noReason.message);
+    const rej = await decide(satReq.id, "reject", "Covered by overtime");
     check("Her manager rejects the half day", rej.ok === true, rej.message);
     const compType = await prisma.leaveType.findFirstOrThrow({ where: { tenantId: tenant.id, category: "COMP_OFF" } });
     const before = await prisma.leaveLedgerEntry.aggregate({ where: { employeeId: meera.id, leaveTypeId: compType.id }, _sum: { days: true } });
-    const app = await tof.decideCompOffAction({}, fd({ requestId: sundayReq.id, decision: "approve" }));
+    const app = await decide(sundayReq.id, "approve");
     const afterSum = await prisma.leaveLedgerEntry.aggregate({ where: { employeeId: meera.id, leaveTypeId: compType.id }, _sum: { days: true } });
     check("…and approves the Sunday, crediting exactly one day", app.ok === true && Number(afterSum._sum.days ?? 0) - Number(before._sum.days ?? 0) === 1, app.message);
-    const again = await tof.decideCompOffAction({}, fd({ requestId: sundayReq.id, decision: "approve" }));
+    const again = await decide(sundayReq.id, "approve");
     check("Approving again changes nothing", again.ok === false && (await prisma.leaveLedgerEntry.count({ where: { periodKey: `COMPOFF:${sundayReq.id}` } })) === 1, again.message);
     const bal = await prisma.leaveBalance.findFirst({ where: { employeeId: meera.id, leaveTypeId: compType.id }, orderBy: { yearStart: "desc" } });
     check("The comp-off balance shows the day", Number(bal?.available ?? 0) >= 1, String(bal?.available));
+    await signInAs("meera.krishnan@acme.test");
+    const lateWithdraw = await tr.withdrawTimeRequestAction({}, fd({ entity: "CompOffRequest", requestId: sundayReq.id }));
+    check("A decided claim can no longer be withdrawn", lateWithdraw.ok === false, lateWithdraw.message);
 
     // -----------------------------------------------------------------------
     section("Leave encashment");
-    const el = await prisma.leaveType.findFirstOrThrow({ where: { tenantId: tenant.id, code: "EL" } });
-    const quote = await svc.encashmentQuote(meera.id, el.id);
+    const el = await prisma.leaveType.update({ where: { id: elBefore.id }, data: { allowEncashmentRequest: true, encashmentMaxDaysPerYear: 10 } });
+    const quoteOf = async (typeId: string) => (await svc.encashableTypes(meera.id)).find((t) => t.leaveTypeId === typeId);
+    const quote = await quoteOf(el.id);
+    const encash = (leaveTypeId: string, days: string | number, note?: string) => tr.raiseEncashmentAction({}, fd({ leaveTypeId, mode: "custom", days, note }));
     await signInAs("meera.krishnan@acme.test");
-    const tooMany = await tof.requestEncashmentAction({}, fd({ leaveTypeId: el.id, days: (quote!.encashable + 1).toString() }));
-    check("More than the free balance is refused", tooMany.ok === false && !!tooMany.errors?.days, tooMany.errors?.days);
+    const tooMany = await encash(el.id, quote!.encashable + 1);
+    check("More than the free balance is refused", (quote?.encashable ?? 0) >= 1 && tooMany.ok === false && /at most/.test(tooMany.message ?? ""), tooMany.message);
     const cl = await prisma.leaveType.findFirstOrThrow({ where: { tenantId: tenant.id, code: "CL" } });
-    const notEnc = await tof.requestEncashmentAction({}, fd({ leaveTypeId: cl.id, days: "1" }));
+    const notEnc = await encash(cl.id, 1);
     check("A non-encashable type is refused", notEnc.ok === false, notEnc.message);
-    const raised = await tof.requestEncashmentAction({}, fd({ leaveTypeId: el.id, days: "1", reason: "Smoke" }));
-    const encReq = await prisma.leaveEncashmentRequest.findFirstOrThrow({ where: { employeeId: meera.id, reason: "Smoke" } });
+    const raised = await encash(el.id, 1, "Smoke");
+    const encReq = await prisma.leaveEncashmentRequest.findFirstOrThrow({ where: { employeeId: meera.id, note: "Smoke" } });
     made.encash.push(encReq.id);
-    check("One day is requested at the quoted rate", raised.ok === true && Number(encReq.perDayRate) === quote!.perDayRate && Number(encReq.amount) === Math.round(quote!.perDayRate), `${raised.message} · ${encReq.amount}`);
-    const held = await svc.encashmentQuote(meera.id, el.id);
-    check("…and that day is held while the request is pending", held!.encashable === quote!.encashable - 1);
+    check("One day is requested at the quoted rate", raised.ok === true && Number(encReq.amount) === Math.round(quote!.ratePerDay), `${raised.message} · ${encReq.amount}`);
+    const held = await quoteOf(el.id);
+    check("…and that day is held while the request is pending", held!.encashable === quote!.encashable - 1, `${quote!.encashable} → ${held!.encashable}`);
 
-    await signInAs("ananya.ghosh@acme.test");
-    check("A line manager cannot approve encashment — it is HR's", await denied(() => tof.decideEncashmentAction({}, fd({ requestId: encReq.id, decision: "approve" }))));
-    const run = await prisma.payrollRun.findFirstOrThrow({ where: { tenantId: tenant.id, status: { in: ["DRAFT", "IN_PROGRESS"] } }, orderBy: [{ year: "desc" }, { month: "desc" }] });
-    const pre = await prisma.payrollRunEmployee.findFirstOrThrow({ where: { runId: run.id, employeeId: meera.id } });
+    const decideEnc = (decision: string) => tr.decideTimeRequestAction({}, fd({ entity: "LeaveEncashmentRequest", requestId: encReq.id, decision }));
+    await signInAs("ramesh.iyer@acme.test");
+    const strangerEnc = await decideEnc("approve");
+    check("A manager outside her line cannot approve her encashment", strangerEnc.ok === false && /outside/.test(strangerEnc.message ?? ""), strangerEnc.message);
+    // Approved encashment is paid in the next payroll month (svc.nextPayrollMonth: the earliest open regular run
+    // from this month on, else the month after the last finalised one, never before this month).
+    const { year, month } = await svc.nextPayrollMonth(tenant.id);
+    const run = await prisma.payrollRun.findFirst({ where: { tenantId: tenant.id, type: "REGULAR", year, month, status: { notIn: ["FINALIZED", "ROLLED_BACK"] } } });
+    if (run) { runIds.add(run.id); await svc.calculateRun(run.id); }
+    const pre = run ? await prisma.payrollRunEmployee.findFirst({ where: { runId: run.id, employeeId: meera.id } }) : null;
     await signInAs("priya.sharma@acme.test");
-    const approved = await tof.decideEncashmentAction({}, fd({ requestId: encReq.id, decision: "approve" }));
-    const post = await prisma.payrollRunEmployee.findFirstOrThrow({ where: { runId: run.id, employeeId: meera.id } });
+    const approved = await decideEnc("approve");
     const encDone = await prisma.leaveEncashmentRequest.findUniqueOrThrow({ where: { id: encReq.id } });
-    check("HR approves; the amount lands in the open run as a taxable payment", approved.ok === true && encDone.runId === run.id && Math.round(Number(post.grossEarnings) - Number(pre.grossEarnings)) === Math.round(Number(encReq.amount)),
-      `${approved.message} · gross ${pre.grossEarnings} → ${post.grossEarnings}`);
-    check("…TDS rises because it is taxable", Number(post.totalDeductions) >= Number(pre.totalDeductions));
+    const pay = await prisma.adhocTransaction.findFirst({ where: { sourceType: "LeaveEncashmentRequest", sourceId: encReq.id } });
+    check("HR approves; a taxable payment is raised for the next payroll month",
+      approved.ok === true && encDone.status === "APPROVED" && !!pay && pay.id === encDone.adhocTransactionId && pay.taxTreatment === "TAXABLE"
+        && pay.year === year && pay.month === month && Math.round(Number(pay.amount)) === Math.round(Number(encDone.amount)),
+      `${approved.message}`);
+    check("…never into a payroll month already finalised",
+      (await prisma.payrollRun.count({ where: { tenantId: tenant.id, year, month, status: "FINALIZED" } })) === 0, `${month}/${year}`);
+    if (run && pre) {
+      await svc.calculateRun(run.id);
+      const post = await prisma.payrollRunEmployee.findFirstOrThrow({ where: { runId: run.id, employeeId: meera.id } });
+      check("…which that month's open run picks up in gross pay", Math.round(Number(post.grossEarnings) - Number(pre.grossEarnings)) === Math.round(Number(encDone.amount)),
+        `gross ${pre.grossEarnings} → ${post.grossEarnings}, amount ${encDone.amount}`);
+      check("…TDS rises because it is taxable", Number(post.totalDeductions) >= Number(pre.totalDeductions));
+    } else {
+      console.log(`  (no open run for ${month}/${year} yet — the payment waits for it, so the gross/TDS checks are skipped)`);
+    }
     check("…and the day leaves the balance through the ledger", (await prisma.leaveLedgerEntry.findFirst({ where: { periodKey: `ENCASH:${encReq.id}` } }))?.days.toNumber() === -1);
-    const twiceEnc = await tof.decideEncashmentAction({}, fd({ requestId: encReq.id, decision: "approve" }));
-    check("It cannot be paid twice", twiceEnc.ok === false && (await prisma.adhocTransaction.count({ where: { sourceType: "LeaveEncashment", sourceId: encReq.id } })) === 1);
+    const twiceEnc = await decideEnc("approve");
+    check("It cannot be paid twice", twiceEnc.ok === false && (await prisma.adhocTransaction.count({ where: { sourceType: "LeaveEncashmentRequest", sourceId: encReq.id } })) === 1, twiceEnc.message);
   } finally {
     // ---- Clean up, so the suite can run again ----
-    const encs = await prisma.leaveEncashmentRequest.findMany({ where: { id: { in: made.encash } } });
-    const runIds = new Set<string>();
-    for (const e of encs) {
-      if (e.runId) runIds.add(e.runId);
-      await prisma.adhocTransaction.deleteMany({ where: { sourceType: "LeaveEncashment", sourceId: e.id } });
-      await prisma.leaveLedgerEntry.deleteMany({ where: { periodKey: `ENCASH:${e.id}` } });
+    for (const id of made.encash) {
+      await prisma.adhocTransaction.deleteMany({ where: { sourceType: "LeaveEncashmentRequest", sourceId: id } });
+      await prisma.leaveLedgerEntry.deleteMany({ where: { periodKey: `ENCASH:${id}` } });
     }
     await prisma.leaveEncashmentRequest.deleteMany({ where: { id: { in: made.encash } } });
+    await prisma.leaveType.update({ where: { id: elBefore.id }, data: { allowEncashmentRequest: elBefore.allowEncashmentRequest, encashmentMaxDaysPerYear: elBefore.encashmentMaxDaysPerYear } });
     for (const id of made.compOff) await prisma.leaveLedgerEntry.deleteMany({ where: { periodKey: `COMPOFF:${id}` } });
     await prisma.compOffRequest.deleteMany({ where: { id: { in: made.compOff } } });
     await prisma.attendanceLog.deleteMany({ where: { id: { in: made.logs } } });
+    for (const d of punchedDays) await svc.reprocessRange(meera.id, d, d);
     await prisma.employeeSkill.deleteMany({ where: { id: { in: made.skills } } });
     await prisma.course.deleteMany({ where: { id: { in: made.courses } } });
     await prisma.survey.deleteMany({ where: { id: { in: made.surveys } } });
-    await prisma.notification.deleteMany({ where: { tenantId: tenant.id, OR: [{ title: { contains: "Smoke" } }, { link: { in: made.courses.map((c) => `/learn/courses/${c}`) } }] } });
+    await prisma.notification.deleteMany({ where: { tenantId: tenant.id, OR: [
+      { title: { contains: "Smoke" } },
+      { link: { in: made.courses.map((c) => `/learn/courses/${c}`) } },
+      { kind: "LEAVE", createdAt: { gte: started } },
+      { kind: "PERFORMANCE", createdAt: { gte: started }, link: { startsWith: "/performance/careers" } },
+    ] } });
     // Rebuild the balances and the run the suite touched.
-    const types = await prisma.leaveType.findMany({ where: { tenantId: tenant.id, code: { in: ["EL", "COMP"] } } });
-    const bals = await prisma.leaveBalance.findMany({ where: { employeeId: meera.id, leaveTypeId: { in: types.map((t) => t.id) } } });
-    for (const b of bals) await svc.recomputeBalance(meera.id, b.leaveTypeId, b.yearStart);
+    // Comp-off: put the balance rows back as they were. Recomputing an empty ledger would "adopt" the
+    // stale row as an opening balance, so restore the snapshot instead.
+    await prisma.leaveBalance.deleteMany({ where: { employeeId: meera.id, leaveTypeId: compTypeId, id: { notIn: compBalsBefore.map((b) => b.id) } } });
+    for (const { id, ...rest } of compBalsBefore) await prisma.leaveBalance.update({ where: { id }, data: rest });
+    await prisma.leaveLedgerEntry.deleteMany({ where: { employeeId: meera.id, leaveTypeId: compTypeId, periodKey: { startsWith: "ADOPTED-" }, createdAt: { gte: started } } });
+    const elBals = await prisma.leaveBalance.findMany({ where: { employeeId: meera.id, leaveTypeId: elBefore.id } });
+    for (const b of elBals) await svc.recomputeBalance(meera.id, b.leaveTypeId, b.yearStart);
     for (const r of runIds) await svc.calculateRun(r);
   }
   report("Engagement, learning, careers and time off");
