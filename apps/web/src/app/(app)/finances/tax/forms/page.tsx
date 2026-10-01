@@ -41,7 +41,7 @@ export default async function TaxFormsPage({ searchParams }: { searchParams: Pro
     ...Array.from({ length: Math.max(0, currentFy - Math.max(joinedFy, currentFy - 5)) }, (_, i) => currentFy - 1 - i),
     ...fileByFy.keys(),
   ])].sort((a, b) => b - a);
-  if (f16Years.length === 0) f16Years.push(currentFy - 1);
+  if (f16Years.length === 0) f16Years.push(currentFy);
   const f16 = f16Years.includes(Number(sp.f16)) ? Number(sp.f16) : f16Years[0];
   const f16File = fileByFy.get(f16) ?? null;
 

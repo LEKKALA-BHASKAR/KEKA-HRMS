@@ -130,10 +130,9 @@ export const IconEyeOff = (p: P) => (
 export const IconTrophy = (p: P) => (
   <svg {...base(p)}><path d="M7 4h10v5a5 5 0 0 1-10 0z" /><path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4" /><path d="M12 14v3M8 21h8M9.5 21l.5-4h4l.5 4" /></svg>
 );
-<<<<<<< HEAD
 export const IconBook = (p: P) => (
   <svg {...base(p)}><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z" /><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5" /><path d="M8.5 7.5h7M8.5 11h5" /></svg>
-=======
+);
 export const IconAlarm = (p: P) => (
   <svg {...base(p)}><circle cx="12" cy="13" r="7.5" /><path d="M12 9.5V13l2.5 1.8" /><path d="M4.5 4.5 7 2.5M19.5 4.5 17 2.5" /><path d="M6.5 19.5 5 21M17.5 19.5 19 21" /></svg>
 );
@@ -187,5 +186,4 @@ export const IconListBullets = (p: P) => (
 );
 export const IconDocumentText = (p: P) => (
   <svg {...base(p)}><path d="M6 3h8l4 4v14H6z" /><path d="M14 3v4h4" /><path d="M9 12h6M9 15.5h6M9 9h2" /></svg>
->>>>>>> 87aca56 (Add comprehensive test suites for various service modules)
 );

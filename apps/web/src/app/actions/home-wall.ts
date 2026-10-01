@@ -145,7 +145,7 @@ export async function createPollAction(_prev: ActionState, formData: FormData): 
   const parsed = parseForm(pollSchema, formData);
   if (parsed.state) return parsed.state;
   const values = { question: parsed.data.question, expiresOn: parsed.data.expiresOn, audience: parsed.data.audience };
-  const opts = validatePollOptions(formList(formData, "option").length ? formData.getAll("option").map(String) : []);
+  const opts = validatePollOptions(formData.getAll("option").map(String));
   if (!opts.ok) return { ok: false, message: opts.error, errors: { option: opts.error }, values };
 
   const today = istToday();

@@ -50,7 +50,7 @@ export async function acknowledgeAnnouncement(formData: FormData): Promise<void>
     update: { acknowledgedAt: new Date() },
   });
 
-  safeRevalidate("/announcements");
+  safeRevalidate("/announcements", "/", `/announcements/${announcementId}`);
 }
 
 /** Records a view without acknowledging, so read stats are honest. */
@@ -130,15 +130,26 @@ export async function givePraise(formData: FormData): Promise<void> {
   });
   if (!target) throw new Error("Employee not found");
 
-  await prisma.praise.create({
-    data: {
-      tenantId: viewer.tenantId,
-      fromEmployeeId: viewer.employee.id,
-      toEmployeeId, badge, message, isPublic: true,
-    },
+  // Praise lives on Keka Wall: one PRAISE post carries it, with the
+  // tenant's badge row linked when the name matches one.
+  const badgeRef = badge
+    ? await prisma.praiseBadge.findFirst({ where: { tenantId: viewer.tenantId, name: badge }, select: { id: true } })
+    : null;
+  const employeeId = viewer.employee.id;
+  await prisma.$transaction(async (tx) => {
+    const post = await tx.wallPost.create({
+      data: { tenantId: viewer.tenantId, kind: "PRAISE", authorId: employeeId, body: message },
+    });
+    await tx.praise.create({
+      data: {
+        tenantId: viewer.tenantId,
+        fromEmployeeId: employeeId,
+        toEmployeeId, badge, badgeId: badgeRef?.id ?? null, message, isPublic: true, wallPostId: post.id,
+      },
+    });
   });
 
-  safeRevalidate("/awards");
+  safeRevalidate("/awards", "/", "/wall");
 }
 
 export async function grantAward(formData: FormData): Promise<void> {
