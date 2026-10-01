@@ -288,6 +288,7 @@ export async function savePtRegistration(_prev: ActionState, formData: FormData)
       where: { id: { in: locationIds }, tenantId: viewer.tenantId },
       select: { id: true, name: true, stateCode: true },
     });
+    if (locs.length !== new Set(locationIds).size) return { ok: false, message: "A selected location was not found." };
     const wrong = locs.filter((l) => l.stateCode !== d.stateCode);
     if (wrong.length > 0) {
       return {
@@ -375,6 +376,7 @@ export async function saveLwfRegistration(_prev: ActionState, formData: FormData
       where: { id: { in: locationIds }, tenantId: viewer.tenantId },
       select: { name: true, stateCode: true },
     });
+    if (locs.length !== new Set(locationIds).size) return { ok: false, message: "A selected location was not found." };
     const wrong = locs.filter((l) => l.stateCode !== d.stateCode);
     if (wrong.length > 0) {
       return {
@@ -804,6 +806,9 @@ export async function saveStructureLine(_prev: ActionState, formData: FormData):
     select: { id: true, name: true },
   });
   if (!structure) return { ok: false, message: "Structure not found" };
+  if (!(await prisma.salaryComponent.count({ where: { id: d.componentId, tenantId: viewer.tenantId } }))) {
+    return { ok: false, message: "Component not found", errors: { componentId: "Not found" } };
+  }
 
   // Per-type field requirements.
   if (d.calculationType === "FORMULA") {
@@ -871,9 +876,10 @@ export async function removeStructureLine(_prev: ActionState, formData: FormData
     where: { structureId, componentId: { not: componentId }, formula: { not: null } },
     include: { component: { select: { code: true } } },
   });
-  const removing = await prisma.salaryComponent.findUniqueOrThrow({
-    where: { id: componentId }, select: { code: true },
+  const removing = await prisma.salaryComponent.findFirst({
+    where: { id: componentId, tenantId: viewer.tenantId }, select: { code: true },
   });
+  if (!removing) return { ok: false, message: "Component not found" };
   const referencing = dependents.filter((d) =>
     new RegExp(`\\[\\s*${removing.code}(_ANNUAL)?\\s*\\]`, "i").test(d.formula ?? ""));
   if (referencing.length > 0) {

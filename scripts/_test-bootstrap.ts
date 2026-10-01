@@ -8,57 +8,51 @@
  * read, implicit-role derivation and permission assembly. That makes these
  * tests exercise real authorization instead of bypassing it.
  */
-import path from "node:path";
-import Module from "node:module";
-import { config as loadEnv } from "dotenv";
+import { interceptModule } from "./_runtime";
+// next.config.ts turns on authInterrupts at build time; outside a build, set
+// the flag it compiles to so forbidden() throws its real 403 interrupt.
+process.env.__NEXT_EXPERIMENTAL_AUTH_INTERRUPTS = "true";
 
-loadEnv({ path: path.resolve(__dirname, "../.env") });
 
-const WEB_SRC = path.resolve(__dirname, "../apps/web/src");
-
-/** The session cookie value the stubbed jar hands back. */
-let currentToken: string | null = null;
+/** Cookies the stubbed jar holds; the session lives under keka_session. */
+const jar = new Map<string, string>();
+let requestHeaders = new Headers();
 
 export function setTestSession(token: string | null): void {
-  currentToken = token;
+  if (token) jar.set("keka_session", token); else jar.delete("keka_session");
+}
+
+/** Headers the next server action sees — e.g. a client IP for rate limiting. */
+export function setTestHeaders(h: Record<string, string>): void {
+  requestHeaders = new Headers(h);
+}
+
+/** Read back a cookie the code under test set. */
+export function testCookie(name: string): string | undefined {
+  return jar.get(name);
 }
 
 const cookieJar = {
   get(name: string) {
-    if (name === "keka_session" && currentToken) return { name, value: currentToken };
-    return undefined;
+    const value = jar.get(name);
+    return value === undefined ? undefined : { name, value };
   },
-  set() { /* the action layer never needs to read this back in a test */ },
-  delete() { currentToken = null; },
-  getAll() { return currentToken ? [{ name: "keka_session", value: currentToken }] : []; },
-  has(name: string) { return name === "keka_session" && !!currentToken; },
+  // Accepts set(name, value, opts) and set({ name, value, ... }), as Next does.
+  set(a: string | { name: string; value: string }, b?: string) {
+    if (typeof a === "string") jar.set(a, b ?? ""); else jar.set(a.name, a.value);
+  },
+  delete(a: string | { name: string }) { jar.delete(typeof a === "string" ? a : a.name); },
+  getAll() { return [...jar.entries()].map(([name, value]) => ({ name, value })); },
+  has(name: string) { return jar.has(name); },
 };
 
 const headersStub = {
   cookies: async () => cookieJar,
-  headers: async () => new Headers(),
+  headers: async () => requestHeaders,
   draftMode: async () => ({ isEnabled: false }),
 };
 
-type Loader = (request: string, parent: unknown, isMain: boolean) => unknown;
-const internal = Module as unknown as { _load: Loader };
-const original = internal._load;
-
-internal._load = function patched(request: string, parent: unknown, isMain: boolean) {
-  // `server-only` throws when Node resolves it: outside a bundler there is no
-  // react-server condition to select the empty variant. Correct for the app,
-  // wrong for a test runner.
-  if (request === "server-only" || request === "client-only") return {};
-
-  if (request === "next/headers") return headersStub;
-
-  // The web app uses the "@/*" alias, which only a bundler resolves.
-  if (request.startsWith("@/")) {
-    return original.call(this, path.join(WEB_SRC, request.slice(2)), parent, isMain);
-  }
-
-  return original.call(this, request, parent, isMain);
-} as Loader;
+interceptModule((request) => (request === "next/headers" ? headersStub : undefined));
 
 /** Mint a session for a seeded user and install it as the current session. */
 export async function signInAs(email: string): Promise<{ userId: string; tenantId: string }> {
@@ -72,7 +66,7 @@ export async function signInAs(email: string): Promise<{ userId: string; tenantI
     if (!secret) throw new Error("AUTH_SECRET is not set");
 
     const token = await new SignJWT({
-      userId: user.id, tenantId: user.tenantId, email: user.email,
+      userId: user.id, tenantId: user.tenantId, email: user.email, sv: user.sessionVersion,
     })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()

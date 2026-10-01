@@ -1,0 +1,169 @@
+/* Public profile: a blue banner, then directory facts. Light palette below the banner. */
+
+.banner {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  color: #fff;
+  background: var(--k-top, #1a65c7);
+  min-height: 176px;
+}
+.pattern { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+.bannerInner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  padding: 30px 32px;
+  min-height: 176px;
+}
+.bigAvatar { box-shadow: 0 0 0 4px rgba(255, 255, 255, .92), 0 8px 24px rgba(8, 26, 54, .28) !important; }
+
+.identity { flex: 1; min-width: 0; }
+.name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: #fff;
+}
+.youTag {
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 15px;
+  color: rgba(255, 255, 255, .9);
+}
+.dot { opacity: .7; }
+.email {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 5px 12px 5px 10px;
+  border-radius: 16px;
+  background: rgba(8, 26, 54, .22);
+  color: #fff;
+  font-size: 13.5px;
+  max-width: 100%;
+}
+.email span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.email:hover { background: rgba(8, 26, 54, .36); text-decoration: underline; }
+.email:focus-visible, .primaryAction:focus-visible, .secondaryAction:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+.actions { display: flex; flex-direction: column; align-items: stretch; gap: 8px; flex-shrink: 0; }
+.primaryAction, .secondaryAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.primaryAction { background: #fff; color: var(--brand-700); }
+.primaryAction:hover { background: var(--brand-50); }
+.secondaryAction { border: 1px solid rgba(255, 255, 255, .55); color: #fff; }
+.secondaryAction:hover { background: rgba(255, 255, 255, .12); }
+
+/* --- Body -------------------------------------------------------------- */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 20px;
+  margin-top: 20px;
+  align-items: start;
+}
+.main, .side { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+
+.about { font-size: 14.5px; line-height: 1.65; color: var(--text); white-space: pre-line; overflow-wrap: anywhere; }
+.muted { font-size: 14px; color: var(--text-muted); }
+.mutedInline { color: var(--text-muted); }
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px 24px;
+}
+.fields > * { min-width: 0; overflow-wrap: anywhere; }
+.fields a { color: var(--brand-700); }
+.fields a:hover { text-decoration: underline; }
+
+.count {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 7px;
+  border-radius: 10px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  vertical-align: 2px;
+}
+
+.people { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.person {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 -8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  color: var(--text);
+}
+.person:hover { background: var(--surface-hover); }
+.person:hover .personName { color: var(--brand-700); }
+.personText { display: flex; flex-direction: column; min-width: 0; }
+.personName { font-size: 14px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.personTitle { font-size: 12.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.praiseList { list-style: none; margin: 0; padding: 0; }
+.praise { display: flex; gap: 12px; padding: 14px 0; border-top: 1px solid var(--border); }
+.praise:first-child { border-top: 0; padding-top: 2px; }
+.praiseBody { flex: 1; min-width: 0; }
+.praiseHead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.praiseFrom { font-size: 14px; font-weight: 600; color: var(--text); }
+a.praiseFrom:hover { color: var(--brand-700); text-decoration: underline; }
+.badge {
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: #fff4dc;
+  color: #8a5a00;
+  border: 1px solid #f3dca6;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.praiseDate { margin-left: auto; font-size: 12px; color: var(--text-subtle); white-space: nowrap; }
+.praiseMessage { margin-top: 4px; font-size: 13.5px; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }
+.praiseMore { margin-top: 8px; font-size: 12.5px; color: var(--text-subtle); }
+.emptyPraise { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 14px; }
+.emptyPraise svg { width: 22px; height: 22px; color: var(--border-strong); }
+
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .bannerInner { flex-direction: column; align-items: flex-start; gap: 16px; padding: 24px 20px; }
+  .actions { flex-direction: row; flex-wrap: wrap; }
+  .name { font-size: 22px; }
+  .fields { grid-template-columns: minmax(0, 1fr); }
+}

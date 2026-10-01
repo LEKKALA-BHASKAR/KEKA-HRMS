@@ -3,6 +3,7 @@
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { requireAuth } from "@/lib/context";
+import { foreignReference } from "@/lib/ownership";
 import {
   z, parseForm, toErrorState, writeAudit, actionDone,
   zName, zOptional, zNumber, zDate, zBool, zId, zOptionalId, zEmail, zPan, zIfsc,
@@ -207,6 +208,8 @@ export async function saveBusinessUnit(_prev: ActionState, formData: FormData): 
   const parsed = parseForm(businessUnitSchema, formData);
   if (parsed.state) return parsed.state;
   const { id, ...data } = parsed.data;
+  const foreign = await foreignReference(viewer.tenantId, { legalEntity: data.legalEntityId, employee: data.headId });
+  if (foreign) return { ok: false, message: foreign };
 
   try {
     if (id) {
@@ -273,6 +276,8 @@ export async function saveDepartment(_prev: ActionState, formData: FormData): Pr
   const parsed = parseForm(departmentSchema, formData);
   if (parsed.state) return parsed.state;
   const { id, ...data } = parsed.data;
+  const foreign = await foreignReference(viewer.tenantId, { businessUnit: data.businessUnitId, employee: data.headId });
+  if (foreign) return { ok: false, message: foreign };
 
   try {
     if (id) {
@@ -506,6 +511,8 @@ export async function saveJobTitle(_prev: ActionState, formData: FormData): Prom
   const parsed = parseForm(jobTitleSchema, formData);
   if (parsed.state) return parsed.state;
   const { id, ...data } = parsed.data;
+  const foreign = await foreignReference(viewer.tenantId, { band: data.bandId });
+  if (foreign) return { ok: false, message: foreign };
   try {
     if (id) {
       const u = await prisma.jobTitle.updateMany({ where: { id, tenantId: viewer.tenantId }, data });

@@ -1,5 +1,7 @@
 import "server-only";
+import { safeNext } from "./safe-next";
 import { cache } from "react";
+import { headers } from "next/headers";
 import { redirect, forbidden } from "next/navigation";
 import { prisma } from "@keka/db";
 import {
@@ -21,6 +23,7 @@ export interface Viewer extends ViewerContext {
     id: string;
     email: string;
     loginDisabled: boolean;
+    mustChangePassword: boolean;
   };
   employee: {
     id: string;
@@ -100,6 +103,9 @@ export const getViewer = cache(async (): Promise<Viewer | null> => {
   if (!user || user.tenantId !== session.tenantId) return null;
   // A disabled login takes effect immediately, with no grace period.
   if (user.loginDisabled || user.isDeactivated) return null;
+  // "Sign out everywhere" and password changes bump the version; older
+  // sessions stop working on their next request.
+  if ((session.sv ?? 0) !== user.sessionVersion) return null;
 
   const grants: RoleGrant[] = user.roleAssignments.map((a) => ({
     roleId: a.roleId,
@@ -165,7 +171,7 @@ export const getViewer = cache(async (): Promise<Viewer | null> => {
 
   return {
     ...base,
-    user: { id: user.id, email: user.email, loginDisabled: user.loginDisabled },
+    user: { id: user.id, email: user.email, loginDisabled: user.loginDisabled, mustChangePassword: user.mustChangePassword },
     employee: user.employee
       ? {
           id: user.employee.id,
@@ -197,7 +203,11 @@ export const getViewer = cache(async (): Promise<Viewer | null> => {
 /** Redirects to sign-in when there is no valid session. */
 export async function requireViewer(): Promise<Viewer> {
   const viewer = await getViewer();
-  if (!viewer) redirect("/signin");
+  if (!viewer) {
+    // Come back here after signing in (the middleware supplies the path).
+    const back = safeNext((await headers()).get("x-pathname"));
+    redirect(back && back !== "/" ? `/signin?next=${encodeURIComponent(back)}` : "/signin");
+  }
   return viewer;
 }
 

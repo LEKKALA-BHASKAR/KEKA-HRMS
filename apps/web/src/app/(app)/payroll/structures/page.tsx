@@ -3,6 +3,11 @@ import { PERMISSIONS } from "@keka/rbac";
 import { resolveStructure, validateFormula } from "@keka/payroll";
 import { requireAuth } from "@/lib/context";
 import { PageHead, Card, Badge, Money, Empty, Callout } from "@/components/ui";
+import { Disclosure } from "@/app/(app)/org/forms";
+import {
+  ComponentForm, DeleteComponentButton, StructureForm, StructureLineForm,
+  RemoveLineButton, CloneStructureButton, DeleteStructureButton,
+} from "../_forms/config";
 
 const P = PERMISSIONS;
 
@@ -12,7 +17,7 @@ const PREVIEW_CTCS = [300000, 800000, 1500000, 3000000];
 export default async function StructuresPage() {
   const viewer = await requireAuth(P.SALARY_STRUCTURE_MANAGE);
 
-  const [structures, components] = await Promise.all([
+  const [structures, components, payGroups] = await Promise.all([
     prisma.salaryStructure.findMany({
       where: { payGroup: { tenantId: viewer.tenantId } },
       include: {
@@ -29,7 +34,16 @@ export default async function StructuresPage() {
       where: { tenantId: viewer.tenantId },
       orderBy: { displayOrder: "asc" },
     }),
+    prisma.payGroup.findMany({
+      where: { tenantId: viewer.tenantId, isActive: true },
+      select: { id: true, name: true }, orderBy: { name: "asc" },
+    }),
   ]);
+  // Components that can be placed in a structure. Statutory deductions are
+  // computed by the engine, not placed on a structure.
+  const placeable = components
+    .filter((c) => c.isActive && !["PF_EMPLOYEE", "ESI_EMPLOYEE", "PT", "LWF_EMPLOYEE", "TDS", "VPF"].includes(c.code))
+    .map((c) => ({ value: c.id, label: `${c.code} — ${c.name}` }));
 
   return (
     <>
@@ -49,6 +63,19 @@ export default async function StructuresPage() {
       </Callout>
 
       <div style={{ height: 16 }} />
+
+      <div className="grid grid-2" style={{ alignItems: "start", marginBottom: 16 }}>
+        <Card title="Create a structure" description="Then add its component lines below.">
+          <Disclosure label="+ New structure">
+            <StructureForm payGroups={payGroups.map((g) => ({ value: g.id, label: g.name }))} />
+          </Disclosure>
+        </Card>
+        <Card title="Create a component" description="Added to the global repository and every pay group.">
+          <Disclosure label="+ New component">
+            <ComponentForm />
+          </Disclosure>
+        </Card>
+      </div>
 
       <div className="stack gap-4">
         {structures.map((s) => {
@@ -97,7 +124,9 @@ export default async function StructuresPage() {
                 <div className="row gap-2">
                   {s.isDefault ? <Badge tone="brand">Default</Badge> : null}
                   {s.isPartOfFbp ? <Badge tone="info">FBP</Badge> : null}
+                  {!s.isActive ? <Badge tone="neutral">inactive</Badge> : null}
                   <Badge tone="neutral">TDS {s.tdsMethod.toLowerCase()}</Badge>
+                  <DeleteStructureButton id={s.id} name={s.name} />
                 </div>
               }
               tight
@@ -112,6 +141,7 @@ export default async function StructuresPage() {
                       <th>Calculation</th>
                       <th>Flags</th>
                       <th className="num">Preview at ₹{(previewCtc / 100000).toFixed(1)}L</th>
+                      <th />
                     </tr>
                   </thead>
                   <tbody>
@@ -152,11 +182,14 @@ export default async function StructuresPage() {
                           <td className="num strong">
                             <Money value={r?.monthly.toNumber() ?? 0} />
                           </td>
+                          <td className="right">
+                            <RemoveLineButton structureId={s.id} componentId={sc.componentId} />
+                          </td>
                         </tr>
                       );
                     })}
                     <tr className="total-row">
-                      <td colSpan={5}>
+                      <td colSpan={6}>
                         Monthly cost to company at ₹{(previewCtc / 100000).toFixed(1)}L
                       </td>
                       <td className="num">
@@ -164,12 +197,15 @@ export default async function StructuresPage() {
                       </td>
                     </tr>
                     <tr className="subtotal">
-                      <td colSpan={5}>Of which gross earnings (what reaches the payslip)</td>
+                      <td colSpan={6}>Of which gross earnings (what reaches the payslip)</td>
                       <td className="num"><Money value={resolved.monthlyGross.toNumber()} /></td>
                     </tr>
                   </tbody>
                 </table>
               </div>
+
+              <StructureLineForm structureId={s.id} components={placeable} />
+              <CloneStructureButton id={s.id} />
 
               {resolved.warnings.length > 0 ? (
                 <div style={{ padding: 14 }}>
@@ -194,7 +230,7 @@ export default async function StructuresPage() {
               <thead>
                 <tr>
                   <th>Code</th><th>Name</th><th>Type</th><th>Tax treatment</th>
-                  <th>Recurring</th><th>Section</th><th className="num">Annual exempt limit</th>
+                  <th>Recurring</th><th>Section</th><th className="num">Annual exempt limit</th><th />
                 </tr>
               </thead>
               <tbody>
@@ -220,6 +256,9 @@ export default async function StructuresPage() {
                       {c.annualExemptLimit
                         ? <Money value={c.annualExemptLimit} />
                         : <span className="subtle">—</span>}
+                    </td>
+                    <td className="right">
+                      {!c.isSystem ? <DeleteComponentButton id={c.id} code={c.code} /> : null}
                     </td>
                   </tr>
                 ))}

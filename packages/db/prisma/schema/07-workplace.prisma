@@ -21,6 +21,7 @@ enum AnnouncementStatus {
 model Announcement {
   id            String             @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   title         String
   body          String
@@ -78,6 +79,7 @@ enum AwardCadence {
 model AwardType {
   id          String       @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name        String
   description String?
@@ -102,6 +104,7 @@ model AwardType {
 model EmployeeAward {
   id          String    @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   awardTypeId String
   awardType   AwardType @relation(fields: [awardTypeId], references: [id], onDelete: Cascade)
   employeeId  String
@@ -131,6 +134,7 @@ model EmployeeAward {
 model Praise {
   id          String   @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   fromEmployeeId String
   fromEmployee   Employee @relation("PraiseGiven", fields: [fromEmployeeId], references: [id], onDelete: Cascade)
   toEmployeeId   String
@@ -174,6 +178,7 @@ enum AssetCondition {
 model AssetCategory {
   id          String   @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name        String
   description String?
   /// Straight-line depreciation over this many months. Null means none.
@@ -212,6 +217,7 @@ model AssetType {
 model AssetIdSeries {
   id          String   @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name        String
   prefix      String   @default("AST")
   digits      Int      @default(5)
@@ -230,6 +236,7 @@ model AssetIdSeries {
 model Asset {
   id             String         @id @default(cuid())
   tenantId       String
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   assetTypeId    String
   assetType      AssetType      @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
 
@@ -303,6 +310,7 @@ enum AssetRequestStatus {
 model AssetRequest {
   id          String             @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId  String
   employee    Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   /// Set once a specific asset is allocated against the request.
@@ -339,6 +347,7 @@ enum DocumentScope {
 model DocumentFolder {
   id             String        @id @default(cuid())
   tenantId       String
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name           String
   description    String?
   scope          DocumentScope @default(EMPLOYEE)
@@ -396,6 +405,7 @@ enum EmployeeDocumentStatus {
 model EmployeeDocument {
   id          String                 @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId  String
   employee    Employee               @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   folderId    String?
@@ -431,6 +441,7 @@ model EmployeeDocument {
 model OrgDocument {
   id          String          @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   folderId    String?
   folder      DocumentFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
 
@@ -468,6 +479,7 @@ model OrgDocumentAck {
 model DocumentTemplate {
   id            String   @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name          String
   /// OFFER | CONFIRMATION | RELIEVING | APPOINTMENT | EXPERIENCE | WARNING | CUSTOM
@@ -528,6 +540,7 @@ enum ContractStatus {
 model EmployeeContract {
   id          String         @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId  String
   employee    Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
@@ -579,6 +592,7 @@ enum HrActivityType {
 model HrActivity {
   id          String         @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId  String
   employee    Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
@@ -631,6 +645,7 @@ enum EnrolmentStatus {
 model TrainingType {
   id          String   @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name        String
   description String?
   /// INTERNAL | EXTERNAL | ONLINE | CERTIFICATION
@@ -648,6 +663,7 @@ model TrainingType {
 model TrainingProgram {
   id             String         @id @default(cuid())
   tenantId       String
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   trainingTypeId String
   trainingType   TrainingType   @relation(fields: [trainingTypeId], references: [id], onDelete: Cascade)
 
@@ -711,6 +727,7 @@ enum MeetingStatus {
 model MeetingRoom {
   id          String   @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name        String
   locationId  String?
   capacity    Int?
@@ -729,6 +746,7 @@ model MeetingRoom {
 model Meeting {
   id          String        @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   roomId      String?
   room        MeetingRoom?  @relation(fields: [roomId], references: [id], onDelete: SetNull)
 

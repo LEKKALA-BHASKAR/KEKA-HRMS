@@ -11,6 +11,16 @@ import { SYSTEM_ROLES } from "../../../rbac/src/roles";
 import { seedReferenceData } from "./reference";
 import { SALARY_COMPONENTS, SALARY_STRUCTURES } from "./components";
 import { seedWorkplace } from "./workplace";
+import { seedTime } from "./time";
+import { seedLifecycle } from "./lifecycle";
+import { seedPayrollHistory } from "./payroll-history";
+import { seedPerformance } from "./performance";
+import { seedHiring } from "./hiring";
+import { seedExpenses } from "./expenses";
+import { seedProjects } from "./projects";
+import { seedSelfService } from "./self-service";
+import { seedToday } from "./today";
+import { seedAccountingOpening, seedAccountingActivity } from "./accounting";
 
 const prisma = new PrismaClient();
 
@@ -89,7 +99,7 @@ async function main() {
         create: [
           "payroll.run.view", "payroll.register.view", "payroll.payslip.view_all",
           "employee.financials.view", "admin.report.view", "admin.audit.view",
-          "payroll.accounting.manage",
+          "payroll.accounting.manage", "accounting.ledger.view", "accounting.account.view", "accounting.report.view",
         ].map((permission) => ({ permission })),
       },
     },
@@ -682,18 +692,8 @@ async function main() {
     await prisma.leavePlanAssignment.create({
       data: { planId: leavePlan.id, employeeId: emp.id, effectiveFrom: emp.doj > yearStart ? emp.doj : yearStart },
     });
-    for (const [j, lt] of leaveTypes.entries()) {
-      if (lt.quota === 0) continue;
-      // Accrue to the current month of the FY.
-      const accrued = lt.accrual === "MONTHLY" ? Math.round((lt.quota / 12) * 6 * 100) / 100 : lt.quota;
-      const used = j < 3 ? Math.round(Math.random() * accrued * 0.4 * 2) / 2 : 0;
-      await prisma.leaveBalance.create({
-        data: {
-          employeeId: emp.id, leaveTypeId: leaveTypeIds[j], yearStart,
-          accrued, used, available: Math.max(0, accrued - used),
-        },
-      });
-    }
+    // Balances are not written here. The real accrual job credits them later
+    // in the seed, so every balance is backed by ledger entries.
   }
 
   const calendar = await prisma.holidayCalendar.create({
@@ -767,7 +767,9 @@ async function main() {
       principal: 240000, interestType: "NONE", interestRate: 0,
       installments: 24, emiAmount: 10000,
       status: "ACTIVE", approvedAt: utc(2026, 3, 20), disbursedAt: utc(2026, 4, 1),
-      startYear: 2026, startMonth: 4, outstanding: 210000, totalRepaid: 30000,
+      // Nothing repaid yet: the finalised payroll months deduct the EMIs, so
+      // the loan, the payslips and the ledger all tell the same story.
+      startYear: 2026, startMonth: 4, outstanding: 240000, totalRepaid: 0,
       purpose: "Home renovation",
     },
   });
@@ -779,7 +781,7 @@ async function main() {
         year: 2026 + Math.floor(m0 / 12), month: (m0 % 12) + 1,
         principalPart: 10000, interestPart: 0, totalAmount: 10000,
         balanceAfter: 240000 - n * 10000,
-        status: n <= 3 ? "DEDUCTED" : "SCHEDULED",
+        status: "SCHEDULED",
       },
     });
   }
@@ -830,6 +832,48 @@ async function main() {
   log("HR activities", `${wp.activities} timeline events`);
   log("Training", `${wp.trainingPrograms} programmes with enrolments`);
   log("Meetings", `${wp.meetings} across ${wp.rooms} rooms, with minutes and action items`);
+
+  const tm = await seedTime(prisma, {
+    tenantId: tenant.id, employees: created, empIdByNumber,
+  });
+  log("Time policies", `${tm.shifts} shifts, ${tm.weeklyOffPolicies} weekly-off patterns, ${tm.attendancePolicies} attendance policies`);
+  log("Leave accrual", `${tm.accrualCredits} ledger credits (${tm.accruedDays} days) across Apr–Sep via the accrual job`);
+  log("Leave requests", `${tm.leaveApproved} approved, ${tm.leavePending} pending — raised through the real service`);
+  log("Attendance", `${tm.punches} punches, ${tm.attendanceDays} days processed, ${tm.lopDays} LOP days`);
+
+  const lc = await seedLifecycle(prisma, {
+    tenantId: tenant.id, empIdByNumber,
+    departmentIdByName: new Map((await prisma.department.findMany({ where: { tenantId: tenant.id } })).map((d) => [d.name, d.id])),
+  });
+  log("Journeys", `${lc.templates} templates, ${lc.journeys} journeys started from joining, promotion and exit events`);
+  log("Exits", `3 at different stages; F&F ${lc.fnfMessage}`);
+  log("Helpdesk", `${lc.categories} categories, ${lc.tickets} tickets across every status`);
+
+  const finance = await prisma.user.findFirstOrThrow({ where: { tenantId: tenant.id, email: "ramesh.iyer@acme.test" } });
+  await seedAccountingOpening(prisma, { tenantId: tenant.id, byUserId: finance.id });
+  const ph = await seedPayrollHistory(prisma, { tenantId: tenant.id });
+  log("Payroll history", `${ph.finalised} months finalised (Apr–Aug), ${ph.payslips} payslips released; September open`);
+
+  const pf = await seedPerformance(prisma, { tenantId: tenant.id, empIdByNumber });
+  log("Performance", `${pf.goals} goals with ${pf.checkIns} check-ins; ${pf.reviewsLastYear} reviews shared last year, ${pf.reviewsMidYear} mid-year in progress`);
+
+  const hr = await seedHiring(prisma, { tenantId: tenant.id, empIdByNumber });
+  log("Hiring", `${hr.candidates} candidates across the pipeline, ${hr.interviews} interviews; one offer accepted, ready to hire`);
+
+  const ex = await seedExpenses(prisma, { tenantId: tenant.id, empIdByNumber });
+  log("Expenses & travel", `${ex.categories} categories, ${ex.claims} claims at every stage, an advance part-settled, 3 trips`);
+
+  const pj = await seedProjects(prisma, { tenantId: tenant.id, empIdByNumber });
+  log("Projects & time", `${pj.clients} clients, ${pj.projects} projects (T&M, milestone, retainer, internal), ${pj.timesheets} timesheets, ${pj.invoices} invoices (${pj.overdue} overdue)`);
+
+  const ss = await seedSelfService(prisma, { tenantId: tenant.id });
+  log("Self-service", `${ss.about} profiles introduced, ${ss.praise} praises and ${ss.feedback} feedback notes, ${ss.declarations} tax declarations`);
+
+  const ac = await seedAccountingActivity(prisma, { tenantId: tenant.id, byUserId: finance.id });
+  log("General ledger", `${ac.entries} ledger entries: opening, ${ac.paid} payroll accruals and payments, ${ac.remitted} statutory remittances, invoices and receipts; Apr–Jun closed; trial balance ₹${ac.total.toLocaleString("en-IN")} each side`);
+
+  const td = await seedToday(prisma, { tenantId: tenant.id });
+  log("Today", td.skipped ? "outside the demo year — left as seeded" : `attendance brought up to ${td.today}: ${td.punches} punches, ${td.days} days processed; leave, WFH, on-duty and a birthday today`);
 
   // ---------------------------------------------------------------------
   //  Summary

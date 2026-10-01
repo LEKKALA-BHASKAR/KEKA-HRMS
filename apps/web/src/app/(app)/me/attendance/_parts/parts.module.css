@@ -1,0 +1,135 @@
+/* Shared pieces for the employee Attendance and Leave screens. Light palette
+   only: surfaces and text come from the design tokens; status hues are light
+   tints of Keka's chip colours. */
+
+/* --- Modal ---------------------------------------------------------------- */
+.modal {
+  padding: 0; margin: auto; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg);
+  max-height: calc(100vh - 48px); overflow: hidden; color-scheme: light;
+}
+.modal::backdrop { background: rgba(16, 19, 26, .42); }
+.modalInner { display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
+.modalHead {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding: 18px 22px 14px; border-bottom: 1px solid var(--border);
+}
+.modalTitle { font-size: 17px; font-weight: 550; letter-spacing: -0.01em; }
+.modalSub { font-size: 13px; color: var(--text-muted); margin-top: 3px; }
+.modalClose {
+  border: 0; background: none; color: var(--text-subtle); padding: 4px; border-radius: 6px;
+  cursor: pointer; display: inline-grid; flex-shrink: 0;
+}
+.modalClose:hover { background: var(--surface-hover); color: var(--text); }
+.modalBody { padding: 18px 22px 22px; overflow-y: auto; }
+
+/* --- Popover menus -------------------------------------------------------- */
+.iconBtn {
+  border: 0; background: none; color: var(--text-subtle); padding: 3px; border-radius: 6px;
+  cursor: pointer; display: inline-grid; place-items: center;
+}
+.iconBtn:hover, .iconBtn[aria-expanded="true"] { background: var(--surface-hover); color: var(--text); }
+.popover {
+  position: fixed; z-index: 80; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-lg);
+  padding: 6px; font-size: 13px; text-align: left; line-height: 1.45;
+}
+.menuLabel {
+  font-size: 10.5px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--text-subtle); padding: 7px 10px 4px;
+}
+.menuItem { display: block; width: 100%; padding: 7px 10px; border-radius: 6px; color: var(--text); }
+.menuItem:hover, .menuItem:focus-visible { background: var(--brand-50); color: var(--brand-700); }
+.menuText { padding: 4px 10px 6px; color: var(--text-muted); font-size: 12.5px; }
+.menuDivider { height: 1px; background: var(--border); margin: 5px 4px; }
+.punchList { list-style: none; margin: 0; padding: 2px 10px 6px; display: grid; gap: 5px; }
+.punchList li { display: grid; grid-template-columns: 34px 1fr auto; gap: 8px; align-items: center; font-size: 12.5px; }
+.punchDir { font-size: 10px; font-weight: 700; letter-spacing: .05em; border-radius: 3px; text-align: center; padding: 1px 0; }
+.punchIn { background: #e3f3d4; color: #3f6e12; }
+.punchOut { background: #fde4e4; color: #a12b2b; }
+
+/* --- (i) tooltips --------------------------------------------------------- */
+.infoTip { position: relative; display: inline-grid; color: var(--text-subtle); cursor: help; border-radius: 50%; }
+.infoTip:hover, .infoTip:focus-visible { color: var(--text); }
+.infoTip::after {
+  content: attr(data-tip); position: absolute; right: -6px; top: calc(100% + 8px); z-index: 50;
+  width: 250px; padding: 9px 11px; border-radius: 6px; box-shadow: var(--shadow);
+  background: var(--text); color: var(--surface);
+  font-size: 12px; line-height: 1.45; font-weight: 400; letter-spacing: 0; text-transform: none; white-space: normal; text-align: left;
+  opacity: 0; pointer-events: none; transition: opacity .12s;
+}
+.infoTip:hover::after, .infoTip:focus-visible::after { opacity: 1; }
+
+/* --- 24-hour switch ------------------------------------------------------- */
+.switchRow {
+  display: inline-flex; align-items: center; gap: 9px; border: 0; background: none; padding: 2px;
+  font: inherit; font-size: 13.5px; color: var(--text); cursor: pointer; border-radius: 6px;
+}
+.switch {
+  position: relative; width: 34px; height: 20px; border-radius: 10px; flex-shrink: 0;
+  background: var(--border-strong); transition: background .15s;
+}
+.switchOn { background: var(--brand-600); }
+.switchKnob {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--surface); box-shadow: 0 1px 2px rgba(16, 19, 26, .25); transition: transform .15s;
+}
+.switchOn .switchKnob { transform: translateX(14px); }
+
+/* --- Attendance visual ---------------------------------------------------- */
+.visual { position: relative; height: 26px; width: 100%; max-width: 230px; margin: 0 auto; }
+.visualTicks {
+  position: absolute; left: 0; right: 0; top: 4px; height: 13px;
+  background-image: linear-gradient(to right, var(--border-strong) 1px, transparent 1px);
+  background-repeat: repeat-x;
+}
+.visualSeg { position: absolute; top: 5px; height: 11px; min-width: 3px; border-radius: 3px; background: #2aa5bd; }
+.visualOpen { background: repeating-linear-gradient(45deg, #2aa5bd 0 4px, #8fd3e0 4px 8px); }
+.visualMark {
+  position: absolute; bottom: 0; width: 0; height: 0; transform: translateX(-50%);
+  border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid #2aa5bd;
+}
+
+/* --- Live clock and today's progress ------------------------------------- */
+.clockWrap { min-width: 0; }
+.clockFace {
+  display: inline-flex; align-items: baseline; gap: 5px; padding: 8px 14px;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2);
+}
+.clockTime { font-size: 23px; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.clockAmPm { font-size: 12px; color: var(--text-muted); font-weight: 600; min-width: 18px; }
+.clockDate { font-size: 13px; color: var(--text-muted); margin-top: 8px; }
+.clockForm { margin-top: 14px; }
+.clockBtn {
+  width: 100%; max-width: 200px; padding: 8px 14px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--brand-600); background: var(--brand-600); color: #fff; font: inherit; font-size: 13.5px; font-weight: 600;
+}
+.clockBtn:hover:not(:disabled) { background: var(--brand-700); border-color: var(--brand-700); }
+.clockBtn:disabled { opacity: .6; cursor: progress; }
+.clockBtnOut { background: var(--surface); color: var(--danger); border-color: var(--danger); }
+.clockBtnOut:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); }
+.clockMeta { font-size: 12px; color: var(--text-muted); margin-top: 7px; }
+
+.progress { height: 10px; border-radius: 5px; background: #d9eff4; overflow: hidden; }
+.progressFill { height: 100%; border-radius: 5px; background: #2aa5bd; transition: width .4s ease; }
+
+/* --- Attendance stats ----------------------------------------------------- */
+.statTop { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.periodSelect { position: relative; display: inline-flex; align-items: center; color: var(--text); }
+.periodSelect select {
+  appearance: none; -webkit-appearance: none; border: 0; background: transparent; cursor: pointer;
+  font: inherit; font-size: 13.5px; color: var(--text); padding: 3px 20px 3px 0; border-radius: 4px;
+}
+.periodSelect svg { position: absolute; right: 2px; pointer-events: none; color: var(--text-muted); }
+.statRow { display: grid; grid-template-columns: minmax(100px, 1.15fr) 1fr 1fr; align-items: end; gap: 10px; padding: 7px 0; }
+.statWho { display: flex; align-items: center; gap: 10px; font-size: 14px; padding-bottom: 4px; min-width: 0; }
+.statWho span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.statCell { min-width: 0; }
+.statHead { font-size: 10.5px; font-weight: 600; letter-spacing: .06em; color: var(--text-subtle); margin-bottom: 4px; white-space: nowrap; }
+.statVal { font-size: 20px; font-weight: 450; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.statDivider { height: 1px; background: var(--border); margin: 4px 0 2px; }
+.teamIcon {
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+  display: inline-grid; place-items: center; background: var(--brand-100); color: var(--brand-700);
+}
+.statNote { font-size: 12px; color: var(--text-subtle); margin-top: 2px; }

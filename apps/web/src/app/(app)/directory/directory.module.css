@@ -1,0 +1,262 @@
+/* Org → Employees → Employee Directory. Light palette; tokens from globals.css. */
+
+.title {
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  margin: 2px 0 18px;
+  color: var(--text);
+}
+
+/* --- Filter bar ------------------------------------------------------- */
+
+.filterPanel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.dropdowns {
+  display: flex;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.dropdown {
+  position: relative;
+  flex: 0 0 180px;
+  height: 54px;
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.dropdown:hover { background: var(--surface-hover); }
+.dropdown:focus-within { box-shadow: inset 0 0 0 2px var(--brand-500); z-index: 1; }
+
+.dropdown select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0 34px 0 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13.5px;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dropdown select:focus { outline: none; }
+
+.dropdownSet { color: var(--text); }
+.dropdownSet select { padding-top: 15px; }
+
+.dropdownCaption {
+  position: absolute;
+  top: 9px;
+  left: 14px;
+  right: 34px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 1;
+}
+
+.dropdownChevron {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  margin-top: -8px;
+  width: 16px;
+  height: 16px;
+  color: var(--text-subtle);
+  pointer-events: none;
+}
+
+.dropdownFiller { flex: 1; }
+
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 50px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.searchRow:focus-within { box-shadow: inset 0 -2px 0 var(--brand-500); }
+.searchIcon { width: 17px; height: 17px; color: var(--text-subtle); flex-shrink: 0; }
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+.searchInput::placeholder { color: var(--text-subtle); }
+.searching { font-size: 12px; color: var(--text-subtle); white-space: nowrap; }
+
+.clear {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.clear:hover { background: var(--surface-hover); color: var(--brand-700); }
+.clearIdle { color: var(--border-strong); }
+.clearIdle:hover { background: none; color: var(--border-strong); }
+
+.showing {
+  padding: 14px;
+  text-align: right;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+/* --- Cards ------------------------------------------------------------ */
+
+.grid {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.card {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  min-width: 0;
+  padding: 16px 18px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  transition: border-color .12s, box-shadow .12s;
+}
+.card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+
+.avatarLink { flex-shrink: 0; border-radius: 50%; display: block; }
+
+.cardBody { flex: 1; min-width: 0; padding-top: 4px; }
+
+.nameRow { display: flex; align-items: flex-start; gap: 8px; }
+.name {
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.name:hover { color: var(--brand-700); text-decoration: underline; }
+
+.jobTitle {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.facts { margin: 12px 0 0; }
+.fact {
+  display: flex;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 22px;
+}
+.fact dt { flex-shrink: 0; color: var(--text-subtle); margin-right: 4px; }
+.fact dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The "···" button and its menu. */
+.menuWrap { position: relative; flex-shrink: 0; margin-top: 2px; }
+.menuBtn {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.menuBtn:hover, .menuBtn[aria-expanded="true"] { color: var(--brand-700); border-color: var(--brand-400); background: var(--brand-50); }
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-lg);
+}
+.menuItem {
+  display: block;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.menuItem:hover, .menuItem:focus-visible { background: var(--surface-hover); outline: none; color: var(--brand-700); }
+.menuItemDisabled, .menuItemDisabled:hover { color: var(--text-subtle); cursor: not-allowed; background: none; }
+
+.emptyWrap {
+  margin-top: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.emptyWrap a { color: var(--brand-700); font-weight: 550; }
+.emptyWrap a:hover { text-decoration: underline; }
+
+.more { display: flex; justify-content: center; margin-top: 22px; }
+
+@media (max-width: 1180px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 960px) {
+  .dropdown { flex: 1 1 33%; border-bottom: 1px solid var(--border); }
+  .dropdowns { border-bottom: 0; }
+  .dropdownFiller { display: none; }
+}
+@media (max-width: 720px) {
+  .grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .dropdown { flex-basis: 50%; }
+  .card { gap: 14px; padding: 14px; }
+}

@@ -113,7 +113,7 @@ export function actionDone(paths: string[], message: string): ActionState {
 export async function writeAudit(
   viewer: Viewer,
   opts: {
-    module: "EMPLOYEE" | "PAYROLL" | "LEAVE" | "ATTENDANCE" | "ROLE" | "AUTH" | "FINANCE";
+    module: "EMPLOYEE" | "PAYROLL" | "LEAVE" | "ATTENDANCE" | "ROLE" | "AUTH" | "FINANCE" | "REPORT" | "LIFECYCLE" | "HELPDESK" | "SYSTEM";
     action: "CREATE" | "UPDATE" | "DELETE" | "APPROVE" | "REJECT" | "LOCK" | "UNLOCK" | "EXPORT";
     entityType: string;
     entityId?: string | null;

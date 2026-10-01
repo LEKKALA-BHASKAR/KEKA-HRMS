@@ -86,3 +86,47 @@ export const IconHeadset = (p: P) => (
 export const IconBox = (p: P) => (
   <svg {...base(p)}><path d="m12 2.5 8.5 4.7v9.6L12 21.5l-8.5-4.7V7.2z" /><path d="M3.5 7.2 12 12l8.5-4.8M12 12v9.5" /></svg>
 );
+
+// --- Rail icons -------------------------------------------------------------
+export const IconUser = (p: P) => (
+  <svg {...base(p)}><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+);
+export const IconTeam = (p: P) => (
+  <svg {...base(p)}><circle cx="12" cy="7.5" r="2.6" /><circle cx="5.5" cy="9.5" r="2.1" /><circle cx="18.5" cy="9.5" r="2.1" /><path d="M7.5 19a4.5 4.5 0 0 1 9 0" /><path d="M2 18.5a3.6 3.6 0 0 1 5.4-3.1" /><path d="M22 18.5a3.6 3.6 0 0 0-5.4-3.1" /></svg>
+);
+export const IconDollarCircle = (p: P) => (
+  <svg {...base(p)}><circle cx="12" cy="12" r="9" /><path d="M15 8.8c-.6-.9-1.7-1.4-3-1.4-1.7 0-3 .9-3 2.2 0 3.1 6 1.6 6 4.7 0 1.3-1.3 2.3-3 2.3-1.4 0-2.6-.6-3.2-1.6" /><path d="M12 5.5v1.9M12 16.6v1.9" /></svg>
+);
+export const IconOrg = (p: P) => (
+  <svg {...base(p)}><rect x="4" y="3" width="16" height="18" rx="1.5" /><path d="M8 7h2M14 7h2M8 11h2M14 11h2M8 15h2M14 15h2" /><path d="M10 21v-3h4v3" /></svg>
+);
+export const IconEngage = (p: P) => (
+  <svg {...base(p)}><path d="M14.5 9.5a5.5 5.5 0 1 0-10.2 2.9L3.5 15l2.8-.8A5.5 5.5 0 0 0 14.5 9.5Z" /><path d="M9.6 15.8A5.5 5.5 0 0 0 19.7 18l2.8.8-.8-2.6a5.5 5.5 0 0 0-5.2-8" /><circle cx="15.5" cy="15.5" r="1.4" /></svg>
+);
+export const IconTarget = (p: P) => (
+  <svg {...base(p)}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.2" /></svg>
+);
+export const IconBell = (p: P) => (
+  <svg {...base(p)}><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>
+);
+export const IconMenu = (p: P) => (
+  <svg {...base(p)}><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+);
+export const IconLedger = (p: P) => (
+  <svg {...base(p)}><path d="M5 3h11l3 3v15H5z" /><path d="M9 8h6M9 12h6M9 16h4" /></svg>
+);
+export const IconUserPlus = (p: P) => (
+  <svg {...base(p)}><circle cx="10" cy="8" r="4" /><path d="M2.5 21a7.5 7.5 0 0 1 15 0" /><path d="M19 7v6M16 10h6" /></svg>
+);
+export const IconTimer = (p: P) => (
+  <svg {...base(p)}><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5" /><path d="M9.5 2.5h5" /></svg>
+);
+export const IconEye = (p: P) => (
+  <svg {...base(p)}><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg>
+);
+export const IconEyeOff = (p: P) => (
+  <svg {...base(p)}><path d="M3 3l18 18" /><path d="M10.6 5.1A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.3 6.3A17.2 17.2 0 0 0 2 12s3.6 7 10 7a10 10 0 0 0 4.6-1.1" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></svg>
+);
+export const IconTrophy = (p: P) => (
+  <svg {...base(p)}><path d="M7 4h10v5a5 5 0 0 1-10 0z" /><path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4" /><path d="M12 14v3M8 21h8M9.5 21l.5-4h4l.5 4" /></svg>
+);

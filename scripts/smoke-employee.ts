@@ -18,6 +18,17 @@ async function main() {
   const { createRun, calculateRun } = await import("@keka/services");
 
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { subdomain: "acme" } });
+
+  // A run that died before its cleanup leaves its employee behind; clear it so
+  // one failure cannot cascade into the next run.
+  const leftovers = await prisma.employee.findMany({
+    where: { tenantId: tenant.id, workEmail: "aarti.menon@acme.test" }, select: { id: true, userId: true },
+  });
+  for (const l of leftovers) {
+    await prisma.employee.delete({ where: { id: l.id } });
+    if (l.userId) await prisma.user.delete({ where: { id: l.userId } });
+  }
+  await prisma.user.deleteMany({ where: { tenantId: tenant.id, email: "aarti.menon@acme.test" } });
   const entity = await prisma.legalEntity.findFirstOrThrow({ where: { tenantId: tenant.id } });
   const location = await prisma.location.findFirstOrThrow({
     where: { tenantId: tenant.id, stateCode: "KA" },
@@ -242,14 +253,16 @@ async function main() {
 
   // Arrears only arise when a revision pre-dates a FINALISED run, so stand one
   // up here rather than depending on whatever earlier scripts happened to leave.
-  const arrearRunId = await createRun({
-    tenantId: tenant.id, payGroupId: payGroup.id, year: 2026, month: 7,
+  // Use the seeded finalised July if it exists; never touch a run we did not make.
+  const seededJuly = await prisma.payrollRun.findFirst({
+    where: { payGroupId: payGroup.id, year: 2026, month: 7, status: "FINALIZED", rolledBackAt: null },
   });
-  await calculateRun(arrearRunId);
-  await prisma.payrollRun.update({
-    where: { id: arrearRunId },
-    data: { status: "FINALIZED", finalizedAt: new Date() },
-  });
+  let arrearRunId: string | null = null;
+  if (!seededJuly) {
+    arrearRunId = await createRun({ tenantId: tenant.id, payGroupId: payGroup.id, year: 2026, month: 7 });
+    await calculateRun(arrearRunId);
+    await prisma.payrollRun.update({ where: { id: arrearRunId }, data: { status: "FINALIZED", finalizedAt: new Date() } });
+  }
 
   const existing = await prisma.employee.findFirstOrThrow({
     where: { tenantId: tenant.id, employeeNumber: "ACM0010" },
@@ -322,7 +335,7 @@ async function main() {
 
   // -----------------------------------------------------------------
   //  Clean up so repeat runs stay deterministic.
-  await prisma.payrollRun.deleteMany({ where: { id: { in: [runId, arrearRunId] } } });
+  await prisma.payrollRun.deleteMany({ where: { id: { in: [runId, ...(arrearRunId ? [arrearRunId] : [])] } } });
   await prisma.arrear.deleteMany({ where: { employeeId: existing.id, source: "BACKDATED_REVISION" } });
   await prisma.salaryRevision.deleteMany({
     where: { employeeId: existing.id, reason: "Back-dated correction" },

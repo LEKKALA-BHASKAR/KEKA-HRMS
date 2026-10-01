@@ -8,13 +8,17 @@ research in `02-corehr-payroll.md` and `Keka-Platform-Teardown.pdf`.
 ```bash
 createdb keka_dev          # Postgres 14+ on localhost:5432
 npm install
-npm run db:migrate         # creates 97 tables
-npm run db:seed            # one tenant, 30 employees, full payroll config
+npm run db:migrate         # creates 191 tables
+npm run db:seed            # one tenant, 30 employees, Apr–Aug payroll finalised, Sep open
 npm run dev                # http://localhost:3100
+npm run test:all           # 275 unit tests + 17 integration suites (558 checks) against the seeded DB
 ```
 
-Sign in at `/signin`. Every seeded account uses the password `Keka@2026`, and the
-sign-in screen lists them as one-click buttons.
+After any migration, restart `npm run dev`: the generated Prisma client is a cached
+module for the life of the process, so new tables are invisible until it restarts.
+
+Sign in at `/signin` (email first, then password). Every seeded account uses the password
+`Keka@2026`; the sign-in screen lists them under "Demo accounts".
 
 | Account | Role | What it demonstrates |
 |---|---|---|
@@ -30,10 +34,12 @@ sign-in screen lists them as one-click buttons.
 
 ```
 packages/shared      Decimal money, Indian FY dates — no float arithmetic anywhere
-packages/db          Prisma multi-file schema (97 tables) + seed
-packages/rbac        91 permissions, 11 built-in roles, 3 implicit roles, scope resolution
-packages/payroll     Pure engine: formulas, structures, PF/ESI/PT/LWF/TDS/gratuity
-packages/services    DB-aware orchestration — the payroll run
+packages/db          Prisma multi-file schema (191 tables, every tenant table cascades) + seed
+packages/rbac        124 permissions, 11 built-in roles, 3 implicit roles, scope resolution
+packages/payroll     Pure engine: formulas, structures, PF/ESI/PT/LWF/TDS/gratuity, loan schedules
+packages/time        Pure engine: calendars, leave counting and sandwich rule, accrual, attendance
+packages/documents   Pure: dependency-free PDF writer (with encryption), payslips, Form 16, letters, statutory files
+packages/services    DB-aware orchestration — payroll, time, lifecycle, loans, talent, expenses, projects, ledger
 apps/web             Next.js 15 App Router, server components, server actions
 ```
 
@@ -74,9 +80,16 @@ payslip release, and rollback that un-consumes every input and archives journal 
 | **Gratuity** | 5-year eligibility, Act-covered (15 days ÷ 26) vs not-covered (÷ 30), part-year over six months rounds up, ₹20L exemption ceiling |
 
 ### Verification
-- **102 unit tests**, all passing — `npm test`
+- **275 unit tests**, all passing — `npm test` (payroll, time, RBAC, documents and the pure
+  parts of services, no database)
+- **17 integration suites, 558 checks** — `npm run test:smoke` — drive the real server actions
+  through the genuine session → viewer → permission chain, clean up after themselves, and pass
+  when run twice in a row: seams, master data, employee lifecycle, payroll config, leave &
+  attendance (engine and actions), exits/journeys/helpdesk, loans, authentication, statutory
+  filings, performance, hiring, expenses, projects, accounting, self-service, and tenant isolation
 - **Production build passes** with full TypeScript checking, no `ignoreBuildErrors`
-- **168 route/persona combinations** return only 200 or 403, never a 500
+- **479 page/persona combinations** (every page, and every detail page with a real record, for
+  up to seven personas) return only 200, 403, 404 or a deliberate redirect — never a 500
 - **A real 28-employee payroll run** reconciles: gross − deductions = net, exactly
 
 ## Three bugs worth recording
@@ -116,11 +129,8 @@ these modules have working screens:
 | **Training** | Types by mode, programmes with seats/cost/trainer, bulk enrolment with seat-limit enforcement, self-service progress, mandatory-compliance completion tracking with an outstanding list |
 | **Meetings** | Rooms with facilities and capacity, invitations with accept/decline/tentative, minutes, action items with owners and overdue flagging |
 
-Schema also in place, screens still to come: recruitment/ATS (requisition → job → candidate
-→ stages → interviews → scorecards → offer), performance (indicators, goals with alignment
-and roll-up, review cycles, calibration bands, PIP, skills matrix), projects (clients,
-tasks, milestones, rate cards with bill-vs-cost margin, timesheets, invoices), and a
-double-entry accounting ledger with expense claims, cash advances and travel requests.
+Recruitment, performance, projects and accounting, which the schema covered from the start,
+now have working screens too — see Phase 4.
 
 ### The seams that matter
 
@@ -137,6 +147,74 @@ Modules that cannot reach payroll are decorative. Two are wired and tested end t
 `scripts/smoke-seams.ts` verifies both, plus whole-run reconciliation afterwards and that
 a rollback releases everything the modules injected. **15 checks, all passing.**
 
+## Phase 3 — operations, lifecycle, security
+
+| Area | What works end to end |
+|---|---|
+| Leave | Apply with a live count (weekends, holidays, sandwich rule), approve/reject in scope, cancel with ledger reversal, accrual job (idempotent, slices sum exactly to the quota), year-end, plans, holiday calendars, team calendar |
+| Attendance | Web clock-in with IP allow-list, processing against shifts and policies, late/missing-punch penalties, regularisation/adjustment/WFH requests, monthly register; unpaid leave is charged once, through leave |
+| Journeys | Templates per trigger (joining, confirmation, promotion, transfer, exit) started automatically by the event; tasks owned by HR, manager, employee, IT or finance; system-verified tasks close themselves |
+| Exits | Resignation and HR-recorded exits, approval, notice shortfall, exit checklist, accrual true-up to the last day, full and final (encashment, gratuity, notice, loans, assets, marginal TDS), finalisation revokes access |
+| Helpdesk | Categories with SLA targets, per-tenant ticket numbers, internal notes, status flow, satisfaction |
+| Loans | Eligibility against policy, schedules (flat, reducing, interest-free) that repay exactly, skip, foreclose, balances kept in step with payroll |
+| Reports | Eleven reports, each scoped by its own permission, with CSV export (formula-injection safe, audited) |
+| "Why?" | Pay and payroll changes attributed to revision, LOP, one-offs, joiners/leavers and each deduction — the causes add up exactly |
+| Home | Today strip for everyone; ranked attention lists for managers and HR |
+| Security | Password policy and history, lockout counted per address (no account enumeration), per-IP rate limiting, email two-factor, sign out everywhere, forced and emailed resets, sign-in log |
+
+| Documents & filings | Payslips and Form 16 as PDFs (encrypted with the PAN, verified against pypdf), letters, uploads checked by content not name; PF ECR, ESI, bank advice and the 24Q annexure generated from the run and reconciled to it |
+
+## Phase 4 — talent, money and the books
+
+| Module | What works end to end |
+|---|---|
+| Performance | Goals cascading company → department → person with roll-up, weighted check-ins, review cycles (self, manager, peers), calibration against a target distribution, PIPs |
+| Hiring | Requisition approval → job → pipeline stages → interviews and scorecards → offer with approval → hire, which creates the employee and starts the department's onboarding journey |
+| Expenses & travel | Claims checked against policy as they are typed (caps, receipts, 60-day rule), manager then finance approval above a limit, paid with the next salary; cash advances settled by claims or recovered through payroll; travel desk |
+| Projects & time | Clients with GST place of supply; time-and-material, milestone, retainer and internal projects; allocations capped at 100% across projects; weekly timesheets against allocations only, approved by the line or the project manager; health from burn versus calendar |
+| Billing | Approved billable hours (or completed milestones, or the retainer) become an invoice at each person's rate, CGST+SGST, IGST or zero-rated by place of supply, sent as a PDF, part-paid, overdue |
+| Accounting | Chart of accounts, sequential journal, account ledgers, trial balance, P&L and balance sheet; payroll months, salary payments, F&F settlements, staff loans, advances, invoices and receipts **post themselves**, exactly once; mistakes are reversed, never deleted; months close |
+| Tenant isolation | A Global Admin attempts 46 writes and 3 reads against a rival tenant's records — every one refused and the rival untouched — then the rival is deleted, leaving nothing in any of 95 tenant tables |
+
+The ledger is checked against the modules it summarises: staff loans in the books equal the
+loans module, receivables equal open invoices, employee advances equal open advances, and
+every stored balance equals the sum of its lines. Building it is also how a seed bug surfaced:
+three loan instalments were marked deducted that no payslip had ever deducted.
+
+## Phase 5 — the Keka interface
+
+The app now looks and is organised like Keka's own employee experience, rebuilt from
+screenshots of a live Keka tenant on our light palette.
+
+**The shell.** A blue top bar (company name, search with ⌘K, notifications, account menu)
+and a dark icon rail: **Home, Me, Inbox, My Team, My Finances, Org, Engage**, then — below a
+divider, only for roles that need them — **People, Hire, Performance, Projects, Payroll,
+Finance, Admin**. Each section has a tab bar, and pages add a second row of sub-tabs. The
+whole navigation is one permission-driven model (`lib/nav.ts`); every route belongs to exactly
+one section for a given person, so the right rail item and tab light up for any URL.
+
+| Section | Screens |
+|---|---|
+| Home | Dashboard (time today with web clock-in, on leave today, leave balance rings, holidays, inbox, praise, announcements, birthdays · anniversaries · new joinees) and Welcome (profile completeness, "Introduce yourself", onboarding tasks, Explore cards, HR contact, my team) |
+| Me | Attendance (stats vs team, today's shift, live clock, 30-day log with timeline bars, calendar, requests), Leave (balances as rings, weekly/monthly patterns, history), Performance (praise and feedback received and given, internal notes, goals, reviews), Expenses & Travel (drafts, claims in process, past claims, advances, travel), Apps |
+| Inbox | Take Action, Notifications and Archive in a three-pane layout, with approve/reject in place |
+| My Team | Who is on leave, not in yet, on time, late, remote; a month team calendar; peer and report cards with today's status |
+| My Finances | Summary (payroll, bank, PF/ESI/PT, PAN and Aadhaar masked), My Pay (salary timeline, payslips rendered in place, income-tax computation), Manage Tax (declarations with windows and ceilings, proofs, previous income, Form 16) |
+| Org | Employee directory with filters, an interactive organisation tree, colleague profiles |
+
+**What changed underneath.**
+- Investment declarations now reach payroll: the month's TDS uses each declaration after
+  every section ceiling (declared amounts until proofs are ruled on). A test adds an NPS
+  declaration, sees TDS fall by exactly the tax it saves, removes it and sees TDS restored.
+- Continuous feedback (`Feedback`: feedback and managers' internal notes, which the subject
+  never sees), "about me", and who rejected, cancelled or requested on behalf — recorded on
+  leave, expense claims and timesheets instead of pieced together from the audit log.
+- The directory is a deliberate policy: every colleague sees work details (name, title,
+  department, location, work email, manager) and nothing personal or financial.
+- Sign-in returns you to the page you were trying to open; only same-site paths are accepted.
+- Demo data reaches the day you seed: attendance through yesterday, this morning's
+  clock-ins, someone on leave, working from home and on duty today, and a birthday.
+
 ## Known limitations
 
 - **Statutory reference tables need verification before go-live.** PT slabs, LWF rules and
@@ -146,6 +224,16 @@ a rollback releases everything the modules injected. **15 checks, all passing.**
 - **Visibility is a directory control, not a data partition.** This mirrors the source
   product exactly: an unscoped role reaches every legal entity regardless of the restriction.
   Businesses that genuinely must not see each other need separate tenants.
+- **Email is delivered to files in development.** The outbox, retries and failure tracking
+  are real; the transport writes `.eml` files to `.mail/`. A provider transport is a
+  single-function swap in `apps/web/src/lib/mail.ts`.
+- **Seeded "today" data only inside the demo year.** Seeding between 27 Sep 2026 and 31 Mar
+  2027 brings attendance up to the day; outside that window the data ends on 25 Sep 2026.
+- **Not built from the Keka screens:** single sign-on (Google, Microsoft, mobile OTP), leave
+  encashment and comp-off requests as their own flows, and real photos (avatars are initials).
 - **India only.** The statutory engine is structured so US and GCC packs could be added, but
   nothing outside India is implemented.
+- **One set of books per tenant.** Ledger entries carry a legal entity column, but the screens
+  report the tenant as a whole. GST input credit, bank reconciliation and fixed-asset
+  depreciation postings are not built; vendor bills are out of scope.
 # KEKA-HRMS

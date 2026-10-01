@@ -436,6 +436,7 @@ enum FilingStatus {
 model StatutoryFiling {
   id            String       @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   legalEntityId String?
   payGroupId    String?
 
@@ -469,6 +470,7 @@ model TdsChallan {
   filingId       String?
   filing         StatutoryFiling? @relation(fields: [filingId], references: [id], onDelete: SetNull)
   tenantId       String
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   /// 200 = TDS payable by taxpayer, 400 = TDS on regular assessment.
   minorHeadCode  String?

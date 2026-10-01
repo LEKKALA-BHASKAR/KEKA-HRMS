@@ -118,6 +118,8 @@ model Employee {
 
   /// Profile completion percentage, recomputed on save.
   profileCompletion Int            @default(0)
+  /// "Introduce yourself": the employee's own words, shown on their profile.
+  aboutMe           String?
 
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
@@ -153,6 +155,8 @@ model Employee {
   awards            EmployeeAward[]
   praiseGiven       Praise[]              @relation("PraiseGiven")
   praiseReceived    Praise[]              @relation("PraiseReceived")
+  feedbackGiven     Feedback[]            @relation("FeedbackGiven")
+  feedbackReceived  Feedback[]            @relation("FeedbackReceived")
   assetAssignments  AssetAssignment[]
   assetRequests     AssetRequest[]
   documents         EmployeeDocument[]
@@ -187,6 +191,13 @@ model Employee {
   expenseClaims     ExpenseClaim[]
   cashAdvances      CashAdvance[]
   travelRequests    TravelRequest[]
+
+  // --- Time operations (12) ---
+  timePolicies       EmployeeTimePolicy[]
+  attendanceRequests AttendanceRequest[]
+  leaveLedger        LeaveLedgerEntry[]
+  journeys           Journey[]
+  helpdeskTickets    HelpdeskTicket[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])

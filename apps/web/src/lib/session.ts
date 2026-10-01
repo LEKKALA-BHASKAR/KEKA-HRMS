@@ -24,13 +24,16 @@ export interface SessionPayload {
   userId: string;
   tenantId: string;
   email: string;
+  /** The user's session version when this was issued; a bump revokes it. */
+  sv?: number;
 }
 
-export async function createSession(payload: SessionPayload): Promise<void> {
+export async function createSession(payload: SessionPayload, hours?: number): Promise<void> {
+  const maxAge = hours ? Math.round(hours * 3600) : MAX_AGE_SECONDS;
   const token = await new SignJWT({ ...payload })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime(`${MAX_AGE_SECONDS}s`)
+    .setExpirationTime(`${maxAge}s`)
     .sign(secret());
 
   const store = await cookies();
@@ -39,8 +42,38 @@ export async function createSession(payload: SessionPayload): Promise<void> {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: MAX_AGE_SECONDS,
+    maxAge,
   });
+}
+
+// --- A sign-in waiting on its second factor --------------------------------
+
+const PENDING_COOKIE = "keka_2fa";
+
+export interface PendingSignIn { userId: string; tenantId: string; email: string; challengeId: string; next?: string }
+
+export async function setPendingSignIn(p: PendingSignIn): Promise<void> {
+  const token = await new SignJWT({ ...p, purpose: "2fa" }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("10m").sign(secret());
+  const store = await cookies();
+  store.set(PENDING_COOKIE, token, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/signin", maxAge: 600 });
+}
+
+export async function readPendingSignIn(): Promise<PendingSignIn | null> {
+  const store = await cookies();
+  const token = store.get(PENDING_COOKIE)?.value;
+  if (!token) return null;
+  try {
+    const { payload } = await jwtVerify(token, secret());
+    if (payload.purpose !== "2fa") return null;
+    return { userId: String(payload.userId), tenantId: String(payload.tenantId), email: String(payload.email), challengeId: String(payload.challengeId) };
+  } catch {
+    return null;
+  }
+}
+
+export async function clearPendingSignIn(): Promise<void> {
+  const store = await cookies();
+  store.delete({ name: PENDING_COOKIE, path: "/signin" });
 }
 
 export async function readSession(): Promise<SessionPayload | null> {
@@ -54,6 +87,7 @@ export async function readSession(): Promise<SessionPayload | null> {
       userId: String(payload.userId),
       tenantId: String(payload.tenantId),
       email: String(payload.email ?? ""),
+      sv: typeof payload.sv === "number" ? payload.sv : 0,
     };
   } catch {
     // Expired or tampered. Treat as signed out rather than erroring.

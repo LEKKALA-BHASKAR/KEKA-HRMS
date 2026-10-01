@@ -1,28 +1,70 @@
+import Link from "next/link";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatDate } from "@keka/shared";
-import { requireAuth } from "@/lib/context";
+import { requireAuth, can } from "@/lib/context";
 import { PageHead, Card, Badge, KeyValue, Callout, Empty } from "@/components/ui";
+import { Disclosure } from "@/app/(app)/org/forms";
+import {
+  PayGroupForm, DeletePayGroupButton, FilingForm, PtRegistrationForm, LwfRegistrationForm,
+  DeleteRegistrationButton, ApprovalRuleForm, DeleteRuleButton, PayslipSettingsForm,
+} from "../_forms/config";
 
 const P = PERMISSIONS;
 const pc = (v: unknown) => `${Number(v ?? 0)}%`;
+const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 
-export default async function PayGroupsPage() {
+const IN_STATES: Array<[string, string]> = [
+  ["AP", "Andhra Pradesh"], ["AS", "Assam"], ["BR", "Bihar"], ["CH", "Chandigarh"],
+  ["CG", "Chhattisgarh"], ["DL", "Delhi"], ["GA", "Goa"], ["GJ", "Gujarat"], ["HR", "Haryana"],
+  ["JH", "Jharkhand"], ["KA", "Karnataka"], ["KL", "Kerala"], ["MP", "Madhya Pradesh"],
+  ["MH", "Maharashtra"], ["ML", "Meghalaya"], ["OR", "Odisha"], ["PY", "Puducherry"],
+  ["PB", "Punjab"], ["RJ", "Rajasthan"], ["SK", "Sikkim"], ["TN", "Tamil Nadu"],
+  ["TS", "Telangana"], ["UP", "Uttar Pradesh"], ["UK", "Uttarakhand"], ["WB", "West Bengal"],
+];
+
+export default async function PayGroupsPage({
+  searchParams,
+}: { searchParams: Promise<{ edit?: string; section?: string }> }) {
   const viewer = await requireAuth(P.PAYGROUP_MANAGE);
+  const sp = await searchParams;
+  const canStatutory = can(viewer, P.STATUTORY_MANAGE);
+  const canSettings = can(viewer, P.PAYROLL_SETTINGS);
 
-  const payGroups = await prisma.payGroup.findMany({
-    where: { tenantId: viewer.tenantId },
-    include: {
-      legalEntity: { select: { legalName: true } },
-      filingDetail: true,
-      payslipSetting: true,
-      approvalRules: true,
-      ptRegistrations: { include: { linkedLocations: { include: { location: { select: { name: true } } } } } },
-      lwfRegistrations: { include: { linkedLocations: { include: { location: { select: { name: true } } } } } },
-      _count: { select: { employees: true, salaryStructures: true, componentLinks: true } },
-    },
-    orderBy: { name: "asc" },
-  });
+  const [payGroups, entities, locations, roles] = await Promise.all([
+    prisma.payGroup.findMany({
+      where: { tenantId: viewer.tenantId },
+      include: {
+        legalEntity: { select: { legalName: true } },
+        filingDetail: true,
+        payslipSetting: true,
+        approvalRules: true,
+        ptRegistrations: { include: { linkedLocations: { include: { location: { select: { name: true } } } } } },
+        lwfRegistrations: { include: { linkedLocations: { include: { location: { select: { name: true } } } } } },
+        _count: { select: { employees: true, salaryStructures: true, componentLinks: true, payrollRuns: true } },
+      },
+      orderBy: { name: "asc" },
+    }),
+    prisma.legalEntity.findMany({
+      where: { tenantId: viewer.tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" },
+    }),
+    prisma.location.findMany({
+      where: { tenantId: viewer.tenantId }, select: { id: true, name: true, stateCode: true }, orderBy: { name: "asc" },
+    }),
+    prisma.role.findMany({
+      where: { tenantId: viewer.tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" },
+    }),
+  ]);
+
+  const entityOpts = entities.map((e) => ({ value: e.id, label: e.name }));
+  const locationOpts = locations.map((l) => ({ value: l.id, label: `${l.name} (${l.stateCode ?? "no state"})`, stateCode: l.stateCode }));
+  const stateOpts = IN_STATES.map(([code, name]) => ({ value: code, label: `${name} (${code})` }));
+  const roleName = new Map(roles.map((r) => [r.id, r.name]));
+  const editing = sp.edit ? payGroups.find((g) => g.id === sp.edit) : undefined;
+
+  // Locations not covered by any PT registration on any pay group.
+  const mappedPt = new Set(payGroups.flatMap((g) => g.ptRegistrations.flatMap((r) => r.linkedLocations.map((l) => l.locationId))));
+  const unmapped = locations.filter((l) => !mappedPt.has(l.id));
 
   return (
     <>
@@ -33,26 +75,67 @@ export default async function PayGroupsPage() {
 
       <Callout tone="info" title="Why the pay group matters more than the legal entity">
         Statutory registrations (PF, ESI, state-wise PT and LWF) and income-tax filing
-        details all attach here. To move an employee to another company you create a pay
-        group associated with that entity and reassign them, which synchronises their
-        legal entity automatically.
+        details all attach here. Moving an employee to a pay group on another entity
+        synchronises their legal entity automatically.
       </Callout>
+
+      {unmapped.length > 0 ? (
+        <div style={{ marginTop: 12 }}>
+          <Callout tone="warning" title={`${unmapped.length} location(s) have no PT registration`}>
+            {unmapped.map((l) => `${l.name} (${l.stateCode ?? "no state"})`).join(", ")} — employees
+            based there will have no Professional Tax deducted.
+          </Callout>
+        </div>
+      ) : null}
+
+      <div style={{ height: 16 }} />
+
+      <Card title={editing ? `Edit ${editing.name}` : "Create a pay group"}>
+        {editing ? (
+          <>
+            <PayGroupForm entities={entityOpts} group={{
+              id: editing.id, legalEntityId: editing.legalEntityId, name: editing.name,
+              description: editing.description, frequency: editing.frequency,
+              payPeriodStartDay: editing.payPeriodStartDay, payPeriodEndDay: editing.payPeriodEndDay,
+              attendanceCutoffDay: editing.attendanceCutoffDay, payDay: editing.payDay,
+              pfEnabled: editing.pfEnabled, esiEnabled: editing.esiEnabled, ptEnabled: editing.ptEnabled,
+              lwfEnabled: editing.lwfEnabled, tdsEnabled: editing.tdsEnabled,
+              declarationOpenDay: editing.declarationOpenDay, declarationCloseDay: editing.declarationCloseDay,
+              declarationFyCutoff: iso(editing.declarationFyCutoff),
+              newJoinerWindowDays: editing.newJoinerWindowDays,
+              proofSubmissionDue: iso(editing.proofSubmissionDue), proofMandatory: editing.proofMandatory,
+              allowLateDeclaration: editing.allowLateDeclaration, allowRegimeChoice: editing.allowRegimeChoice,
+              regimeChangeCutoff: iso(editing.regimeChangeCutoff),
+              approvalWorkflowEnabled: editing.approvalWorkflowEnabled,
+            }} />
+            <div style={{ marginTop: 10 }}>
+              <Link className="btn ghost sm" href="/payroll/pay-groups">Done editing</Link>
+            </div>
+          </>
+        ) : (
+          <Disclosure label="+ New pay group">
+            <PayGroupForm entities={entityOpts} />
+          </Disclosure>
+        )}
+      </Card>
 
       <div style={{ height: 16 }} />
 
       <div className="stack gap-4">
+        {payGroups.length === 0 ? <Card><Empty title="No pay groups yet" /></Card> : null}
         {payGroups.map((g) => (
           <Card
             key={g.id}
             title={g.name}
-            description={`${g.legalEntity.legalName} · ${g._count.employees} employees · ${g._count.salaryStructures} structures · ${g._count.componentLinks} components`}
+            description={`${g.legalEntity.legalName} · ${g._count.employees} employees · ${g._count.salaryStructures} structures · ${g._count.payrollRuns} runs`}
             action={
-              <div className="row gap-2">
-                {g.pfEnabled ? <Badge tone="success">PF</Badge> : <Badge tone="neutral">PF off</Badge>}
-                {g.esiEnabled ? <Badge tone="success">ESI</Badge> : <Badge tone="neutral">ESI off</Badge>}
-                {g.ptEnabled ? <Badge tone="success">PT</Badge> : <Badge tone="neutral">PT off</Badge>}
-                {g.lwfEnabled ? <Badge tone="success">LWF</Badge> : <Badge tone="neutral">LWF off</Badge>}
-                {g.tdsEnabled ? <Badge tone="success">TDS</Badge> : <Badge tone="neutral">TDS off</Badge>}
+              <div className="row gap-2 wrap">
+                {(["pf", "esi", "pt", "lwf", "tds"] as const).map((h) => {
+                  const on = g[`${h}Enabled` as "pfEnabled"];
+                  return <Badge key={h} tone={on ? "success" : "neutral"}>{h.toUpperCase()}{on ? "" : " off"}</Badge>;
+                })}
+                <Link className="btn sm" href={`/payroll/pay-groups?edit=${g.id}`}>Edit</Link>
+                <DeletePayGroupButton id={g.id} name={g.name} />
               </div>
             }
           >
@@ -60,68 +143,22 @@ export default async function PayGroupsPage() {
               <div>
                 <div className="stat-label" style={{ marginBottom: 8 }}>Pay schedule</div>
                 <KeyValue items={[
-                  ["Frequency", g.frequency.toLowerCase()],
-                  ["Period", `day ${g.payPeriodStartDay} to ${g.payPeriodEndDay === 0 ? "last day of month" : `day ${g.payPeriodEndDay}`}`],
-                  ["Attendance cut-off", g.attendanceCutoffDay
-                    ? `day ${g.attendanceCutoffDay} — LOP after this rolls to next month`
-                    : "same as period end"],
-                  ["Pay day", `day ${g.payDay}`],
-                  ["Maker-checker", g.approvalWorkflowEnabled
-                    ? `on · ${g.approvalRules.length} rule(s)`
-                    : "off"],
-                ]} />
-
-                <div className="divider" />
-
-                <div className="stat-label" style={{ marginBottom: 8 }}>Declaration &amp; proof timelines</div>
-                <KeyValue items={[
-                  ["Monthly window", `day ${g.declarationOpenDay} to ${g.declarationCloseDay}`],
-                  ["FY cut-off", formatDate(g.declarationFyCutoff)],
-                  ["New joiner window", `${g.newJoinerWindowDays} days from joining`],
-                  ["Proof due", formatDate(g.proofSubmissionDue)],
-                  ["Proof mandatory", g.proofMandatory ? "Yes" : "No"],
-                  ["Late declarations", g.allowLateDeclaration ? "Allowed" : "Blocked after cut-off"],
-                  ["Regime choice", g.allowRegimeChoice
-                    ? `Employees may switch until ${formatDate(g.regimeChangeCutoff)}`
-                    : "Locked by admin"],
+                  ["Frequency", g.frequency.toLowerCase().replace("_", "-")],
+                  ["Period", `day ${g.payPeriodStartDay} to ${g.payPeriodEndDay === 0 ? "month end" : `day ${g.payPeriodEndDay}`}`],
+                  ["Attendance cut-off", g.attendanceCutoffDay ? `day ${g.attendanceCutoffDay}` : "period end"],
+                  ["Maker-checker", g.approvalWorkflowEnabled ? `on · ${g.approvalRules.length} rule(s)` : "off"],
+                  ["Declarations", `day ${g.declarationOpenDay}–${g.declarationCloseDay}, FY cut-off ${formatDate(g.declarationFyCutoff)}`],
+                  ["Regime choice", g.allowRegimeChoice ? `until ${formatDate(g.regimeChangeCutoff)}` : "locked"],
                 ]} />
               </div>
-
               <div>
-                <div className="stat-label" style={{ marginBottom: 8 }}>Income tax filing</div>
+                <div className="stat-label" style={{ marginBottom: 8 }}>Statutory identity</div>
                 <KeyValue items={[
-                  ["PAN", <span className="mono" key="a">{g.filingDetail?.pan ?? "—"}</span>],
-                  ["TAN", <span className="mono" key="b">{g.filingDetail?.tan ?? "—"}</span>],
-                  ["TAN circle", g.filingDetail?.tanCircle],
-                  ["CIT (TDS)", g.filingDetail?.citTds],
-                  ["Form 16 signatory", g.filingDetail?.form16SignatoryName
-                    ? `${g.filingDetail.form16SignatoryName}, ${g.filingDetail.form16SignatoryDesignation}`
-                    : null],
-                ]} />
-
-                <div className="divider" />
-
-                <div className="stat-label" style={{ marginBottom: 8 }}>Provident Fund</div>
-                <KeyValue items={[
-                  ["Registration", <span className="mono text-sm" key="r">{g.filingDetail?.pfRegistrationNumber ?? "—"}</span>],
-                  ["Wage ceiling", g.filingDetail ? `₹${Number(g.filingDetail.pfWageCeiling).toLocaleString("en-IN")}` : null],
-                  ["Restrict to ceiling", g.filingDetail?.pfCapAtCeiling ? "Yes" : "No — PF on actual basic"],
-                  ["Employee / employer", g.filingDetail ? `${pc(g.filingDetail.pfEmployeeRate)} / ${pc(g.filingDetail.pfEmployerRate)}` : null],
-                  ["EPS", g.filingDetail ? `${pc(g.filingDetail.epsRate)} of PF wage, capped at ₹${Number(g.filingDetail.epsWageCeiling).toLocaleString("en-IN")}` : null],
-                  ["EDLI + admin", g.filingDetail ? `${pc(g.filingDetail.edliRate)} + ${pc(g.filingDetail.pfAdminRate)}` : null],
-                ]} />
-
-                <div className="divider" />
-
-                <div className="stat-label" style={{ marginBottom: 8 }}>ESI</div>
-                <KeyValue items={[
-                  ["Registration", <span className="mono text-sm" key="e">{g.filingDetail?.esiRegistrationNumber ?? "—"}</span>],
-                  ["Wage limit", g.filingDetail ? `₹${Number(g.filingDetail.esiWageLimit).toLocaleString("en-IN")} monthly gross` : null],
-                  ["Employee / employer", g.filingDetail ? `${pc(g.filingDetail.esiEmployeeRate)} / ${pc(g.filingDetail.esiEmployerRate)}` : null],
-                  ["Employer share", g.filingDetail?.esiEmployerInsideCtc
-                    ? "Inside CTC — deducted from annual salary"
-                    : "Over and above annual salary"],
-                  ["Arrears in wage base", g.filingDetail?.esiIncludeArrears ? "Included" : "Excluded"],
+                  ["PAN / TAN", <span className="mono text-sm" key="t">{g.filingDetail?.pan ?? "—"} / {g.filingDetail?.tan ?? "—"}</span>],
+                  ["PF registration", <span className="mono text-sm" key="p">{g.filingDetail?.pfRegistrationNumber ?? "—"}</span>],
+                  ["PF", g.filingDetail ? `${pc(g.filingDetail.pfEmployeeRate)} on ₹${Number(g.filingDetail.pfWageCeiling).toLocaleString("en-IN")} ceiling${g.filingDetail.pfCapAtCeiling ? "" : " (uncapped)"}` : "—"],
+                  ["ESI registration", <span className="mono text-sm" key="e">{g.filingDetail?.esiRegistrationNumber ?? "—"}</span>],
+                  ["ESI", g.filingDetail ? `${pc(g.filingDetail.esiEmployeeRate)} / ${pc(g.filingDetail.esiEmployerRate)} below ₹${Number(g.filingDetail.esiWageLimit).toLocaleString("en-IN")}` : "—"],
                 ]} />
               </div>
             </div>
@@ -130,58 +167,35 @@ export default async function PayGroupsPage() {
 
             <div className="grid grid-2" style={{ alignItems: "start" }}>
               <div>
-                <div className="stat-label" style={{ marginBottom: 8 }}>
-                  Professional Tax registrations ({g.ptRegistrations.length})
-                </div>
-                {g.ptRegistrations.length === 0 ? <Empty title="None registered" /> : (
-                  <div className="table-wrap">
-                    <table className="data">
-                      <thead>
-                        <tr><th>State</th><th>Establishment</th><th>Frequency</th><th>Linked locations</th></tr>
-                      </thead>
-                      <tbody>
-                        {g.ptRegistrations.map((r) => (
-                          <tr key={r.id}>
-                            <td>
-                              <span className="strong">{r.stateName}</span>
-                              {r.localBodyType ? <Badge tone="info">{r.localBodyType.toLowerCase()}</Badge> : null}
-                            </td>
-                            <td className="mono text-xs">{r.establishmentId}</td>
-                            <td className="text-sm">{r.frequency.toLowerCase().replace("_", "-")}</td>
-                            <td className="text-sm">
-                              {r.linkedLocations.map((l) => l.location.name).join(", ") || "—"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                <div className="stat-label" style={{ marginBottom: 8 }}>Professional Tax ({g.ptRegistrations.length})</div>
+                {g.ptRegistrations.length === 0 ? <p className="text-sm subtle">None registered.</p> : (
+                  <div className="stack gap-2">
+                    {g.ptRegistrations.map((r) => (
+                      <div key={r.id} className="row gap-2" style={{ justifyContent: "space-between" }}>
+                        <span className="text-sm">
+                          <strong>{r.stateName}</strong>{r.localBodyType ? ` · ${r.localBodyType.toLowerCase()}` : ""}
+                          {" · "}{r.frequency.toLowerCase().replace("_", "-")}
+                          <div className="text-xs subtle">{r.linkedLocations.map((l) => l.location.name).join(", ") || "no linked locations"}</div>
+                        </span>
+                        {canStatutory ? <DeleteRegistrationButton kind="pt" id={r.id} label={`${r.stateCode} PT`} /> : null}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
-
               <div>
-                <div className="stat-label" style={{ marginBottom: 8 }}>
-                  Labour Welfare Fund registrations ({g.lwfRegistrations.length})
-                </div>
-                {g.lwfRegistrations.length === 0 ? <Empty title="None registered" /> : (
-                  <div className="table-wrap">
-                    <table className="data">
-                      <thead>
-                        <tr><th>State</th><th>Establishment</th><th>Employer share</th><th>Linked locations</th></tr>
-                      </thead>
-                      <tbody>
-                        {g.lwfRegistrations.map((r) => (
-                          <tr key={r.id}>
-                            <td className="strong">{r.stateName}</td>
-                            <td className="mono text-xs">{r.establishmentId}</td>
-                            <td className="text-sm">{r.employerInsideCtc ? "Inside CTC" : "Above CTC"}</td>
-                            <td className="text-sm">
-                              {r.linkedLocations.map((l) => l.location.name).join(", ") || "—"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                <div className="stat-label" style={{ marginBottom: 8 }}>Labour Welfare Fund ({g.lwfRegistrations.length})</div>
+                {g.lwfRegistrations.length === 0 ? <p className="text-sm subtle">None registered.</p> : (
+                  <div className="stack gap-2">
+                    {g.lwfRegistrations.map((r) => (
+                      <div key={r.id} className="row gap-2" style={{ justifyContent: "space-between" }}>
+                        <span className="text-sm">
+                          <strong>{r.stateName}</strong> · employer {r.employerInsideCtc ? "inside" : "above"} CTC
+                          <div className="text-xs subtle">{r.linkedLocations.map((l) => l.location.name).join(", ") || "no linked locations"}</div>
+                        </span>
+                        {canStatutory ? <DeleteRegistrationButton kind="lwf" id={r.id} label={`${r.stateCode} LWF`} /> : null}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -190,20 +204,84 @@ export default async function PayGroupsPage() {
             {g.approvalRules.length > 0 ? (
               <>
                 <div className="divider" />
-                <div className="stat-label" style={{ marginBottom: 8 }}>Approval workflow</div>
+                <div className="stat-label" style={{ marginBottom: 8 }}>Approval rules</div>
                 <div className="stack gap-2">
                   {g.approvalRules.map((r) => (
-                    <div key={r.id} className="row gap-2">
-                      <Badge tone="brand">{r.action.replace(/_/g, " ").toLowerCase()}</Badge>
-                      <span className="text-sm">{r.name}</span>
-                      <span className="text-xs subtle">
-                        {(r.approverRoleIds as string[]).length} level(s) — only explicit user roles appear in chains
+                    <div key={r.id} className="row gap-2" style={{ justifyContent: "space-between" }}>
+                      <span className="text-sm">
+                        <Badge tone="brand">{r.action.replace(/_/g, " ").toLowerCase()}</Badge> {r.name}
+                        <span className="text-xs subtle"> — {(r.approverRoleIds as string[]).map((id) => roleName.get(id) ?? "removed role").join(" → ")}</span>
                       </span>
+                      {canSettings ? <DeleteRuleButton id={r.id} /> : null}
                     </div>
                   ))}
                 </div>
               </>
             ) : null}
+
+            <div className="divider" />
+            <div className="row gap-2 wrap" style={{ alignItems: "flex-start" }}>
+              {canStatutory ? (
+                <div style={{ flex: "1 1 100%" }}>
+                  <Disclosure label="Filing details" variant="default">
+                    <FilingForm payGroupId={g.id} filing={g.filingDetail ? {
+                      pan: g.filingDetail.pan, tan: g.filingDetail.tan, tanCircle: g.filingDetail.tanCircle,
+                      citTds: g.filingDetail.citTds,
+                      form16SignatoryName: g.filingDetail.form16SignatoryName,
+                      form16SignatoryDesignation: g.filingDetail.form16SignatoryDesignation,
+                      form16SignatoryPan: g.filingDetail.form16SignatoryPan,
+                      responsiblePersonName: g.filingDetail.responsiblePersonName,
+                      responsiblePersonDesignation: g.filingDetail.responsiblePersonDesignation,
+                      responsiblePersonPan: g.filingDetail.responsiblePersonPan,
+                      pfRegistrationNumber: g.filingDetail.pfRegistrationNumber,
+                      pfRegistrationDate: iso(g.filingDetail.pfRegistrationDate),
+                      pfSignatoryName: g.filingDetail.pfSignatoryName,
+                      pfWageCeiling: Number(g.filingDetail.pfWageCeiling), pfCapAtCeiling: g.filingDetail.pfCapAtCeiling,
+                      pfEmployeeRate: Number(g.filingDetail.pfEmployeeRate), pfEmployerRate: Number(g.filingDetail.pfEmployerRate),
+                      epsRate: Number(g.filingDetail.epsRate), epsWageCeiling: Number(g.filingDetail.epsWageCeiling),
+                      edliRate: Number(g.filingDetail.edliRate), pfAdminRate: Number(g.filingDetail.pfAdminRate),
+                      esiRegistrationNumber: g.filingDetail.esiRegistrationNumber,
+                      esiRegistrationDate: iso(g.filingDetail.esiRegistrationDate),
+                      esiSignatoryName: g.filingDetail.esiSignatoryName,
+                      esiWageLimit: Number(g.filingDetail.esiWageLimit),
+                      esiEmployeeRate: Number(g.filingDetail.esiEmployeeRate), esiEmployerRate: Number(g.filingDetail.esiEmployerRate),
+                      esiEmployerInsideCtc: g.filingDetail.esiEmployerInsideCtc,
+                      esiHideEmployerOnPayslip: g.filingDetail.esiHideEmployerOnPayslip,
+                      esiIncludeArrears: g.filingDetail.esiIncludeArrears,
+                    } : null} />
+                  </Disclosure>
+                </div>
+              ) : null}
+              {canStatutory ? (
+                <div style={{ flex: "1 1 100%" }}>
+                  <Disclosure label="+ PT registration" variant="default">
+                    <PtRegistrationForm payGroupId={g.id} locations={locationOpts} states={stateOpts} />
+                  </Disclosure>
+                </div>
+              ) : null}
+              {canStatutory ? (
+                <div style={{ flex: "1 1 100%" }}>
+                  <Disclosure label="+ LWF registration" variant="default">
+                    <LwfRegistrationForm payGroupId={g.id} locations={locationOpts} states={stateOpts} />
+                  </Disclosure>
+                </div>
+              ) : null}
+              {canSettings ? (
+                <div style={{ flex: "1 1 100%" }}>
+                  <Disclosure label="+ Approval rule" variant="default">
+                    <ApprovalRuleForm payGroupId={g.id} roles={roles.map((r) => ({ value: r.id, label: r.name }))} />
+                  </Disclosure>
+                </div>
+              ) : null}
+              {canSettings ? (
+                <div style={{ flex: "1 1 100%" }}>
+                  <Disclosure label="Payslip settings" variant="default">
+                    <PayslipSettingsForm payGroupId={g.id}
+                      s={g.payslipSetting as unknown as Record<string, boolean | string> | null} />
+                  </Disclosure>
+                </div>
+              ) : null}
+            </div>
           </Card>
         ))}
       </div>

@@ -587,7 +587,9 @@ export async function Step4({ run, lines, editable }: StepProps) {
                     ? <Badge tone="success">Not taxable</Badge>
                     : <Badge tone="warning">Taxable</Badge>}
                 </td>
-                {editable ? (
+                {editable && (a.sourceType || a.runId !== run.id) ? (
+                  <td className="right text-xs subtle">{a.sourceType ? `From ${a.sourceType.replace(/([A-Z])/g, " $1").trim().toLowerCase()}` : "Scheduled"}</td>
+                ) : editable ? (
                   <td className="right">
                     <form action={deleteAdhoc}>
                       <input type="hidden" name="runId" value={run.id} />

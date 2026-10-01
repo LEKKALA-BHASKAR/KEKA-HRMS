@@ -1,196 +1,69 @@
+import { Fragment } from "react";
 import Link from "next/link";
-import { prisma } from "@keka/db";
-import { PERMISSIONS, hasPermission } from "@keka/rbac";
-import { formatDate, formatPeriod } from "@keka/shared";
-import { requireViewer, can } from "@/lib/context";
-import { PageHead, Card, Badge, Empty, Money, Person } from "@/components/ui";
+import { requireViewer } from "@/lib/context";
+import { IconCheck } from "@/components/icons";
+import { EmptyState } from "@/components/keka";
+import { CategoryPane, DetailEmpty, InboxFrame, ListPane, hrefFor, readNav, sortByDate } from "./_ui/panes";
+import { matches } from "./_ui/format";
+import { takeActionSources } from "./_take/sources";
 
-const P = PERMISSIONS;
-
-export default async function InboxPage() {
+/**
+ * Inbox → Take Action. Everything waiting on the viewer, by category, in
+ * Keka's three panes. Each category's queue is scoped exactly as before:
+ * only people in the viewer's approval line, never their own requests.
+ */
+export default async function TakeActionPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const viewer = await requireViewer();
+  const nav = readNav("/inbox", await searchParams);
 
-  // Only fetch what this viewer could actually act on.
-  const [leaveRequests, payrollApprovals, loanRequests, claims] = await Promise.all([
-    can(viewer, P.LEAVE_APPROVE)
-      ? prisma.leaveRequest.findMany({
-          where: {
-            tenantId: viewer.tenantId,
-            status: "PENDING",
-            ...(viewer.allReportIds.size > 0 && !viewer.permissions.has(P.LEAVE_MANAGE)
-              ? { employeeId: { in: [...viewer.allReportIds] } }
-              : {}),
-          },
-          include: {
-            leaveType: { select: { name: true, isPaid: true } },
-          },
-          orderBy: { fromDate: "asc" },
-          take: 20,
-        })
-      : Promise.resolve([]),
-    can(viewer, P.PAYROLL_APPROVE)
-      ? prisma.payrollApprovalRequest.findMany({
-          where: { status: "PENDING", run: { tenantId: viewer.tenantId } },
-          include: { run: { select: { id: true, year: true, month: true, totalNetPay: true, payGroup: { select: { name: true } } } } },
-        })
-      : Promise.resolve([]),
-    can(viewer, P.LOAN_APPROVE)
-      ? prisma.loan.findMany({
-          where: {
-            status: { in: ["REQUESTED", "PENDING_APPROVAL"] },
-            employee: { tenantId: viewer.tenantId },
-          },
-          include: {
-            category: { select: { name: true } },
-            employee: { select: { id: true, displayName: true, employeeNumber: true } },
-          },
-        })
-      : Promise.resolve([]),
-    can(viewer, P.PAYROLL_RUN)
-      ? prisma.componentClaim.findMany({
-          where: { status: "SUBMITTED", employee: { tenantId: viewer.tenantId } },
-          include: {
-            component: { select: { name: true } },
-            employee: { select: { id: true, displayName: true, employeeNumber: true } },
-          },
-          take: 20,
-        })
-      : Promise.resolve([]),
-  ]);
+  const sources = await takeActionSources(viewer);
+  const counts = await Promise.all(sources.map((src) => src.count()));
+  const visible = sources.map((src, i) => ({ src, count: counts[i] })).filter((x) => x.src.always || x.count > 0);
 
-  const employeeIds = leaveRequests.map((r) => r.employeeId);
-  const employees = employeeIds.length > 0
-    ? await prisma.employee.findMany({
-        where: { id: { in: employeeIds } },
-        select: { id: true, displayName: true, employeeNumber: true },
-      })
-    : [];
-  const empById = new Map(employees.map((e) => [e.id, e]));
+  if (visible.length === 0) {
+    return (
+      <div className="k-panel">
+        <EmptyState icon={<IconCheck />} title="Nothing to act on">
+          Approvals and tasks routed to you — leave, attendance, timesheets, expenses and more — appear here.
+        </EmptyState>
+      </div>
+    );
+  }
 
-  const total = leaveRequests.length + payrollApprovals.length + loanRequests.length + claims.length;
+  const active = visible.find((x) => x.src.key === nav.cat) ?? visible.find((x) => x.count > 0) ?? visible[0];
+  const view = { ...nav, cat: active.src.key };
+
+  const all = await active.src.list();
+  const items = sortByDate(all.filter((it) => matches(nav.q, it.person?.name, it.heading, it.title, it.tag)), nav.sort);
+  const selectedId = nav.id || items[0]?.id;
+  const detail = selectedId ? await active.src.detail(selectedId) : null;
+
+  let right;
+  if (detail) {
+    right = <Fragment key={selectedId}>{detail}</Fragment>;
+  } else if (nav.id) {
+    // The item was decided (or was never in this viewer's queue).
+    const next = items.find((it) => it.id !== nav.id);
+    right = (
+      <DetailEmpty title="All done here" icon={<IconCheck />}>
+        This one is no longer waiting on you — decided items move to your <Link href="/inbox/archive" className="strong">Archive</Link>.
+        {next ? <div style={{ marginTop: 14 }}><Link className="btn sm primary" href={hrefFor(view, { id: next.id })} scroll={false}>Next: {next.person?.name ?? next.title}</Link></div> : null}
+      </DetailEmpty>
+    );
+  } else {
+    right = (
+      <DetailEmpty title={nav.q ? "No matches" : "You're all caught up"} icon={<IconCheck />}>
+        {nav.q ? "Try another name or task." : `Nothing in ${active.src.label.toLowerCase()} is waiting on you.`}
+      </DetailEmpty>
+    );
+  }
 
   return (
-    <>
-      <PageHead
-        title="Inbox"
-        subtitle={total === 0 ? "Nothing waiting on you" : `${total} item${total === 1 ? "" : "s"} waiting on you`}
-      />
-
-      {total === 0 ? (
-        <Card>
-          <Empty title="Your inbox is clear">
-            Approvals routed to your roles appear here — leave, payroll locks, loans and claims.
-          </Empty>
-        </Card>
-      ) : (
-        <div className="stack gap-4">
-          {payrollApprovals.length > 0 ? (
-            <Card title={`Payroll locks awaiting approval (${payrollApprovals.length})`} tight>
-              <div className="table-wrap">
-                <table className="data">
-                  <thead><tr><th>Period</th><th>Pay group</th><th className="num">Net payable</th><th>Requested</th><th /></tr></thead>
-                  <tbody>
-                    {payrollApprovals.map((a) => (
-                      <tr key={a.id}>
-                        <td className="strong">{a.run ? formatPeriod(a.run.year, a.run.month) : "—"}</td>
-                        <td className="text-sm">{a.run?.payGroup.name}</td>
-                        <td className="num"><Money value={a.run?.totalNetPay ?? 0} compact /></td>
-                        <td className="text-sm muted">{formatDate(a.requestedAt)}</td>
-                        <td className="right">
-                          {a.run ? <Link className="btn sm primary" href={`/payroll/runs/${a.run.id}?step=6`}>Review</Link> : null}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          ) : null}
-
-          {leaveRequests.length > 0 ? (
-            <Card title={`Leave requests (${leaveRequests.length})`} tight>
-              <div className="table-wrap">
-                <table className="data">
-                  <thead><tr><th>Employee</th><th>Type</th><th>From</th><th>To</th><th className="num">Days</th><th>Impact</th></tr></thead>
-                  <tbody>
-                    {leaveRequests.map((r) => {
-                      const emp = empById.get(r.employeeId);
-                      return (
-                        <tr key={r.id}>
-                          <td>
-                            {emp ? (
-                              <Link href={`/employees/${emp.id}`}>
-                                <Person name={emp.displayName ?? ""} meta={emp.employeeNumber} />
-                              </Link>
-                            ) : r.employeeId}
-                          </td>
-                          <td>{r.leaveType.name}</td>
-                          <td className="nowrap">{formatDate(r.fromDate)}</td>
-                          <td className="nowrap">{formatDate(r.toDate)}</td>
-                          <td className="num">{Number(r.totalDays).toFixed(1)}</td>
-                          <td>
-                            {r.leaveType.isPaid
-                              ? <Badge tone="success">Paid</Badge>
-                              : <Badge tone="danger">Creates LOP</Badge>}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          ) : null}
-
-          {loanRequests.length > 0 ? (
-            <Card title={`Loan requests (${loanRequests.length})`} tight>
-              <div className="table-wrap">
-                <table className="data">
-                  <thead><tr><th>Employee</th><th>Category</th><th className="num">Principal</th><th className="num">EMI</th><th className="num">Months</th></tr></thead>
-                  <tbody>
-                    {loanRequests.map((l) => (
-                      <tr key={l.id}>
-                        <td>
-                          <Link href={`/employees/${l.employee.id}`}>
-                            <Person name={l.employee.displayName ?? ""} meta={l.employee.employeeNumber} />
-                          </Link>
-                        </td>
-                        <td>{l.category.name}</td>
-                        <td className="num"><Money value={l.principal} /></td>
-                        <td className="num"><Money value={l.emiAmount} /></td>
-                        <td className="num">{l.installments}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          ) : null}
-
-          {claims.length > 0 ? (
-            <Card title={`Reimbursement claims (${claims.length})`} tight>
-              <div className="table-wrap">
-                <table className="data">
-                  <thead><tr><th>Employee</th><th>Component</th><th className="num">Claimed</th></tr></thead>
-                  <tbody>
-                    {claims.map((c) => (
-                      <tr key={c.id}>
-                        <td>
-                          <Link href={`/employees/${c.employee.id}`}>
-                            <Person name={c.employee.displayName ?? ""} meta={c.employee.employeeNumber} />
-                          </Link>
-                        </td>
-                        <td>{c.component.name}</td>
-                        <td className="num"><Money value={c.claimedAmount} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          ) : null}
-        </div>
-      )}
-    </>
+    <InboxFrame categories={<CategoryPane heading="Take action" nav={view}
+      categories={visible.map((x) => ({ key: x.src.key, label: x.src.label, icon: x.src.icon, count: x.count, hot: x.count > 0 }))} />}>
+      <ListPane label={active.src.label} nav={view} items={items} activeId={detail ? selectedId : nav.id}
+        empty={`Nothing in ${active.src.label.toLowerCase()} is waiting on you.`} />
+      {right}
+    </InboxFrame>
   );
 }

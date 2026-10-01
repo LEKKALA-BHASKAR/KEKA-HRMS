@@ -8,3 +8,6 @@ dist/
 .turbo/
 coverage/
 packages/db/generated/
+.mail/
+.storage/
+backups/

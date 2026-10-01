@@ -5,6 +5,7 @@ import { formatDate } from "@keka/shared";
 import { requireAuth, can } from "@/lib/context";
 import { PageHead, Card, Badge, Empty, Person, Stat, Callout, Progress } from "@/components/ui";
 import { verifyDocument, acknowledgeOrgDocument, generateLetter } from "@/app/actions/workplace";
+import { UploadDocument } from "./upload";
 
 const P = PERMISSIONS;
 
@@ -208,6 +209,7 @@ export default async function DocumentsPage({
                       <td>
                         <span className="strong">{d.name}</span>
                         {d.documentType?.isMandatory ? <Badge tone="warning">mandatory</Badge> : null}
+                        {d.fileUrl?.startsWith("/files/") ? <div><a className="text-xs" href={d.fileUrl}>View file</a></div> : null}
                       </td>
                       <td className="text-sm">
                         {d.folder?.name ?? "—"}
@@ -402,7 +404,7 @@ export default async function DocumentsPage({
             <div className="table-wrap">
               <table className="data">
                 <thead>
-                  <tr><th>Document</th><th>Folder</th><th>Status</th><th>Expires</th><th>Note</th></tr>
+                  <tr><th>Document</th><th>Folder</th><th>Status</th><th>Expires</th><th>Note</th><th /></tr>
                 </thead>
                 <tbody>
                   {myDocs.map((d) => (
@@ -424,6 +426,14 @@ export default async function DocumentsPage({
                         {d.status === "PENDING_ON_EMPLOYEE"
                           ? "Upload this when you can"
                           : d.rejectReason ?? "—"}
+                      </td>
+                      <td className="right">
+                        <span className="row gap-2" style={{ justifyContent: "flex-end" }}>
+                          {d.fileUrl?.startsWith("/files/") ? <a className="btn sm ghost" href={d.fileUrl}>View</a> : null}
+                          {d.status !== "VERIFIED" && d.status !== "NOT_APPLICABLE"
+                            ? <UploadDocument documentId={d.id} trackExpiry={d.documentType?.trackExpiry} label={d.fileUrl ? "Replace" : "Upload"} />
+                            : null}
+                        </span>
                       </td>
                     </tr>
                   ))}

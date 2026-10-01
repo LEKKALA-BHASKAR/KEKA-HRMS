@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatPeriod, formatDate, formatINRCompact } from "@keka/shared";
+import { explainRun } from "@keka/services";
 import { requireAuth, can } from "@/lib/context";
+import { ExplainCard } from "@/components/explain";
 import {
   PageHead, Card, Stat, Money, Badge, Empty, Callout, RunStatusBadge, Person,
 } from "@/components/ui";
@@ -53,6 +55,10 @@ export default async function PayrollRunPage({
 
   const step = Math.min(6, Math.max(1, Number(sp.step ?? run.currentStep)));
   const editable = run.status !== "FINALIZED" && run.status !== "PENDING_APPROVAL";
+  // Where this month stands in the books.
+  const ledger = run.status === "FINALIZED" && can(viewer, P.LEDGER_VIEW)
+    ? await prisma.ledgerEntry.findMany({ where: { tenantId: viewer.tenantId, sourceRefType: { in: ["PayrollRun", "PayrollRunPayment"] }, sourceRefId: run.id, status: "POSTED" }, select: { sourceRefType: true, entryNumber: true } })
+    : null;
   const canRun = can(viewer, P.PAYROLL_RUN);
 
   const lines = await prisma.payrollRunEmployee.findMany({
@@ -118,6 +124,15 @@ export default async function PayrollRunPage({
         <Stat label="Net payable" value={formatINRCompact(Number(run.totalNetPay))} meta={`Employer cost ${formatINRCompact(Number(run.totalEmployerCost))}`} />
       </div>
 
+      {/* --- Why did it move? Reviewers ask this before they approve. --- */}
+      <details style={{ marginBottom: 16 }}>
+        <summary className="btn sm" style={{ listStyle: "none", display: "inline-flex" }}>Why did this month change?</summary>
+        <div className="grid grid-2" style={{ marginTop: 12, alignItems: "start" }}>
+          <ExplainCard title="Gross earnings" measure="Gross" explanation={await explainRun(run.id, "gross")} />
+          <ExplainCard title="Net payable" measure="Net pay" explanation={await explainRun(run.id, "net")} />
+        </div>
+      </details>
+
       {/* --- Approval / status banners --- */}
       {pendingRequest ? (
         <div style={{ marginBottom: 16 }}>
@@ -166,6 +181,13 @@ export default async function PayrollRunPage({
               {totalPayslips} payslip{totalPayslips === 1 ? "" : "s"} generated,{" "}
               {releasedPayslips} released, {totalPayslips - releasedPayslips} still held.
             </p>
+            {ledger ? (
+              <p className="text-sm" style={{ marginTop: 6 }}>
+                Ledger: {ledger.find((e) => e.sourceRefType === "PayrollRun")?.entryNumber ?? "accrual not posted"}
+                {" · "}{ledger.find((e) => e.sourceRefType === "PayrollRunPayment") ? `paid ${ledger.find((e) => e.sourceRefType === "PayrollRunPayment")!.entryNumber}` : "salaries not yet paid"}
+                {" · "}<Link href="/accounting">Accounting</Link>
+              </p>
+            ) : null}
             <div className="row gap-2" style={{ marginTop: 10 }}>
               {releasedPayslips < totalPayslips && can(viewer, P.PAYSLIP_RELEASE) ? (
                 <form action={releasePayslips}>

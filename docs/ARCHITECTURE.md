@@ -171,3 +171,122 @@ credit is non-zero. An entry cannot post until debits equal credits, periods can
 to block back-dated postings, and an entry is reversed by a contra entry rather than
 deleted. The payroll journal-voucher export posts into this ledger rather than existing
 beside it.
+
+## Phase 3 decisions
+
+### One definition of "finalised"
+Finalising, releasing and rolling back a payroll month live in `services/payroll-close.ts`,
+used by the UI, the seed and the tests alike. Every input the month consumes — arrears,
+ad-hoc items, bonuses, loan instalments, claims — is marked against exactly the employees
+processed in that run, mirroring what `calculateRun` selected. (The earlier inline version
+marked a month's claims paid across every tenant.) Rolling back a month under a later
+finalised month is refused, because the later month's year-to-date figures depend on it.
+
+### Ledgers, not counters
+Leave balances are a cache of `leave_ledger_entries`; loan balances are recomputed from their
+schedule after every movement. Anything that changes a balance writes a row that explains
+it, with an idempotency key where a job might run twice.
+
+### Events start journeys
+Hiring, job changes and exit approval call `startJourney`, which picks the most specific
+active template and is idempotent per employee, trigger and date. Tasks with an `autoCheck`
+can only be closed by the system verifying the fact, never by ticking a box.
+
+### Explanations add up
+`services/explain.ts` compares two months line by line. Every rupee of the change is
+attributed to a cause; anything unattributed is shown as "rounding and other", so an
+explanation can never silently omit part of a change.
+
+### Tenancy is enforced by the database
+Every table with a `tenantId` has a cascading foreign key to `tenants` (74 were added when an
+audit found rows left behind by deleted tenants). Deleting a tenant removes all of its data.
+
+### Authentication never answers "does this account exist?"
+Wrong password, unknown user, lockout and reset requests produce identical responses for
+real and imaginary addresses. Lockout is counted from sign-in events per email, not from the
+user row, precisely so a non-existent address locks the same way. Sessions carry a version;
+password changes and "sign out everywhere" bump it, killing old sessions on their next request.
+
+## Phase 4 decisions
+
+### Every id from a form is an attack surface
+A server action that stores a reference — a department's head, a task's assignee, a salary
+structure, a ledger account — must confirm the referenced record is the viewer's tenant's
+before writing it. `lib/ownership.ts` (`foreignReference`) does this for twenty kinds of
+record in one call; child tables without a `tenantId` are checked through their parent
+(a holiday through its calendar, a milestone through its project). Updates and deletes are
+written as `updateMany`/`deleteMany` with `tenantId` in the `where`, so a foreign id changes
+nothing. `scripts/smoke-isolation.ts` keeps this honest: it builds a rival tenant and has a
+Global Admin attack it through 46 actions (and 3 reads). An independent audit of every action found 18
+gaps (including ad-hoc payments and loss-of-pay days injectable into another tenant's
+payroll); the proof now covers each, and was shown to fail when a fix is removed.
+
+### Tenant deletion and `RESTRICT`
+Three foreign keys guard against deleting something in use — an expense category, a helpdesk
+category, a ledger account. As `RESTRICT` they also blocked deleting a whole tenant, because
+Postgres cascades the tenant's categories one level down before it reaches the lines two
+levels down. They are now `NO ACTION DEFERRABLE INITIALLY DEFERRED`: still refused for a
+category in use, but checked at commit, when the tenant's lines are already gone.
+
+### The ledger posts itself, once
+Payroll finalisation, salary payments, F&F settlements, loan disbursements and foreclosures,
+cash advances, claims settled or paid outside payroll, invoices and receipts each post a
+balanced entry keyed by the record that produced it (`sourceRefType`, `sourceRefId`). A
+second post of the same record returns the existing entry instead of doubling it. Rolling
+back payroll reverses its entries with contras dated today, so a closed month is never
+touched. The mapping from payslip lines to accounts is a pure function
+(`accounting-math.ts: payrollJournal`) tested against the seeded August run to the rupee:
+gross and employer contributions are cost; each deduction is owed to whoever collects it;
+a loan EMI splits into principal (reducing the asset) and interest (income); a reimbursement
+is not salary; a perquisite is not cash and never reaches the ledger.
+
+### Stored balances are a cache
+`Account.currentBalance` is maintained on every posting so the chart can show balances
+without aggregating the ledger, but the lines are the truth. The overview compares the two
+and says so if they ever disagree, and `rebuildAccountBalances` recomputes the cache.
+
+### Projects bill what was approved, at the rate in force
+A time entry copies the bill and cost rate from the allocation that covered its date, so a
+later rate change never reprices history. Only allocated people can log time; allocations
+are capped at 100% across projects; tasks must belong to the project they are logged
+against. An invoice takes approved, billable, uninvoiced entries and marks them invoiced in
+the same transaction. GST follows place of supply: same state is CGST + SGST, another state
+is IGST, abroad is zero-rated.
+
+### Line managers manage people, not projects
+`TASK_MANAGE` and `TIMESHEET_APPROVE` are implicit for every reporting manager. On their own
+they open the manager's team, never a project: adding tasks needs the project (its manager
+or `PROJECT_MANAGE`), and moving a task needs it to be yours, your report's, or your project's.
+
+## Phase 5 decisions
+
+### One navigation model, derived from permissions
+`lib/nav.ts` builds the rail and every section's tabs from the viewer's permissions on each
+request. Every route belongs to exactly one section per viewer — the longest matching path
+prefix wins — so the active rail item and tab follow from the URL alone. A route that is an
+admin workspace for one person (say `/helpdesk` for an HR agent) is one of "my apps" for
+everyone else; the builder assigns it accordingly. Line managers' implicit rights do not open
+workspaces: approving a timesheet or giving interview feedback happens in the inbox and apps,
+not in the Projects or Hire workspaces.
+
+### No streaming shell for authorised pages
+A segment `loading.tsx` streams the layout before the page runs, after which `forbidden()` and
+`notFound()` can no longer set the status — every 403 and 404 would answer 200. Navigation
+feedback is a progress bar in the shell instead, which leaves status codes intact.
+
+### The directory is a policy, not a leak
+`lib/directory.ts` defines the only employee fields one colleague sees of another: name, title,
+department, business unit, location, work email, manager, joining date and "about me". The
+search API, directory, organisation tree, team cards and profiles all select through it.
+Everything personal or financial stays behind the employee permissions and their scopes.
+
+### Declarations count once, everywhere
+The section rules (which sections each regime allows, each ceiling, the shared 80C limit, the
+₹2 lakh house-property loss) live in `services/declarations.ts`. The tax pages use them to
+accept or refuse a line, and payroll uses them to compute TDS — so what an employee sees as
+their projected tax is what the run deducts.
+
+### Who decided is a column
+Leave requests record who raised them on someone's behalf and who cancelled them; expense
+claims and timesheets record who rejected them. Screens read the columns and fall back to the
+audit trail only for rows older than the columns.

@@ -1,0 +1,19 @@
+# Untested in the authoring environment (no Docker available).
+services:
+  db:
+    image: postgres:17
+    environment: { POSTGRES_USER: keka, POSTGRES_PASSWORD: keka, POSTGRES_DB: keka }
+    volumes: [db:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U keka"], interval: 5s, retries: 10 }
+  app:
+    build: .
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      DATABASE_URL: postgresql://keka:keka@db:5432/keka?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET}
+      APP_URL: ${APP_URL:-http://localhost:3100}
+      STORAGE_DIR: /data/storage
+      MAIL_DIR: /data/mail
+    volumes: [files:/data]
+    ports: ["3100:3100"]
+volumes: { db: {}, files: {} }

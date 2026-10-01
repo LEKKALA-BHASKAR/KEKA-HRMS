@@ -23,6 +23,7 @@ enum AccountClass {
 model Account {
   id            String       @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   legalEntityId String?
 
   code          String
@@ -87,6 +88,7 @@ enum LedgerSource {
 model LedgerEntry {
   id            String            @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   legalEntityId String?
 
   /// Sequential within the tenant, assigned on posting.
@@ -132,7 +134,7 @@ model LedgerLine {
   entryId     String
   entry       LedgerEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
   accountId   String
-  account     Account     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  account     Account     @relation(fields: [accountId], references: [id], onDelete: NoAction)
 
   /// Exactly one of debit or credit is non-zero on any line.
   debit       Decimal     @default(0) @db.Decimal(18, 2)
@@ -157,6 +159,7 @@ model LedgerLine {
 model AccountingPeriod {
   id            String   @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   legalEntityId String?
 
   /// e.g. "2026-06"
@@ -179,6 +182,7 @@ model AccountingPeriod {
 model ExpenseCategory {
   id            String   @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name          String
   description   String?
@@ -205,6 +209,7 @@ model ExpenseCategory {
 model ExpensePolicy {
   id            String   @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name          String
   description   String?
@@ -260,6 +265,7 @@ enum ClaimStage {
 model ExpenseClaim {
   id            String        @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId    String
   employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   policyId      String?
@@ -285,6 +291,9 @@ model ExpenseClaim {
   approvedBy    String?
   approvedAt    DateTime?
   rejectReason  String?
+  /// User who rejected it, and when.
+  rejectedBy    String?
+  rejectedAt    DateTime?
   paidAt        DateTime?
 
   createdAt     DateTime      @default(now())
@@ -303,7 +312,7 @@ model ExpenseClaimLine {
   claimId     String
   claim       ExpenseClaim    @relation(fields: [claimId], references: [id], onDelete: Cascade)
   categoryId  String
-  category    ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  category    ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: NoAction)
 
   expenseDate DateTime
   description String?
@@ -341,6 +350,7 @@ enum AdvanceStatus {
 model CashAdvance {
   id            String        @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId    String
   employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
@@ -381,6 +391,7 @@ enum TripStatus {
 model TravelRequest {
   id            String     @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId    String
   employee      Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 

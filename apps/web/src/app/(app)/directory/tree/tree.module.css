@@ -1,0 +1,204 @@
+/* Org → Employees → Organization Tree. Light palette; tokens from globals.css. */
+
+.head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 2px 0 16px; }
+.title { font-size: 20px; font-weight: 500; letter-spacing: -0.015em; color: var(--text); }
+.sub { margin-top: 4px; font-size: 13.5px; color: var(--text-muted); }
+.sub a { color: var(--brand-700); font-weight: 550; }
+.sub a:hover { text-decoration: underline; }
+
+.emptyWrap { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; }
+
+.frame {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.toolGroup { display: flex; align-items: center; gap: 6px; }
+.hint { font-size: 12px; color: var(--text-subtle); margin-right: 8px; }
+.zoomValue { min-width: 42px; text-align: center; font-size: 12.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+.scroller {
+  position: relative;
+  overflow: auto;
+  height: calc(100vh - 290px);
+  min-height: 420px;
+  cursor: grab;
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--border-strong) 55%, transparent) 1px, transparent 1.2px) 0 0 / 22px 22px,
+    var(--surface-2);
+  overscroll-behavior: contain;
+}
+.scroller[data-dragging="true"] { cursor: grabbing; user-select: none; }
+
+/* Wide enough to hold the tree, never narrower than the frame, so a small
+   tree sits in the middle and a large one scrolls. */
+.canvas {
+  display: flex;
+  justify-content: center;
+  width: max-content;
+  min-width: 100%;
+  padding: 32px 40px 56px;
+}
+
+/* --- The tree: nested lists joined by lines drawn with pseudo-elements. --- */
+.tree, .tree ul {
+  --line: var(--border-strong);
+  display: flex;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tree ul { position: relative; padding-top: 30px; }
+.tree li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 22px 9px 0;
+}
+.tree > li { padding-top: 0; }
+
+/* Half a horizontal bar on each side of a card, and a drop into it. */
+.tree ul li::before,
+.tree ul li::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 50%;
+  width: 50%;
+  height: 22px;
+  border-top: 1.5px solid var(--line);
+}
+.tree ul li::after { right: auto; left: 50%; border-left: 1.5px solid var(--line); }
+.tree ul li:only-child::before, .tree ul li:only-child::after { display: none; }
+.tree ul li:only-child { padding-top: 0; }
+.tree ul li:first-child::before, .tree ul li:last-child::after { border: 0 none; }
+.tree ul li:last-child::before { border-right: 1.5px solid var(--line); border-top-right-radius: 8px; }
+.tree ul li:first-child::after { border-top-left-radius: 8px; }
+/* The drop from a manager down to their team's bar. */
+.tree ul::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  height: 30px;
+  border-left: 1.5px solid var(--line);
+}
+
+/* --- A person ---------------------------------------------------------- */
+.node {
+  position: relative;
+  width: 196px;
+  padding: 16px 12px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-xs);
+  cursor: default;
+  transition: border-color .12s, box-shadow .12s;
+}
+.node:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.node :global(.k-avatar) { margin-bottom: 6px; }
+
+.me {
+  border-color: var(--brand-500);
+  background: var(--brand-50);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-500) 18%, transparent);
+}
+.me:hover { border-color: var(--brand-600); }
+.you {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--brand-600);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.name {
+  max-width: 100%;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.name:hover { color: var(--brand-700); text-decoration: underline; }
+.role, .dept {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.role { font-size: 12px; color: var(--text-muted); }
+.dept { font-size: 11.5px; color: var(--text-subtle); }
+
+.focus {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--text-subtle);
+  opacity: 0;
+  transition: opacity .12s;
+}
+.node:hover .focus, .focus:focus-visible { opacity: 1; }
+.focus:hover { background: var(--surface-hover); color: var(--brand-700); }
+
+/* The report count, sitting on the card's bottom edge. */
+.toggle {
+  position: absolute;
+  left: 50%;
+  bottom: -12px;
+  transform: translateX(-50%);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 6px 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font: 600 11.5px var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.toggle svg { width: 14px; height: 14px; transition: transform .15s; }
+.toggle:hover { border-color: var(--brand-500); color: var(--brand-700); }
+.toggleOpen { background: var(--brand-600); border-color: var(--brand-600); color: #fff; }
+.toggleOpen:hover { background: var(--brand-700); border-color: var(--brand-700); color: #fff; }
+.toggleOpen svg { transform: rotate(180deg); }
+
+@media (max-width: 900px) {
+  .scroller { height: calc(100vh - 250px); }
+  .hint { display: none; }
+}

@@ -9,6 +9,7 @@
 model IndicatorCategory {
   id          String   @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name        String
   description String?
   /// Relative weight when rolling up to an overall rating. Categories in a
@@ -80,6 +81,7 @@ enum GoalStatus {
 model GoalType {
   id          String   @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name        String
   description String?
   /// Default timeline in days, used to prefill new goals.
@@ -97,6 +99,7 @@ model GoalType {
 model Goal {
   id            String         @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   goalTypeId    String?
   goalType      GoalType?      @relation(fields: [goalTypeId], references: [id], onDelete: SetNull)
 
@@ -185,6 +188,7 @@ enum ReviewCycleStatus {
 model ReviewCycle {
   id            String            @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name          String
   timing        ReviewTiming      @default(SYNCHRONOUS)
@@ -341,6 +345,7 @@ model PerformanceBand {
 model ImprovementPlan {
   id          String    @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId  String
   employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
@@ -370,6 +375,7 @@ model ImprovementPlan {
 model Skill {
   id          String   @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name        String
   category    String?
   description String?
@@ -409,4 +415,36 @@ model EmployeeSkill {
   @@unique([employeeId, skillId])
   @@index([skillId])
   @@map("employee_skills")
+}
+
+// ---------------------------------------------------------------------------
+//  CONTINUOUS FEEDBACK
+// ---------------------------------------------------------------------------
+
+enum FeedbackKind {
+  /// Shared with the person it is about.
+  FEEDBACK
+  /// A manager's private note: seen by its author and the subject's manager
+  /// line, never by the subject.
+  INTERNAL_NOTE
+}
+
+/// Feedback between colleagues, outside a review cycle.
+model Feedback {
+  id              String       @id @default(cuid())
+  tenantId        String
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fromEmployeeId  String
+  fromEmployee    Employee     @relation("FeedbackGiven", fields: [fromEmployeeId], references: [id], onDelete: Cascade)
+  aboutEmployeeId String
+  aboutEmployee   Employee     @relation("FeedbackReceived", fields: [aboutEmployeeId], references: [id], onDelete: Cascade)
+  kind            FeedbackKind @default(FEEDBACK)
+  /// What it concerns — a project, a skill, a behaviour.
+  topic           String?
+  message         String
+  createdAt       DateTime     @default(now())
+
+  @@index([tenantId, aboutEmployeeId])
+  @@index([fromEmployeeId])
+  @@map("feedback")
 }

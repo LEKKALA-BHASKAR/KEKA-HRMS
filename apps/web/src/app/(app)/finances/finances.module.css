@@ -1,0 +1,231 @@
+/* My Finances — Summary, My Pay and Manage Tax. Light palette tokens only. */
+
+/* ---------- Shared ---------- */
+.stack { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+.cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start; margin-top: 24px; }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 28px; }
+.span2 { grid-column: 1 / -1; }
+.ellipsis { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.subhead { font-size: 17px; font-weight: 500; letter-spacing: -0.01em; margin: 0 0 18px; color: var(--text); }
+.group + .group { margin-top: 32px; }
+.ruled > :global(.k-panel-head) { padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.ruled > :global(.k-panel-head) + div { padding-top: 24px; }
+.muted { color: var(--text-muted); }
+.link { color: var(--brand-600); font-weight: 500; }
+.link:hover { color: var(--brand-800); text-decoration: underline; }
+.boxed { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+.pad { padding: 20px 24px; }
+.mt { margin-top: 24px; }
+.num { font-variant-numeric: tabular-nums; }
+.right { text-align: right; }
+.inlineRow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* ---------- Summary ---------- */
+.strip { display: flex; align-items: center; gap: 28px 64px; flex-wrap: wrap; padding: 26px 26px; }
+.stripTitle { font-size: 21px; font-weight: 400; letter-spacing: -0.015em; min-width: 200px; margin-right: 48px; }
+.idHead { display: flex; align-items: center; gap: 12px; padding-bottom: 16px; margin-bottom: 22px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.idTitle { font-size: 17px; font-weight: 500; }
+.files { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--brand-600); font-size: 14px; white-space: nowrap; }
+.files svg { color: var(--text-subtle); }
+.idSection { font-size: 17px; font-weight: 600; margin: 34px 0 18px; }
+
+/* ---------- My Salary ---------- */
+.compRow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr); gap: 24px; }
+.payroll { display: flex; align-items: center; gap: 28px 64px; flex-wrap: wrap; }
+.payrollTitle { font-size: 21px; font-weight: 400; }
+.timeline { list-style: none; margin: 22px 0 0; padding: 0; }
+.tlItem { display: grid; grid-template-columns: 40px minmax(0, 1fr); column-gap: 16px; }
+.tlRail { position: relative; display: flex; justify-content: center; }
+.tlRail::after { content: ""; position: absolute; top: 40px; bottom: 0; left: 50%; width: 2px; margin-left: -1px; background: var(--border-strong); }
+.tlItem:last-child .tlRail::after { display: none; }
+.tlDot { position: relative; z-index: 1; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: #9b7ede; color: #fff; }
+.tlHead { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; min-height: 38px; }
+.tlTitle { font-size: 17px; font-weight: 500; }
+.tlBody { padding: 12px 0 30px; min-width: 0; }
+.salaryBox { border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); }
+.salaryBox > summary { list-style: none; display: flex; align-items: center; gap: 18px 30px; flex-wrap: wrap; padding: 22px 24px; cursor: pointer; border-radius: 4px; }
+.salaryBox > summary::-webkit-details-marker { display: none; }
+.salaryBox > summary:hover { background: var(--surface-hover); }
+.chev { color: var(--text-muted); transition: transform .15s ease; flex-shrink: 0; }
+.salaryBox[open] .chev { transform: rotate(90deg); }
+.eq { color: var(--text-muted); font-size: 18px; }
+.viewLink { margin-left: auto; color: var(--brand-600); font-size: 15px; }
+.whenOpen { display: none; }
+.salaryBox[open] .whenOpen { display: inline; }
+.salaryBox[open] .whenClosed { display: none; }
+.breakdown { border-top: 1px solid var(--border); padding: 18px 24px 22px; background: var(--surface); border-radius: 0 0 4px 4px; }
+
+/* ---------- Tables ---------- */
+.tableWrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
+.table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+.table th {
+  text-align: left; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-subtle); padding: 13px 20px; background: var(--surface-2); border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.table td { padding: 15px 20px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tr:last-child td { border-bottom: 0; }
+.table .totalRow td { font-weight: 600; background: var(--surface-2); }
+.table .groupRow td { font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-subtle); background: var(--surface-2); padding-top: 10px; padding-bottom: 10px; }
+.compact td, .compact th { padding: 10px 16px; }
+.table th.right, .table td.right { text-align: right; }
+
+/* ---------- Payslips ---------- */
+.pageHead { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.pageTitle { font-size: 21px; font-weight: 400; letter-spacing: -0.015em; }
+.pageSub { color: var(--text-muted); margin-top: 6px; font-size: 14.5px; }
+.downloads { position: relative; }
+.downloads > summary { list-style: none; display: inline-flex; align-items: center; gap: 6px; color: var(--brand-600); cursor: pointer; font-size: 14.5px; }
+.downloads > summary::-webkit-details-marker { display: none; }
+.downloadMenu {
+  position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; min-width: 240px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-lg);
+}
+.downloadMenu a { display: flex; justify-content: space-between; gap: 16px; padding: 8px 10px; border-radius: 5px; font-size: 14px; }
+.downloadMenu a:hover { background: var(--surface-hover); }
+select.yearSelect { width: 360px; max-width: 100%; height: 44px; margin-top: 22px; font-size: 15px; }
+.slipLayout { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 22px; }
+.monthList { border: 1px solid var(--border); border-radius: 4px; background: var(--surface); overflow: hidden; }
+.monthListHead { font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-subtle); padding: 12px 18px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.monthItem { display: block; padding: 12px 18px; border-bottom: 1px solid var(--border); font-size: 15px; color: var(--text); }
+.monthItem:last-child { border-bottom: 0; }
+.monthItem:hover { background: var(--surface-hover); }
+.monthItemActive { background: var(--brand-50); color: var(--brand-700); font-weight: 600; box-shadow: inset 3px 0 0 var(--brand-600); }
+.monthItemActive:hover { background: var(--brand-50); }
+.frame { border: 1px solid var(--border); border-radius: 4px; background: var(--surface-sunken); margin-top: 18px; }
+.frameHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 20px; background: var(--surface); border-bottom: 1px solid var(--border); border-radius: 4px 4px 0 0; font-size: 15px; }
+
+/* The payslip itself: a white sheet, as it prints. */
+.sheet { margin: 20px; background: var(--surface); border: 1px solid var(--border); padding: 36px 44px 32px; color: var(--text); }
+.sheetTop { display: flex; justify-content: space-between; gap: 24px; }
+.sheetTitle { font-size: 25px; font-weight: 400; letter-spacing: -0.01em; text-transform: uppercase; }
+.sheetTitle strong { font-weight: 700; }
+.company { margin-top: 14px; font-size: 14px; text-transform: uppercase; letter-spacing: .01em; }
+.address { margin-top: 8px; font-size: 12px; line-height: 1.65; color: var(--text-muted); text-transform: uppercase; max-width: 320px; }
+.logo { width: 96px; height: 96px; flex-shrink: 0; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 4px; font-size: 30px; font-weight: 800; color: var(--brand-600); background: var(--brand-50); letter-spacing: -0.04em; }
+.logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.empName { margin-top: 40px; padding-bottom: 12px; border-bottom: 2px solid var(--brand-200); font-size: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: .01em; }
+.detailGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.detailGrid > div { padding: 14px 12px 14px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.dLabel { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-subtle); }
+.dValue { font-size: 13.5px; margin-top: 3px; overflow-wrap: anywhere; }
+.sheetSection { margin-top: 34px; padding-bottom: 10px; border-bottom: 2px solid var(--brand-200); font-size: 15px; font-weight: 600; text-transform: uppercase; }
+.money { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); margin-top: 20px; }
+.money > div:first-child { padding-right: 28px; border-right: 1px solid var(--border); }
+.money > div:last-child { padding-left: 28px; }
+.moneyHead { font-size: 12.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; margin-bottom: 6px; }
+.moneyHead:not(:first-child) { margin-top: 22px; }
+.line { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; font-size: 13.5px; }
+.line span:last-child { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lineTotal { font-weight: 600; }
+.lineNote { font-size: 12px; color: var(--text-subtle); }
+.netBox { margin-top: 26px; background: var(--brand-50); border-radius: 3px; padding: 6px 16px; }
+.netBox > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 16px; padding: 9px 0; font-size: 13.5px; }
+.netBox > div > span:first-child { font-weight: 600; }
+.netBox > div > span:last-child { font-variant-numeric: tabular-nums; }
+.notes { margin-top: 26px; font-size: 13px; color: var(--text-muted); font-style: italic; line-height: 1.7; }
+.notes strong { font-style: normal; color: var(--text); }
+
+/* ---------- Manage Tax ---------- */
+.titleRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.titleLeft { display: flex; align-items: center; gap: 12px; }
+.bigTitle { font-size: 28px; font-weight: 400; letter-spacing: -0.02em; }
+select.fySelect { width: auto; min-width: 240px; height: 46px; padding-right: 14px; font-size: 15px; font-weight: 500; letter-spacing: .02em; }
+.history { position: relative; }
+.history > summary { list-style: none; display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; color: var(--text-muted); cursor: pointer; }
+.history > summary::-webkit-details-marker { display: none; }
+.history > summary:hover { background: var(--surface-hover); color: var(--text); }
+.historyPanel {
+  position: absolute; z-index: 25; top: calc(100% + 6px); left: 0; width: min(440px, 80vw); max-height: 380px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-lg); padding: 8px 0;
+}
+.historyItem { padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+.historyItem:last-child { border-bottom: 0; }
+.windows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 22px; }
+.windowCard { padding: 20px 22px; }
+.windowHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.windowTitle { font-size: 19px; font-weight: 400; }
+.status { display: inline-flex; align-items: center; gap: 10px; }
+.statusDot { width: 15px; height: 15px; border-radius: 50%; display: inline-block; }
+.windowNote { margin-top: 12px; font-size: 14.5px; color: var(--text-muted); }
+.windowMeta { margin-top: 12px; display: flex; gap: 28px; font-size: 14.5px; }
+.figures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-top: 24px; }
+.figure { padding: 18px 20px; display: flex; flex-direction: column; min-width: 0; }
+.figureLabel { font-size: 14.5px; display: flex; justify-content: space-between; gap: 8px; }
+.figureRow { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+.figureValue { font-size: clamp(26px, 2.3vw, 34px); font-weight: 400; letter-spacing: -0.02em; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.innerTabs { display: flex; margin-top: 24px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); overflow-x: auto; scrollbar-width: thin; }
+.innerTab { padding: 17px clamp(14px, 1.5vw, 24px); white-space: nowrap; flex: 0 0 auto; color: var(--text-muted); font-size: 15px; }
+.innerTab:hover { color: var(--text); background: var(--surface-hover); }
+.innerTabActive { background: var(--brand-50); color: var(--brand-700); font-weight: 600; box-shadow: inset 0 -3px 0 var(--brand-600); }
+.innerTabActive:hover { background: var(--brand-50); color: var(--brand-700); }
+.sectionHead { margin: 30px 0 16px; }
+.sectionHead h2 { font-size: 21px; font-weight: 400; letter-spacing: -0.015em; }
+.sectionHead p { color: var(--text-muted); margin-top: 6px; font-size: 14.5px; }
+.taxTotals { display: flex; gap: 24px 64px; flex-wrap: wrap; padding: 22px 24px; }
+.monthTable th, .monthTable td { padding: 12px 14px; }
+.monthTable th:first-child, .monthTable td:first-child { position: sticky; left: 0; background: var(--surface-2); min-width: 130px; border-right: 1px solid var(--border); }
+.monthTable th { border-right: 1px solid var(--border); }
+.monthTable td { border-right: 1px solid var(--border); white-space: nowrap; }
+.monthCell { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; line-height: 1.5; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; margin-top: 5px; }
+.dotProjected { background: #f5b83d; }
+.dotPrevious { background: #36b8c9; }
+.dotProcessed { background: #9b7ede; }
+.legend { display: flex; gap: 10px 26px; flex-wrap: wrap; padding: 16px 20px; font-size: 14px; border-top: 1px solid var(--border); }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.legend .dot { margin-top: 0; border-radius: 2px; }
+.form { margin-top: 18px; padding: 20px 22px; }
+.formGrid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, .8fr) auto; gap: 14px; align-items: end; }
+.formGrid :global(.field) { margin-bottom: 0; }
+.fieldsForm { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+.capHint { font-size: 12.5px; color: var(--text-subtle); margin-top: 10px; }
+.proofCell { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.proofForm { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.proofForm input[type="file"] { max-width: 210px; font-size: 12.5px; }
+.status_APPROVED { color: var(--success); }
+.status_REJECTED { color: var(--danger); }
+.status_SUBMITTED { color: var(--info); }
+.status_NOT_SUBMITTED { color: var(--warning); }
+
+/* ---------- Income Tax computation ---------- */
+.calc { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 24px; }
+.calcRow { display: flex; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 14.5px; }
+.calcRow:last-child { border-bottom: 0; }
+.calcRow span:last-child { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.calcIndent { padding-left: 18px; color: var(--text-muted); font-size: 13.5px; }
+.calcStrong { font-weight: 600; }
+.calcHead { font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-subtle); padding: 18px 0 6px; border-bottom: 1px solid var(--border); }
+.calcHead:first-child { padding-top: 0; }
+.regimes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.regimeCard { border: 1px solid var(--border); border-radius: 6px; padding: 16px; }
+.regimeCardActive { border-color: var(--brand-500); box-shadow: 0 0 0 1px var(--brand-500) inset; background: var(--brand-50); }
+.regimeName { font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.regimeValue { font-size: 24px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 1100px) {
+  .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .slipLayout { grid-template-columns: 280px minmax(0, 1fr); }
+  .formGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .calc { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 960px) {
+  .cols, .compRow, .windows, .slipLayout { grid-template-columns: minmax(0, 1fr); }
+  .detailGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sheet { margin: 12px; padding: 24px 20px; }
+  .money { grid-template-columns: minmax(0, 1fr); }
+  .money > div:first-child { padding-right: 0; border-right: 0; }
+  .money > div:last-child { padding-left: 0; margin-top: 22px; }
+  .stripTitle { margin-right: 0; }
+}
+@media (max-width: 640px) {
+  .fields, .figures, .regimes, .formGrid, .fieldsForm { grid-template-columns: minmax(0, 1fr); }
+  select.yearSelect, select.fySelect { width: 100%; }
+  .sheetTop { flex-direction: column-reverse; }
+  .viewLink { margin-left: 0; }
+}
+@media print {
+  .slipLayout { grid-template-columns: minmax(0, 1fr); }
+  .monthList, .frameHead, .pageHead, .yearSelect { display: none; }
+  .frame { border: 0; background: none; }
+  .sheet { margin: 0; border: 0; }
+}

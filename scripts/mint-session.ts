@@ -22,7 +22,7 @@ async function main() {
   if (!secret) throw new Error("AUTH_SECRET is not set");
 
   const token = await new SignJWT({
-    userId: user.id, tenantId: user.tenantId, email: user.email,
+    userId: user.id, tenantId: user.tenantId, email: user.email, sv: user.sessionVersion,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()

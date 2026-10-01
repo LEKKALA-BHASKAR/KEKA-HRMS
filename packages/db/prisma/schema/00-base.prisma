@@ -70,6 +70,86 @@ model Tenant {
   salaryComponents   SalaryComponent[]
   payrollRuns        PayrollRun[]
   visibilitySetting  TenantVisibilitySetting?
+  securitySetting    TenantSecuritySetting?
+  loginEvents        LoginEvent[]
+
+
+  // --- Ownership of tenant-scoped records (cascade on tenant deletion) ---
+  accountMappings AccountMapping[]
+  accountingPeriods AccountingPeriod[]
+  accounts Account[]
+  announcements Announcement[]
+  applications Application[]
+  assetCategories AssetCategory[]
+  assetIdSeries AssetIdSeries[]
+  assetRequests AssetRequest[]
+  assets Asset[]
+  attendanceLogs AttendanceLog[]
+  attendancePolicies AttendancePolicy[]
+  attendanceRecords AttendanceRecord[]
+  attendanceRequests AttendanceRequest[]
+  awardTypes AwardType[]
+  bgvChecks BgvCheck[]
+  bonusTypes BonusType[]
+  candidates Candidate[]
+  cashAdvances CashAdvance[]
+  clients Client[]
+  documentFolders DocumentFolder[]
+  documentTemplates DocumentTemplate[]
+  emailOutbox EmailOutbox[]
+  employeeAwards EmployeeAward[]
+  employeeContracts EmployeeContract[]
+  employeeDocuments EmployeeDocument[]
+  expenseCategories ExpenseCategory[]
+  expenseClaims ExpenseClaim[]
+  expensePolicies ExpensePolicy[]
+  goalTypes GoalType[]
+  goals Goal[]
+  helpdeskCategories HelpdeskCategory[]
+  helpdeskTickets HelpdeskTicket[]
+  hiringFlows HiringFlow[]
+  holidayCalendars HolidayCalendar[]
+  hrActivities HrActivity[]
+  improvementPlans ImprovementPlan[]
+  indicatorCategories IndicatorCategory[]
+  invoices Invoice[]
+  jobs Job[]
+  journeyTemplates JourneyTemplate[]
+  journeys Journey[]
+  leaveLedgerEntries LeaveLedgerEntry[]
+  leavePlans LeavePlan[]
+  leaveRequests LeaveRequest[]
+  leaveTypes LeaveType[]
+  ledgerEntries LedgerEntry[]
+  loanCategories LoanCategory[]
+  loanPolicies LoanPolicy[]
+  lopAdjustments LopAdjustment[]
+  meetingRooms MeetingRoom[]
+  meetings Meeting[]
+  noticePeriodPolicies NoticePeriodPolicy[]
+  notifications Notification[]
+  orgDocuments OrgDocument[]
+  otpChallenges OtpChallenge[]
+  overtimeEntries OvertimeEntry[]
+  praises Praise[]
+  feedback Feedback[]
+  projects Project[]
+  rateCards RateCard[]
+  requisitions Requisition[]
+  reviewCycles ReviewCycle[]
+  shiftAllowanceEntries ShiftAllowanceEntry[]
+  shifts Shift[]
+  skills Skill[]
+  statutoryFilings StatutoryFiling[]
+  storedFiles StoredFile[]
+  tasks Task[]
+  tdsChallans TdsChallan[]
+  timeEntries TimeEntry[]
+  timesheets Timesheet[]
+  trainingPrograms TrainingProgram[]
+  trainingTypes TrainingType[]
+  travelRequests TravelRequest[]
+  weeklyOffPolicies WeeklyOffPolicy[]
 
   @@index([subdomain])
   @@map("tenants")
@@ -93,6 +173,59 @@ model TenantVisibilitySetting {
   updatedAt               DateTime @updatedAt
 
   @@map("tenant_visibility_settings")
+}
+
+enum TwoFactorPolicy {
+  OFF
+  /// Anyone holding an administrative role.
+  ADMINS
+  EVERYONE
+}
+
+/// Authentication policy for a tenant.
+model TenantSecuritySetting {
+  id                   String   @id @default(cuid())
+  tenantId             String   @unique
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  minPasswordLength    Int      @default(8)
+  requireMixedCase     Boolean  @default(true)
+  requireNumber        Boolean  @default(true)
+  requireSymbol        Boolean  @default(true)
+  /// Days before a password must be changed; null never expires.
+  passwordExpiryDays   Int?
+  /// How many previous passwords cannot be reused.
+  passwordHistoryCount Int      @default(3)
+
+  maxFailedAttempts    Int      @default(5)
+  lockoutMinutes       Int      @default(15)
+  sessionHours         Int      @default(8)
+  twoFactorPolicy      TwoFactorPolicy @default(OFF)
+
+  updatedAt            DateTime @updatedAt
+
+  @@map("tenant_security_settings")
+}
+
+/// Every sign-in attempt, successful or not. Drives lockout, rate limiting
+/// and the security log administrators review.
+model LoginEvent {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String?
+  email       String
+  ipAddress   String?
+  userAgent   String?
+  success     Boolean
+  /// BAD_CREDENTIALS | LOCKED | RATE_LIMITED | DISABLED | OTP_SENT | OTP_FAILED | OK
+  outcome     String
+  createdAt   DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([ipAddress, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("login_events")
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +258,16 @@ model User {
   /// Disable Login — "effect is immediate, with no delay or grace period".
   /// Distinct from deactivation and from exit (Teardown Part 05).
   loginDisabled  Boolean  @default(false)
+  /// Consecutive failed sign-ins; reset on success.
+  failedLoginCount Int     @default(0)
+  lockedUntil    DateTime?
+  passwordChangedAt DateTime?
+  /// Set by an administrator or an expired password.
+  mustChangePassword Boolean @default(false)
+  /// Recent password hashes, newest first, to refuse reuse.
+  passwordHistory Json?
+  /// Bumped to revoke every live session at once.
+  sessionVersion Int      @default(0)
   /// Temporary deactivation, e.g. sabbatical or extended leave.
   isDeactivated  Boolean  @default(false)
 
@@ -164,6 +307,7 @@ model Session {
 model OtpChallenge {
   id         String   @id @default(cuid())
   tenantId   String
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   identifier String   // email or phone
   codeHash   String
   purpose    String   // LOGIN | TWO_FACTOR
@@ -264,6 +408,10 @@ enum AuditModule {
   ROLE
   AUTH
   FINANCE
+  REPORT
+  LIFECYCLE
+  HELPDESK
+  SYSTEM
 }
 
 enum AuditAction {

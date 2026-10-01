@@ -1,16 +1,11 @@
 import type { ReactNode } from "react";
 import { formatINR, formatINRCompact } from "@keka/shared";
+import { Avatar as ColourAvatar } from "./avatar";
 
 /** Shared presentational primitives. Server components — no client JS. */
 
-export function Avatar({ name, size = "md" }: { name: string; size?: "sm" | "md" | "lg" }) {
-  const initials = name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? "")
-    .join("");
-  return <div className={`avatar${size === "lg" ? " lg" : size === "sm" ? " sm" : ""}`}>{initials}</div>;
+export function Avatar({ name, size = "md", photoUrl }: { name: string; size?: "sm" | "md" | "lg"; photoUrl?: string | null }) {
+  return <ColourAvatar name={name} photoUrl={photoUrl} size={size === "lg" ? 56 : size === "sm" ? 24 : 32} />;
 }
 
 export function Person({

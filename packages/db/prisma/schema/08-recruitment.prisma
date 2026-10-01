@@ -25,6 +25,7 @@ enum RequisitionStatus {
 model Requisition {
   id            String            @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   title         String
   type          RequisitionType   @default(NEW_HIRE)
@@ -79,6 +80,7 @@ enum JobStatus {
 model HiringFlow {
   id          String   @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name        String
   isDefault   Boolean  @default(false)
   isActive    Boolean  @default(true)
@@ -117,6 +119,7 @@ model HiringStage {
 model Job {
   id            String       @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   requisitionId String?
   requisition   Requisition? @relation(fields: [requisitionId], references: [id], onDelete: SetNull)
   flowId        String?
@@ -186,6 +189,7 @@ enum CandidateSource {
 model Candidate {
   id            String          @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   firstName     String
   lastName      String
@@ -235,6 +239,7 @@ enum ApplicationStatus {
 model Application {
   id            String            @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   jobId         String
   job           Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
   candidateId   String
@@ -403,6 +408,7 @@ model Offer {
 model BgvCheck {
   id            String    @id @default(cuid())
   tenantId      String
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   /// Exactly one of these is set.
   candidateId   String?
   employeeId    String?

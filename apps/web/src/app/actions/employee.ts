@@ -4,7 +4,9 @@ import bcrypt from "bcryptjs";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { selectStructureForCtc } from "@keka/payroll";
+import { startJourney, recomputeProfileCompletion } from "@keka/services";
 import { requireAuth, requireViewer } from "@/lib/context";
+import { foreignReference } from "@/lib/ownership";
 import {
   z, parseForm, toErrorState, writeAudit, actionDone as done, formList,
   zName, zOptional, zNumber, zRequiredNumber, zDate, zRequiredDate, zBool,
@@ -66,42 +68,9 @@ async function allocateEmployeeNumber(
   );
 }
 
-/** Profile completeness, recomputed whenever the record changes. */
-function profileCompletion(e: {
-  workEmail: string | null; mobile: string | null; dateOfBirth: Date | null;
-  gender: string | null; departmentId: string | null; locationId: string | null;
-  jobTitleName: string | null; reportingManagerId: string | null;
-  addressCount: number; identityCount: number; bankCount: number;
-}): number {
-  const checks = [
-    !!e.workEmail, !!e.mobile, !!e.dateOfBirth, !!e.gender,
-    !!e.departmentId, !!e.locationId, !!e.jobTitleName, !!e.reportingManagerId,
-    e.addressCount > 0, e.identityCount > 0, e.bankCount > 0,
-  ];
-  return Math.round((checks.filter(Boolean).length / checks.length) * 100);
-}
-
+/** Profile completeness, recomputed whenever the record changes (one definition, in services). */
 async function recomputeCompletion(employeeId: string): Promise<void> {
-  const e = await prisma.employee.findUnique({
-    where: { id: employeeId },
-    select: {
-      workEmail: true, mobile: true, dateOfBirth: true, gender: true,
-      departmentId: true, locationId: true, jobTitleName: true, reportingManagerId: true,
-      _count: { select: { addresses: true, identityDocs: true, bankAccounts: true } },
-    },
-  });
-  if (!e) return;
-  await prisma.employee.update({
-    where: { id: employeeId },
-    data: {
-      profileCompletion: profileCompletion({
-        ...e,
-        addressCount: e._count.addresses,
-        identityCount: e._count.identityDocs,
-        bankCount: e._count.bankAccounts,
-      }),
-    },
-  });
+  await recomputeProfileCompletion(employeeId);
 }
 
 /** Guard: can the caller act on this specific employee record? */
@@ -174,6 +143,15 @@ export async function createEmployee(_prev: ActionState, formData: FormData): Pr
   const viewer = await requireAuth(P.EMPLOYEE_CREATE);
   const parsed = parseForm(createSchema, formData);
   if (parsed.state) return parsed.state;
+  {
+    const d0 = parsed.data;
+    const foreign = await foreignReference(viewer.tenantId, {
+      department: d0.departmentId, businessUnit: d0.businessUnitId, costCenter: d0.costCenterId, band: d0.bandId, payGrade: d0.payGradeId,
+      workerType: d0.workerTypeId, jobTitle: d0.jobTitleId, employee: d0.reportingManagerId, payGroup: d0.payGroupId,
+      salaryStructure: d0.salaryStructureId, leavePlan: d0.leavePlanId, numberSeries: d0.numberSeriesId,
+    });
+    if (foreign) return { ok: false, message: foreign };
+  }
   const d = parsed.data;
 
   // Cross-field checks the schema cannot express.
@@ -341,10 +319,17 @@ export async function createEmployee(_prev: ActionState, formData: FormData): Pr
       newValue: { employeeNumber: created.employeeNumber, annualCtc: d.annualCtc },
     });
 
+    // Joining is an event: start the onboarding journey it calls for.
+    const journey = await startJourney({
+      employeeId, trigger: "JOINING", anchorDate: d.dateOfJoining, createdBy: viewer.user.id,
+      sourceType: "Employee", sourceId: employeeId,
+    });
+
     return done(
-      ["/employees", "/org", "/"],
+      ["/employees", "/org", "/", "/onboarding"],
       `Created ${created.displayName} as ${created.employeeNumber}.` +
-        (d.inviteToPortal ? " A login was created — send them a password reset to activate it." : ""),
+        (d.inviteToPortal ? " A login was created — send them a password reset to activate it." : "") +
+        (journey.created ? ` Onboarding started with ${journey.tasks} task(s).` : ""),
     );
   } catch (err) {
     return toErrorState(err);
@@ -440,6 +425,11 @@ export async function recordJobChange(_prev: ActionState, formData: FormData): P
     requireAuth(P.EMPLOYEE_UPDATE), d.employeeId, P.EMPLOYEE_UPDATE,
   );
   if (denied) return { ok: false, message: denied };
+  const foreign = await foreignReference(viewer.tenantId, {
+    department: d.departmentId, location: d.locationId, businessUnit: d.businessUnitId, legalEntity: d.legalEntityId,
+    jobTitle: d.jobTitleId, band: d.bandId, payGrade: d.payGradeId, workerType: d.workerTypeId, employee: d.reportingManagerId,
+  });
+  if (foreign) return { ok: false, message: foreign };
 
   const before = await prisma.employee.findUniqueOrThrow({
     where: { id: d.employeeId },
@@ -549,9 +539,19 @@ export async function recordJobChange(_prev: ActionState, formData: FormData): P
       oldValue: { jobTitle: before.jobTitleName, department: before.department?.name, location: before.location?.name },
     });
 
+    // Promotions, transfers and confirmations each set work in motion.
+    const trigger = ({
+      PROMOTION: "PROMOTION", TRANSFER: "TRANSFER", LOCATION_CHANGE: "TRANSFER",
+      DEPARTMENT_CHANGE: "TRANSFER", CONFIRMATION: "CONFIRMATION",
+    } as const)[d.reason as "PROMOTION"];
+    const journey = trigger
+      ? await startJourney({ employeeId: d.employeeId, trigger, anchorDate: d.effectiveFrom, createdBy: viewer.user.id, sourceType: "EmployeeJobRecord" })
+      : null;
+
     return done(
-      [`/employees/${d.employeeId}`, "/employees", "/activities"],
-      `Recorded the change effective ${d.effectiveFrom.toISOString().slice(0, 10)}.${note}`,
+      [`/employees/${d.employeeId}`, "/employees", "/activities", "/onboarding"],
+      `Recorded the change effective ${d.effectiveFrom.toISOString().slice(0, 10)}.${note}` +
+        (journey?.created ? ` ${journey.tasks} follow-up task(s) were created.` : ""),
     );
   } catch (err) {
     return toErrorState(err, parsed.data as never);
@@ -594,6 +594,10 @@ export async function reviseSalary(_prev: ActionState, formData: FormData): Prom
   });
   if (!employee.payGroupId) {
     return { ok: false, message: "Assign a pay group before setting a salary." };
+  }
+  // A chosen structure must be one of the employee's own pay group's.
+  if (d.structureId && !(await prisma.salaryStructure.count({ where: { id: d.structureId, payGroupId: employee.payGroupId } }))) {
+    return { ok: false, message: "That structure is not in the employee's pay group.", errors: { structureId: "Not in this pay group" } };
   }
 
   const previous = employee.salaryRevisions[0];

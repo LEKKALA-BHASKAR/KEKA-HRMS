@@ -90,6 +90,7 @@ export default async function PayslipPage({ params }: { params: Promise<{ id: st
             <Badge tone={payslip.status === "RELEASED" ? "success" : "warning"}>
               {payslip.status.replace(/_/g, " ").toLowerCase()}
             </Badge>
+            <a className="btn primary" href={`/payroll/payslips/${payslip.id}/pdf`}>Download PDF</a>
             <Link className="btn" href={`/employees/${emp.id}?tab=finances`}>Employee</Link>
           </>
         }

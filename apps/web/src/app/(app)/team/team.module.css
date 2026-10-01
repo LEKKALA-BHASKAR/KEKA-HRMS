@@ -1,0 +1,170 @@
+/* My Team → Summary. Light palette tokens; day markers use soft tints with dark numerals. */
+
+.page {
+  --c-wfh: #e6dcfa;   --c-wfh-fg: #5a3ea6;
+  --c-od: #fbd6e3;    --c-od-fg: #a3284b;
+  --c-paid: #cbeef3;  --c-paid-fg: #0c6571;
+  --c-unpaid: #efe0cc; --c-unpaid-fg: #7a5427;
+  --c-noatt: #fdd6d6; --c-noatt-fg: #b42323;
+  --c-woff: #fde6ad;  --c-woff-fg: #855700;
+  --c-hldy: #d9efc4;  --c-hldy-fg: #3b6912;
+  --dot-leave: #e5484d; --dot-multi: #8e1d22; --dot-remote: #8a63d2;
+  display: flex; flex-direction: column; gap: 22px;
+}
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+
+/* ---- Top row ------------------------------------------------------------ */
+
+.topRow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.who { padding: 18px 22px 20px; min-height: 132px; }
+.whoTitle { font-size: 16px; font-weight: 500; margin-bottom: 14px; }
+.faces { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px; }
+.face { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 58px; color: var(--text); }
+.face span:last-child { max-width: 58px; font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+a.face:hover span:last-child { color: var(--brand-700); }
+.more {
+  align-self: center; border: 0; background: none; padding: 4px 6px; border-radius: 4px; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--brand-600);
+}
+.more:hover { background: var(--brand-50); }
+.quiet { font-size: 14px; color: var(--text-muted); }
+
+/* ---- Stat cards ---------------------------------------------------------- */
+
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px; }
+.stat {
+  position: relative; display: flex; flex-direction: column; justify-content: space-between; gap: 10px;
+  padding: 16px 18px 14px 22px; min-height: 104px; overflow: hidden;
+}
+.stat::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
+.statLabel { font-size: 13.5px; color: var(--text-muted); }
+.statFoot { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+.statValue { font-size: 28px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; }
+.viewLink {
+  border: 0; background: none; padding: 2px 0; cursor: pointer; font: inherit; font-size: 13px; color: var(--brand-600); white-space: nowrap;
+}
+.viewLink:hover { text-decoration: underline; }
+
+/* ---- The list modal (native popover: Esc and outside-click close it) ----- */
+
+.modal {
+  width: min(460px, calc(100vw - 32px)); max-height: min(72vh, 600px);
+  padding: 0; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg);
+}
+.modal:popover-open { display: flex; flex-direction: column; }
+.modal::backdrop { background: rgba(10, 20, 36, .38); }
+.modalHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.modalHead h3 { font-size: 16px; font-weight: 600; }
+.modalClose { border: 0; background: none; cursor: pointer; font-size: 22px; line-height: 1; color: var(--text-subtle); padding: 2px 6px; border-radius: 4px; }
+.modalClose:hover { background: var(--surface-hover); color: var(--text); }
+.modalList { list-style: none; margin: 0; padding: 6px 0; overflow-y: auto; }
+.modalList li { display: flex; align-items: center; gap: 12px; padding: 9px 18px; }
+.modalList li a { font-weight: 500; }
+.modalList li a:hover { color: var(--brand-700); text-decoration: underline; }
+.modalMeta { font-size: 12.5px; color: var(--text-muted); }
+.modalEmpty { padding: 28px 18px; text-align: center; color: var(--text-muted); font-size: 14px; }
+
+/* ---- Team calendar ------------------------------------------------------- */
+
+.sectionTitle { font-size: 19px; font-weight: 500; letter-spacing: -0.015em; margin: 8px 0 -8px; }
+.calPanel { padding: 16px 0 6px; }
+.calNav { display: flex; align-items: center; gap: 10px; padding: 0 20px 12px; }
+.calArrow {
+  width: 26px; height: 26px; display: inline-grid; place-items: center; border-radius: 4px;
+  background: var(--brand-600); color: #fff; font-size: 15px; line-height: 1;
+}
+.calArrow:hover { background: var(--brand-700); }
+.calNav strong { min-width: 84px; text-align: center; font-size: 14px; font-weight: 600; }
+.calToday { margin-left: 6px; font-size: 12.5px; color: var(--brand-600); }
+.calToday:hover { text-decoration: underline; }
+
+.calScroll { overflow-x: auto; padding: 0 20px 8px; scrollbar-width: thin; }
+.cal { border-collapse: separate; border-spacing: 0; min-width: 100%; font-size: 12.5px; }
+.cal th, .cal td { padding: 0; text-align: center; }
+.cal thead th { padding: 4px 0 8px; font-weight: 500; color: var(--text-muted); font-size: 12px; }
+.cal .nameCol {
+  position: sticky; left: 0; z-index: 2; background: var(--surface);
+  text-align: left; min-width: 200px; max-width: 200px; padding-right: 12px;
+}
+.cal tbody .nameCol { padding: 4px 12px 4px 0; font-weight: 400; }
+.nameCell { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.nameCell a { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nameCell a:hover { color: var(--brand-700); text-decoration: underline; }
+.dayHead { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 32px; }
+.dayHeadToday { color: var(--brand-700); font-weight: 700; }
+.markers { display: flex; gap: 2px; height: 5px; }
+.marker { width: 5px; height: 5px; border-radius: 50%; }
+.mLeave { background: var(--dot-leave); }
+.mMulti { background: var(--dot-multi); }
+.mRemote { background: var(--dot-remote); }
+
+.cal tbody tr + tr td, .cal tbody tr + tr th { border-top: 1px solid var(--surface-sunken); }
+.cell { height: 38px; min-width: 32px; }
+.todayCol { background: color-mix(in srgb, var(--brand-50) 70%, transparent); }
+.num {
+  display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+  color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.isToday .num { box-shadow: 0 0 0 2px var(--brand-500); color: var(--brand-700); font-weight: 700; }
+.m_paid { background: var(--c-paid); color: var(--c-paid-fg); font-weight: 600; }
+.m_unpaid { background: var(--c-unpaid); color: var(--c-unpaid-fg); font-weight: 600; }
+.m_noatt { background: var(--c-noatt); color: var(--c-noatt-fg); font-weight: 600; }
+.m_wfh { background: var(--c-wfh); color: var(--c-wfh-fg); font-weight: 600; }
+.m_od { background: var(--c-od); color: var(--c-od-fg); font-weight: 600; }
+.m_woff { background: var(--c-woff); color: var(--c-woff-fg); }
+.m_hldy { background: var(--c-hldy); color: var(--c-hldy-fg); font-weight: 600; }
+/* Half days: only one half of the circle is filled. */
+.h_first { background: linear-gradient(90deg, var(--fill) 50%, var(--surface-sunken) 50%); }
+.h_second { background: linear-gradient(90deg, var(--surface-sunken) 50%, var(--fill) 50%); }
+.m_paid.h_first, .m_paid.h_second { --fill: var(--c-paid); }
+.m_unpaid.h_first, .m_unpaid.h_second { --fill: var(--c-unpaid); }
+.m_woff.h_first, .m_woff.h_second { --fill: var(--c-woff); }
+
+.legend {
+  display: flex; flex-wrap: wrap; gap: 10px 22px; padding: 12px 20px 14px; margin-top: 4px;
+  border-top: 1px solid var(--border); font-size: 12.5px; color: var(--text-muted);
+}
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.swatch { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+
+/* ---- People cards -------------------------------------------------------- */
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 22px; }
+.card { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 16px; padding: 18px 18px 16px; position: relative; }
+.cardHead { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.cardName { flex: 1; min-width: 0; font-size: 15.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cardName a:hover { color: var(--brand-700); text-decoration: underline; }
+.youTag { font-size: 11px; font-weight: 600; color: var(--text-subtle); margin-left: 6px; }
+.chips { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+.cardTitle { font-size: 13px; color: var(--text-muted); margin: 2px 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cardFacts { display: grid; gap: 4px; font-size: 13px; }
+.cardFacts div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.cardFacts span { color: var(--text-muted); }
+.cardFacts a:hover { color: var(--brand-700); text-decoration: underline; }
+
+.menu { position: relative; flex-shrink: 0; }
+.menu summary {
+  list-style: none; cursor: pointer; width: 24px; height: 20px; display: inline-grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 4px; color: var(--text-subtle); font-size: 13px; line-height: 1; letter-spacing: 1px;
+}
+.menu summary::-webkit-details-marker { display: none; }
+.menu summary:hover, .menu[open] summary { color: var(--text); border-color: var(--border-strong); background: var(--surface-hover); }
+.menuList {
+  position: absolute; left: 0; top: calc(100% + 4px); z-index: 10; min-width: 150px; padding: 4px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow);
+}
+.menuList a { display: block; padding: 7px 10px; border-radius: 5px; font-size: 13px; color: var(--text); white-space: nowrap; }
+.menuList a:hover { background: var(--surface-hover); }
+
+/* ---- Narrow screens ------------------------------------------------------ */
+
+@media (max-width: 1200px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .topRow, .stats { grid-template-columns: 1fr; }
+  .cards { grid-template-columns: 1fr; }
+  .cal .nameCol { min-width: 150px; max-width: 150px; }
+}

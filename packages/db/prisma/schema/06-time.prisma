@@ -47,6 +47,7 @@ enum YearEndAction {
 model LeaveType {
   id                String           @id @default(cuid())
   tenantId          String
+  tenant            Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name              String
   code              String
   category          LeaveCategory    @default(REGULAR)
@@ -139,6 +140,7 @@ enum LeaveYearBasis {
 model LeavePlan {
   id           String         @id @default(cuid())
   tenantId     String
+  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name         String
   description  String?
   yearBasis    LeaveYearBasis @default(FINANCIAL_APR)
@@ -225,6 +227,7 @@ enum DayPortion {
 model LeaveRequest {
   id           String             @id @default(cuid())
   tenantId     String
+  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId   String
   leaveTypeId  String
   leaveType    LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
@@ -245,6 +248,11 @@ model LeaveRequest {
   approvedBy   String?
   approvedAt   DateTime?
   rejectReason String?
+  /// Employee who raised it, when an administrator applied on someone's behalf.
+  requestedBy  String?
+  /// Employee who cancelled or withdrew it, and when.
+  cancelledBy  String?
+  cancelledAt  DateTime?
 
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
@@ -280,6 +288,7 @@ model LeaveRequestDay {
 model HolidayCalendar {
   id         String    @id @default(cuid())
   tenantId   String
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name       String
   year       Int
   /// Locations this calendar applies to.
@@ -316,6 +325,7 @@ model Holiday {
 model Shift {
   id             String   @id @default(cuid())
   tenantId       String
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name           String
   /// Used as the key for Excel roster import.
   code           String
@@ -360,6 +370,7 @@ model ShiftAssignment {
 model WeeklyOffPolicy {
   id          String   @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name        String
   /// Per-weekday instance rules — the primitive behind alternate-Saturday
   /// and nth-week patterns.
@@ -402,6 +413,7 @@ enum CaptureSource {
 model AttendanceRecord {
   id             String           @id @default(cuid())
   tenantId       String
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId     String
   date           DateTime
 
@@ -443,6 +455,8 @@ model AttendanceLog {
   record     AttendanceRecord? @relation(fields: [recordId], references: [id], onDelete: Cascade)
 
   tenantId   String
+
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId String
   timestamp  DateTime
   /// 0 = IN, 1 = OUT.
@@ -467,6 +481,7 @@ model AttendanceLog {
 model LopAdjustment {
   id          String   @id @default(cuid())
   tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId  String
   /// Pay period the adjustment applies to.
   year        Int
@@ -490,6 +505,7 @@ model LopAdjustment {
 model OvertimeEntry {
   id         String   @id @default(cuid())
   tenantId   String
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId String
   year       Int
   month      Int
@@ -512,6 +528,7 @@ model OvertimeEntry {
 model ShiftAllowanceEntry {
   id         String   @id @default(cuid())
   tenantId   String
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employeeId String
   year       Int
   month      Int

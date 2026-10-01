@@ -7,6 +7,8 @@
   "dependencies": {
     "@keka/db": "*",
     "@keka/payroll": "*",
-    "@keka/shared": "*"
+    "@keka/shared": "*",
+    "@keka/time": "*",
+    "@keka/documents": "*"
   }
 }

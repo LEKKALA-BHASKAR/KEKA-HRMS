@@ -1,0 +1,321 @@
+// ============================================================================
+//  KEKA — Lifecycle journeys, helpdesk, notifications and stored files
+// ============================================================================
+//  A journey is the set of things that must happen because something happened
+//  to a person: they joined, resigned, were promoted, moved. Templates say what
+//  those things are; a journey is one instance, anchored to a date, whose tasks
+//  are due relative to it. HR stops remembering and starts reviewing.
+// ============================================================================
+
+enum JourneyTrigger {
+  JOINING
+  CONFIRMATION
+  PROMOTION
+  TRANSFER
+  EXIT
+  MANUAL
+}
+
+enum JourneyStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+/// Who a task belongs to. Resolved to a person when the journey starts.
+enum TaskOwner {
+  HR
+  MANAGER
+  EMPLOYEE
+  IT
+  FINANCE
+  ADMIN
+}
+
+enum JourneyTaskStatus {
+  PENDING
+  DONE
+  SKIPPED
+}
+
+model JourneyTemplate {
+  id          String          @id @default(cuid())
+  tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  trigger     JourneyTrigger
+  /// Narrow to a department or location; null applies to everyone.
+  departmentId String?
+  locationId  String?
+  /// When several templates match a trigger, the most specific wins.
+  isActive    Boolean         @default(true)
+
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  tasks       JourneyTaskTemplate[]
+  journeys    Journey[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, trigger])
+  @@map("journey_templates")
+}
+
+model JourneyTaskTemplate {
+  id          String          @id @default(cuid())
+  templateId  String
+  template    JourneyTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  owner       TaskOwner       @default(HR)
+  /// Days relative to the journey's anchor date. Negative is before it.
+  offsetDays  Int             @default(0)
+  /// DOCUMENTS | ASSETS | ACCESS | TRAINING | MEETING | PAYROLL | COMPLIANCE | OTHER
+  category    String          @default("OTHER")
+  /// Must be done (not skipped) for the journey to complete.
+  isRequired  Boolean         @default(true)
+  /// A system check that marks the task done by itself, e.g. ASSETS_RETURNED.
+  autoCheck   String?
+  sortOrder   Int             @default(0)
+
+  @@index([templateId])
+  @@map("journey_task_templates")
+}
+
+model Journey {
+  id          String           @id @default(cuid())
+  tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  templateId  String?
+  template    JourneyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  trigger     JourneyTrigger
+  title       String
+  /// Joining date, last working day, effective date of the change.
+  anchorDate  DateTime
+  status      JourneyStatus    @default(ACTIVE)
+  /// The record that caused it — an ExitRecord, a JobRecord.
+  sourceType  String?
+  sourceId    String?
+
+  createdBy   String?
+  createdAt   DateTime         @default(now())
+  completedAt DateTime?
+
+  tasks       JourneyTask[]
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@unique([employeeId, trigger, anchorDate])
+  @@map("journeys")
+}
+
+model JourneyTask {
+  id          String            @id @default(cuid())
+  journeyId   String
+  journey     Journey           @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  owner       TaskOwner
+  /// The person the owner role resolved to, when one could be found.
+  assigneeEmployeeId String?
+  dueDate     DateTime
+  category    String            @default("OTHER")
+  isRequired  Boolean           @default(true)
+  autoCheck   String?
+  status      JourneyTaskStatus @default(PENDING)
+  completedAt DateTime?
+  completedBy String?
+  note        String?
+  sortOrder   Int               @default(0)
+
+  @@index([journeyId])
+  @@index([assigneeEmployeeId, status])
+  @@map("journey_tasks")
+}
+
+// ---------------------------------------------------------------------------
+//  HELPDESK
+// ---------------------------------------------------------------------------
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_EMPLOYEE
+  RESOLVED
+  CLOSED
+}
+
+model HelpdeskCategory {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  /// Hours to first resolution before the ticket is overdue.
+  slaHours    Int      @default(48)
+  /// Agent who picks these up by default.
+  defaultAssigneeUserId String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  tickets     HelpdeskTicket[]
+
+  @@unique([tenantId, name])
+  @@map("helpdesk_categories")
+}
+
+model HelpdeskTicket {
+  id          String           @id @default(cuid())
+  tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Human-friendly, per tenant: HD-1042.
+  number      Int
+  employeeId  String
+  employee    Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  categoryId  String
+  category    HelpdeskCategory @relation(fields: [categoryId], references: [id], onDelete: NoAction)
+  subject     String
+  description String
+  priority    TicketPriority   @default(MEDIUM)
+  status      TicketStatus     @default(OPEN)
+  assigneeUserId String?
+  dueAt       DateTime
+  firstResponseAt DateTime?
+  resolvedAt  DateTime?
+  closedAt    DateTime?
+  /// 1–5, given by the employee on resolution.
+  satisfaction Int?
+
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  comments    HelpdeskComment[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("helpdesk_tickets")
+}
+
+model HelpdeskComment {
+  id          String         @id @default(cuid())
+  ticketId    String
+  ticket      HelpdeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorUserId String
+  authorLabel String
+  body        String
+  /// Visible to agents only.
+  isInternal  Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+
+  @@index([ticketId])
+  @@map("helpdesk_comments")
+}
+
+// ---------------------------------------------------------------------------
+//  NOTIFICATIONS AND OUTBOUND EMAIL
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String
+  title       String
+  body        String?
+  /// Where clicking it goes.
+  link        String?
+  /// LEAVE | ATTENDANCE | PAYROLL | HELPDESK | JOURNEY | ...
+  kind        String
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+enum OutboxStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+/// Email is written here in the same transaction as the change that caused
+/// it, and delivered by a worker. A failed send never rolls back the change.
+model EmailOutbox {
+  id          String       @id @default(cuid())
+  tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  toAddress   String
+  subject     String
+  textBody    String
+  htmlBody    String?
+  status      OutboxStatus @default(QUEUED)
+  attempts    Int          @default(0)
+  lastError   String?
+  relatedType String?
+  relatedId   String?
+  createdAt   DateTime     @default(now())
+  sentAt      DateTime?
+
+  @@index([status, createdAt])
+  @@map("email_outbox")
+}
+
+// ---------------------------------------------------------------------------
+//  STORED FILES
+// ---------------------------------------------------------------------------
+
+/// An uploaded or generated file. Bytes live in object storage (or on disk in
+/// development) under `storageKey`; this row is the index and the audit.
+model StoredFile {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  filename    String
+  mimeType    String
+  sizeBytes   Int
+  sha256      String
+  storageKey  String   @unique
+  /// What it is attached to: EmployeeDocument, HelpdeskTicket, Payslip...
+  relatedType String?
+  relatedId   String?
+  /// The employee it concerns, for access checks.
+  employeeId  String?
+  uploadedBy  String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, relatedType, relatedId])
+  @@index([employeeId])
+  @@map("stored_files")
+}
+
+// ---------------------------------------------------------------------------
+//  SCHEDULED JOBS
+// ---------------------------------------------------------------------------
+
+/// One execution of a scheduled job (scripts/jobs.ts), so operators can see
+/// when mail last went out or accrual last ran — and whether it failed.
+model JobRun {
+  id         String    @id @default(cuid())
+  job        String
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  ok         Boolean?
+  summary    Json?
+  error      String?
+
+  @@index([job, startedAt])
+  @@map("job_runs")
+}

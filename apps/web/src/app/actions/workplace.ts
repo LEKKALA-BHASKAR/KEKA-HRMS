@@ -1,9 +1,10 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { prisma } from "@keka/db";
-import { PERMISSIONS } from "@keka/rbac";
+import { safeRevalidate } from "@/lib/forms";
+import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { requireAuth, requireViewer } from "@/lib/context";
+import { foreignReference } from "@/lib/ownership";
 
 const P = PERMISSIONS;
 
@@ -48,13 +49,14 @@ export async function acknowledgeAnnouncement(formData: FormData): Promise<void>
     update: { acknowledgedAt: new Date() },
   });
 
-  revalidatePath("/announcements");
+  safeRevalidate("/announcements");
 }
 
 /** Records a view without acknowledging, so read stats are honest. */
 export async function markAnnouncementViewed(announcementId: string): Promise<void> {
   const viewer = await requireViewer();
   if (!viewer.employee) return;
+  if (!(await prisma.announcement.count({ where: { id: announcementId, tenantId: viewer.tenantId } }))) return;
   await prisma.announcementRead.upsert({
     where: { announcementId_employeeId: { announcementId, employeeId: viewer.employee.id } },
     create: { announcementId, employeeId: viewer.employee.id },
@@ -91,7 +93,7 @@ export async function publishAnnouncement(formData: FormData): Promise<void> {
     entityId: created.id, summary: `Published announcement "${title}"`,
   });
 
-  revalidatePath("/announcements");
+  safeRevalidate("/announcements");
 }
 
 export async function archiveAnnouncement(formData: FormData): Promise<void> {
@@ -101,7 +103,7 @@ export async function archiveAnnouncement(formData: FormData): Promise<void> {
     where: { id, tenantId: viewer.tenantId },
     data: { status: "ARCHIVED" },
   });
-  revalidatePath("/announcements");
+  safeRevalidate("/announcements");
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +137,7 @@ export async function givePraise(formData: FormData): Promise<void> {
     },
   });
 
-  revalidatePath("/awards");
+  safeRevalidate("/awards");
 }
 
 export async function grantAward(formData: FormData): Promise<void> {
@@ -172,7 +174,7 @@ export async function grantAward(formData: FormData): Promise<void> {
     summary: `Granted "${awardType.name}" to ${employee.displayName}`,
   });
 
-  revalidatePath("/awards");
+  safeRevalidate("/awards");
 }
 
 /**
@@ -233,8 +235,8 @@ export async function payAwardThroughPayroll(formData: FormData): Promise<void> 
   const { calculateRun } = await import("@keka/services");
   await calculateRun(run.id);
 
-  revalidatePath("/awards");
-  revalidatePath(`/payroll/runs/${run.id}`);
+  safeRevalidate("/awards");
+  safeRevalidate(`/payroll/runs/${run.id}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +256,7 @@ export async function assignAsset(formData: FormData): Promise<void> {
     include: { assetType: { select: { name: true } } },
   });
   if (!asset) throw new Error("Asset not found");
+  if (await foreignReference(viewer.tenantId, { employee: employeeId })) throw new Error("Employee not found");
   if (asset.status === "ASSIGNED") {
     throw new Error("This asset is already assigned. Record a return first.");
   }
@@ -272,7 +275,7 @@ export async function assignAsset(formData: FormData): Promise<void> {
     prisma.asset.update({ where: { id: assetId }, data: { status: "ASSIGNED" } }),
   ]);
 
-  revalidatePath("/assets");
+  safeRevalidate("/assets");
 }
 
 export async function acknowledgeAsset(formData: FormData): Promise<void> {
@@ -289,8 +292,8 @@ export async function acknowledgeAsset(formData: FormData): Promise<void> {
     throw new Error("Nothing to acknowledge — it may already be acknowledged, or not assigned to you");
   }
 
-  revalidatePath("/assets");
-  revalidatePath("/me/assets");
+  safeRevalidate("/assets");
+  safeRevalidate("/me/assets");
 }
 
 export async function returnAsset(formData: FormData): Promise<void> {
@@ -330,7 +333,7 @@ export async function returnAsset(formData: FormData): Promise<void> {
     }),
   ]);
 
-  revalidatePath("/assets");
+  safeRevalidate("/assets");
 }
 
 /**
@@ -389,8 +392,8 @@ export async function recoverAssetDamage(formData: FormData): Promise<void> {
   const { calculateRun } = await import("@keka/services");
   await calculateRun(run.id);
 
-  revalidatePath("/assets");
-  revalidatePath(`/payroll/runs/${run.id}`);
+  safeRevalidate("/assets");
+  safeRevalidate(`/payroll/runs/${run.id}`);
 }
 
 export async function decideAssetRequest(formData: FormData): Promise<void> {
@@ -406,7 +409,7 @@ export async function decideAssetRequest(formData: FormData): Promise<void> {
       : { status: "REJECTED", rejectReason: reason },
   });
 
-  revalidatePath("/assets");
+  safeRevalidate("/assets");
 }
 
 export async function requestAsset(formData: FormData): Promise<void> {
@@ -417,6 +420,9 @@ export async function requestAsset(formData: FormData): Promise<void> {
   const neededByRaw = String(formData.get("neededBy") ?? "");
 
   if (!reason) throw new Error("Give a reason for the request");
+  if (assetTypeId && !(await prisma.assetType.count({ where: { id: assetTypeId, category: { tenantId: viewer.tenantId } } }))) {
+    throw new Error("Asset type not found");
+  }
 
   await prisma.assetRequest.create({
     data: {
@@ -427,8 +433,8 @@ export async function requestAsset(formData: FormData): Promise<void> {
     },
   });
 
-  revalidatePath("/assets");
-  revalidatePath("/me/assets");
+  safeRevalidate("/assets");
+  safeRevalidate("/me/assets");
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +450,14 @@ export async function verifyDocument(formData: FormData): Promise<void> {
   if (decision === "reject" && !reason) {
     throw new Error("Give a reason when rejecting a document");
   }
+  // Verify only within scope, and never your own document.
+  const doc = await prisma.employeeDocument.findFirst({
+    where: { id, tenantId: viewer.tenantId },
+    include: { employee: { select: { id: true, departmentId: true, locationId: true, legalEntityId: true, businessUnitId: true, reportingManagerId: true } } },
+  });
+  if (!doc || doc.employeeId === viewer.employee?.id || !canAccessEmployee(viewer, doc.employee, P.DOCUMENT_VERIFY)) {
+    throw new Error("You cannot verify this document");
+  }
 
   await prisma.employeeDocument.updateMany({
     where: { id, tenantId: viewer.tenantId },
@@ -457,7 +471,7 @@ export async function verifyDocument(formData: FormData): Promise<void> {
       : { status: "REJECTED", rejectReason: reason },
   });
 
-  revalidatePath("/documents");
+  safeRevalidate("/documents");
 }
 
 export async function acknowledgeOrgDocument(formData: FormData): Promise<void> {
@@ -476,8 +490,8 @@ export async function acknowledgeOrgDocument(formData: FormData): Promise<void> 
     update: {},
   });
 
-  revalidatePath("/documents");
-  revalidatePath("/me/documents");
+  safeRevalidate("/documents");
+  safeRevalidate("/me/documents");
 }
 
 /**
@@ -561,8 +575,8 @@ export async function generateLetter(formData: FormData): Promise<void> {
       (missing.length > 0 ? ` (${missing.length} placeholder(s) unresolved)` : ""),
   });
 
-  revalidatePath("/documents");
-  revalidatePath(`/employees/${employeeId}`);
+  safeRevalidate("/documents");
+  safeRevalidate(`/employees/${employeeId}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -581,6 +595,7 @@ export async function enrolInTraining(formData: FormData): Promise<void> {
     include: { _count: { select: { enrolments: true } } },
   });
   if (!program) throw new Error("Programme not found");
+  if (await foreignReference(viewer.tenantId, { employee: employeeIds })) throw new Error("A selected employee was not found");
 
   if (program.maxSeats !== null) {
     const remaining = program.maxSeats - program._count.enrolments;
@@ -598,7 +613,7 @@ export async function enrolInTraining(formData: FormData): Promise<void> {
     skipDuplicates: true,
   });
 
-  revalidatePath("/training");
+  safeRevalidate("/training");
 }
 
 export async function updateTrainingProgress(formData: FormData): Promise<void> {
@@ -607,8 +622,8 @@ export async function updateTrainingProgress(formData: FormData): Promise<void> 
   const enrolmentId = String(formData.get("enrolmentId"));
   const progress = Math.min(100, Math.max(0, Number(formData.get("progress") ?? 0)));
 
-  const enrolment = await prisma.trainingEnrolment.findUnique({
-    where: { id: enrolmentId },
+  const enrolment = await prisma.trainingEnrolment.findFirst({
+    where: { id: enrolmentId, program: { tenantId: viewer.tenantId } },
     select: { employeeId: true },
   });
   if (!enrolment) throw new Error("Enrolment not found");
@@ -628,8 +643,8 @@ export async function updateTrainingProgress(formData: FormData): Promise<void> 
     },
   });
 
-  revalidatePath("/training");
-  revalidatePath("/me/training");
+  safeRevalidate("/training");
+  safeRevalidate("/me/training");
 }
 
 // ---------------------------------------------------------------------------
@@ -651,7 +666,7 @@ export async function respondToMeeting(formData: FormData): Promise<void> {
     data: { response },
   });
 
-  revalidatePath("/meetings");
+  safeRevalidate("/meetings");
 }
 
 export async function saveMeetingMinutes(formData: FormData): Promise<void> {
@@ -664,7 +679,7 @@ export async function saveMeetingMinutes(formData: FormData): Promise<void> {
     data: { minutes, status: "COMPLETED" },
   });
 
-  revalidatePath("/meetings");
+  safeRevalidate("/meetings");
 }
 
 export async function addMeetingActionItem(formData: FormData): Promise<void> {
@@ -680,6 +695,7 @@ export async function addMeetingActionItem(formData: FormData): Promise<void> {
     where: { id: meetingId, tenantId: viewer.tenantId },
   });
   if (!meeting) throw new Error("Meeting not found");
+  if (await foreignReference(viewer.tenantId, { employee: ownerId })) throw new Error("Owner not found");
 
   await prisma.meetingActionItem.create({
     data: {
@@ -688,7 +704,7 @@ export async function addMeetingActionItem(formData: FormData): Promise<void> {
     },
   });
 
-  revalidatePath("/meetings");
+  safeRevalidate("/meetings");
 }
 
 export async function completeActionItem(formData: FormData): Promise<void> {
@@ -714,7 +730,7 @@ export async function completeActionItem(formData: FormData): Promise<void> {
     data: { status: "DONE", completedAt: new Date() },
   });
 
-  revalidatePath("/meetings");
+  safeRevalidate("/meetings");
 }
 
 // ---------------------------------------------------------------------------
@@ -764,6 +780,6 @@ export async function recordHrActivity(formData: FormData): Promise<void> {
     summary: `Recorded ${type.replace(/_/g, " ").toLowerCase()} for ${employee.displayName}: ${title}`,
   });
 
-  revalidatePath("/activities");
-  revalidatePath(`/employees/${employeeId}`);
+  safeRevalidate("/activities");
+  safeRevalidate(`/employees/${employeeId}`);
 }

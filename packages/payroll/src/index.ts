@@ -5,3 +5,4 @@ export * from "./statutory";
 export * from "./data/pt-slabs";
 export * from "./data/lwf-rules";
 export * from "./data/tax-slabs";
+export * from "./loans";

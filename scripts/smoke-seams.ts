@@ -33,7 +33,15 @@ async function main() {
   console.log("=".repeat(76));
 
   const runId = await createRun({ tenantId: tenant.id, payGroupId: payGroup.id, year, month });
+
+  // createRun reuses an open run for the period, so clear anything an earlier,
+  // interrupted run of this test injected before taking the baseline.
+  await releaseInjections(runId);
   await calculateRun(runId);
+
+  const createdAdhoc: string[] = [];
+  let restoreAssignment: (() => Promise<unknown>) | null = null;
+  try {
 
   const baseline = await prisma.payrollRun.findUniqueOrThrow({ where: { id: runId } });
   console.log(`\n  Baseline run: ${baseline.employeeCount} employees, net ${formatINR(Number(baseline.totalNetPay))}\n`);
@@ -54,14 +62,14 @@ async function main() {
     where: { runId_employeeId: { runId, employeeId: award.employeeId } },
   });
 
-  await prisma.adhocTransaction.create({
+  createdAdhoc.push((await prisma.adhocTransaction.create({
     data: {
       employeeId: award.employeeId, type: "PAYMENT",
       name: `${award.awardType.name} award`, amount: awardCash,
       taxTreatment: "TAXABLE", year, month, runId,
       comment: award.citation, createdBy: actor.id,
     },
-  });
+  })).id);
   await prisma.employeeAward.update({ where: { id: award.id }, data: { paidInRunId: runId } });
   await calculateRun(runId);
 
@@ -107,6 +115,11 @@ async function main() {
   });
 
   const DAMAGE = 7500;
+  const original = {
+    returnedOn: openAssignment.returnedOn, conditionIn: openAssignment.conditionIn,
+    damageCharge: openAssignment.damageCharge, damageNote: openAssignment.damageNote,
+  };
+  restoreAssignment = () => prisma.assetAssignment.update({ where: { id: openAssignment.id }, data: original });
   await prisma.assetAssignment.update({
     where: { id: openAssignment.id },
     data: {
@@ -121,14 +134,14 @@ async function main() {
     where: { runId_employeeId: { runId, employeeId: serving.id } },
   });
 
-  await prisma.adhocTransaction.create({
+  createdAdhoc.push((await prisma.adhocTransaction.create({
     data: {
       employeeId: serving.id, type: "DEDUCTION",
       name: `Asset damage recovery — ${openAssignment.asset.assetType.name} (${openAssignment.asset.assetTag})`,
       amount: DAMAGE, taxTreatment: "NON_TAXABLE",
       year, month, runId, createdBy: actor.id,
     },
-  });
+  })).id);
   await prisma.assetAssignment.update({
     where: { id: openAssignment.id }, data: { chargeRecovered: true },
   });
@@ -234,10 +247,30 @@ async function main() {
   const unprocessed = await prisma.adhocTransaction.count({ where: { runId, isProcessed: false } });
   check("Rollback removed the payslips", payslipsAfterRollback === 0);
   check("Rollback released the ad-hoc transactions", unprocessed === 2, `${unprocessed} released`);
+  } finally {
+    // Put back everything this test borrowed, so it can run again.
+    await prisma.adhocTransaction.deleteMany({ where: { id: { in: createdAdhoc } } });
+    await releaseInjections(runId);
+    if (restoreAssignment) await restoreAssignment();
+    await calculateRun(runId);
+  }
 
   console.log("\n" + "=".repeat(76));
   console.log(failures === 0 ? "  All seams verified.\n" : `  ${failures} check(s) FAILED.\n`);
   if (failures > 0) process.exitCode = 1;
+}
+
+/** Undo this test's side effects on a run: its ad-hoc rows and award links. */
+async function releaseInjections(runId: string) {
+  await prisma.adhocTransaction.deleteMany({
+    where: { runId, OR: [{ name: { endsWith: " award" } }, { name: { startsWith: "Asset damage recovery" } }] },
+  });
+  await prisma.employeeAward.updateMany({ where: { paidInRunId: runId }, data: { paidInRunId: null } });
+  // Damage the test recorded on otherwise-open assignments.
+  await prisma.assetAssignment.updateMany({
+    where: { damageNote: "Liquid damage to the keyboard." },
+    data: { returnedOn: null, conditionIn: null, damageCharge: null, damageNote: null },
+  });
 }
 
 main()

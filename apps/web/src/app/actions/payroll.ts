@@ -1,14 +1,19 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@keka/db";
+import { safeRevalidate } from "@/lib/forms";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatPeriod } from "@keka/shared";
 import { requireAuth } from "@/lib/context";
-import { calculateRun, createRun } from "@keka/services";
+import { calculateRun, createRun, finalizePayrollRun, releasePayslipsForRun, rollbackPayrollRun } from "@keka/services";
 
 const P = PERMISSIONS;
+
+/** An employee id from a run form must be someone this run actually pays. */
+async function inRun(runId: string, employeeId: string): Promise<boolean> {
+  return (await prisma.payrollRunEmployee.count({ where: { runId, employeeId } })) > 0;
+}
 
 async function audit(opts: {
   tenantId: string; actorId: string; actorLabel: string;
@@ -68,7 +73,7 @@ export async function recalculateRun(formData: FormData): Promise<void> {
   }
 
   await calculateRun(runId);
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 export async function setRunStep(formData: FormData): Promise<void> {
@@ -80,7 +85,7 @@ export async function setRunStep(formData: FormData): Promise<void> {
     where: { id: runId, tenantId: viewer.tenantId, status: { not: "FINALIZED" } },
     data: { currentStep: step },
   });
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 /** Step 2 and 3: set the pay action for one employee. */
@@ -104,7 +109,7 @@ export async function setPayAction(formData: FormData): Promise<void> {
   });
 
   await calculateRun(runId);
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 /** Step 1: manual LOP adjustment. */
@@ -119,6 +124,7 @@ export async function setLopAdjustment(formData: FormData): Promise<void> {
     where: { id: runId, tenantId: viewer.tenantId },
   });
   if (!run || run.status === "FINALIZED") throw new Error("This run can no longer be edited");
+  if (!(await inRun(runId, employeeId))) throw new Error("That employee is not in this run");
 
   // One manual adjustment row per employee per period — replace rather than
   // stack, so repeated edits do not compound.
@@ -136,7 +142,7 @@ export async function setLopAdjustment(formData: FormData): Promise<void> {
   }
 
   await calculateRun(runId);
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 /** Step 4: ad-hoc payment or deduction. */
@@ -155,6 +161,7 @@ export async function addAdhoc(formData: FormData): Promise<void> {
     where: { id: runId, tenantId: viewer.tenantId },
   });
   if (!run || run.status === "FINALIZED") throw new Error("This run can no longer be edited");
+  if (!(await inRun(runId, employeeId))) throw new Error("That employee is not in this run");
 
   await prisma.adhocTransaction.create({
     data: {
@@ -166,7 +173,7 @@ export async function addAdhoc(formData: FormData): Promise<void> {
   });
 
   await calculateRun(runId);
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 export async function deleteAdhoc(formData: FormData): Promise<void> {
@@ -179,9 +186,12 @@ export async function deleteAdhoc(formData: FormData): Promise<void> {
   });
   if (!run || run.status === "FINALIZED") throw new Error("This run can no longer be edited");
 
-  await prisma.adhocTransaction.delete({ where: { id } });
+  // Only this run's own manual rows: reimbursements and recoveries placed by
+  // expenses and advances are withdrawn at their source, not here.
+  const removed = await prisma.adhocTransaction.deleteMany({ where: { id, runId, sourceType: null, employee: { tenantId: viewer.tenantId } } });
+  if (removed.count === 0) throw new Error("That entry is not a manual entry on this run");
   await calculateRun(runId);
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 /** Step 6: override a statutory figure. */
@@ -209,7 +219,7 @@ export async function setStatutoryOverride(formData: FormData): Promise<void> {
   });
 
   await calculateRun(runId);
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 /**
@@ -261,7 +271,7 @@ export async function lockRun(formData: FormData): Promise<void> {
     });
   }
 
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 export async function withdrawApproval(formData: FormData): Promise<void> {
@@ -282,7 +292,7 @@ export async function withdrawApproval(formData: FormData): Promise<void> {
     where: { id: runId },
     data: { status: "IN_PROGRESS" },
   });
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 export async function approveLock(formData: FormData): Promise<void> {
@@ -317,94 +327,34 @@ export async function approveLock(formData: FormData): Promise<void> {
     await prisma.payrollRun.update({ where: { id: runId }, data: { status: "IN_PROGRESS" } });
   }
 
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 /** Finalise: close the month and generate payslips. */
 export async function finalizeRun(formData: FormData): Promise<void> {
   const viewer = await requireAuth(P.PAYROLL_LOCK);
   const runId = String(formData.get("runId"));
-
-  const run = await prisma.payrollRun.findFirst({
-    where: { id: runId, tenantId: viewer.tenantId },
-    include: { lines: true },
-  });
+  const run = await prisma.payrollRun.findFirst({ where: { id: runId, tenantId: viewer.tenantId }, include: { _count: { select: { lines: true } } } });
   if (!run) throw new Error("Payroll run not found");
-  if (run.status !== "LOCKED") {
-    throw new Error("Lock the payroll before finalising it.");
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.payrollRun.update({
-      where: { id: runId },
-      data: { status: "FINALIZED", finalizedAt: new Date(), finalizedBy: viewer.user.id },
-    });
-
-    // Generate a payslip per processed employee. Held and voided rows do not
-    // get one.
-    for (const line of run.lines) {
-      if (line.payAction === "VOID_SALARY_PROCESSING" || line.payAction === "HOLD_SALARY_PROCESSING") {
-        continue;
-      }
-      await tx.payslip.upsert({
-        where: {
-          runId_employeeId_isSegregated: { runId, employeeId: line.employeeId, isSegregated: false },
-        },
-        create: {
-          runId, employeeId: line.employeeId,
-          year: run.year, month: run.month,
-          status: "GENERATED",
-          netPay: line.netPay,
-          isPasswordProtected: true,
-        },
-        update: { status: "GENERATED", netPay: line.netPay },
-      });
-    }
-
-    // Mark the inputs consumed so they are not picked up again next month.
-    await tx.arrear.updateMany({
-      where: { paidInRunId: null, employee: { payGroupId: run.payGroupId } , isProcessed: false },
-      data: { isProcessed: true, paidInRunId: runId },
-    });
-    await tx.adhocTransaction.updateMany({
-      where: { year: run.year, month: run.month, runId, isProcessed: false },
-      data: { isProcessed: true },
-    });
-    await tx.loanInstallment.updateMany({
-      where: {
-        year: run.year, month: run.month, status: "SCHEDULED",
-        loan: { employee: { payGroupId: run.payGroupId } },
-      },
-      data: { status: "DEDUCTED", runId, deductedAt: new Date() },
-    });
-    await tx.componentClaim.updateMany({
-      where: { payoutYear: run.year, payoutMonth: run.month, status: "APPROVED" },
-      data: { status: "PAID", runId },
-    });
-  }, { timeout: 60_000 });
+  const res = await finalizePayrollRun(runId, viewer.user.id);
+  if (!res.ok) throw new Error(res.message);
 
   await audit({
     tenantId: viewer.tenantId, actorId: viewer.user.id, actorLabel: viewer.user.email,
     action: "LOCK", entityId: runId,
-    summary: `Finalised ${formatPeriod(run.year, run.month)} payroll — ${run.lines.length} employees`,
+    summary: `Finalised ${formatPeriod(run.year, run.month)} payroll — ${run._count.lines} employees`,
   });
 
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 export async function releasePayslips(formData: FormData): Promise<void> {
   const viewer = await requireAuth(P.PAYSLIP_RELEASE);
   const runId = String(formData.get("runId"));
-
-  const run = await prisma.payrollRun.findFirst({
-    where: { id: runId, tenantId: viewer.tenantId, status: "FINALIZED" },
-  });
-  if (!run) throw new Error("Only a finalised run can have payslips released");
-
-  await prisma.payslip.updateMany({
-    where: { runId, status: { in: ["GENERATED", "NOT_GENERATED"] } },
-    data: { status: "RELEASED", releasedAt: new Date(), releasedBy: viewer.user.id },
-  });
+  const run = await prisma.payrollRun.findFirst({ where: { id: runId, tenantId: viewer.tenantId } });
+  if (!run) throw new Error("Payroll run not found");
+  const res = await releasePayslipsForRun(runId, viewer.user.id);
+  if (!res.ok) throw new Error(res.message);
 
   await audit({
     tenantId: viewer.tenantId, actorId: viewer.user.id, actorLabel: viewer.user.email,
@@ -412,7 +362,7 @@ export async function releasePayslips(formData: FormData): Promise<void> {
     summary: `Released payslips for ${formatPeriod(run.year, run.month)}`,
   });
 
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 /**
@@ -423,39 +373,10 @@ export async function rollbackRun(formData: FormData): Promise<void> {
   const viewer = await requireAuth(P.PAYROLL_ROLLBACK);
   const runId = String(formData.get("runId"));
   const reason = String(formData.get("reason") ?? "").trim();
-
-  const run = await prisma.payrollRun.findFirst({
-    where: { id: runId, tenantId: viewer.tenantId },
-  });
+  const run = await prisma.payrollRun.findFirst({ where: { id: runId, tenantId: viewer.tenantId } });
   if (!run) throw new Error("Payroll run not found");
-
-  await prisma.$transaction(async (tx) => {
-    await tx.payslip.deleteMany({ where: { runId } });
-    await tx.arrear.updateMany({
-      where: { paidInRunId: runId },
-      data: { isProcessed: false, paidInRunId: null },
-    });
-    await tx.adhocTransaction.updateMany({ where: { runId }, data: { isProcessed: false } });
-    await tx.loanInstallment.updateMany({
-      where: { runId }, data: { status: "SCHEDULED", runId: null, deductedAt: null },
-    });
-    await tx.componentClaim.updateMany({
-      where: { runId, status: "PAID" }, data: { status: "APPROVED", runId: null },
-    });
-    // Journal vouchers are never deleted after export, only archived.
-    await tx.journalVoucher.updateMany({
-      where: { runId }, data: { status: "ARCHIVED" },
-    });
-    await tx.payrollRun.update({
-      where: { id: runId },
-      data: {
-        status: "IN_PROGRESS",
-        rolledBackAt: new Date(),
-        rollbackReason: reason || "No reason given",
-        lockedAt: null, lockedBy: null, finalizedAt: null, finalizedBy: null,
-      },
-    });
-  }, { timeout: 60_000 });
+  const res = await rollbackPayrollRun(runId, reason);
+  if (!res.ok) throw new Error(res.message);
 
   await audit({
     tenantId: viewer.tenantId, actorId: viewer.user.id, actorLabel: viewer.user.email,
@@ -463,5 +384,5 @@ export async function rollbackRun(formData: FormData): Promise<void> {
     summary: `Rolled back ${formatPeriod(run.year, run.month)} payroll — ${reason || "no reason given"}`,
   });
 
-  revalidatePath(`/payroll/runs/${runId}`);
+  safeRevalidate(`/payroll/runs/${runId}`);
 }

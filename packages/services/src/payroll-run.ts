@@ -5,6 +5,7 @@ import {
   type PtFrequency,
 } from "@keka/payroll";
 import { daysInMonth, fyStartYear, endOfMonth, startOfMonth } from "@keka/shared";
+import { cappedDeductions } from "./declarations";
 
 /**
  * The bridge between the database and the pure payroll engine.
@@ -42,7 +43,7 @@ interface StatutoryTables {
  * Age for tax purposes is taken as at the last day of the financial year, so
  * someone who turns 60 in March gets the senior-citizen slabs for that year.
  */
-function ageAtFyEnd(dateOfBirth: Date | null, fyStart: number): number {
+export function ageAtFyEnd(dateOfBirth: Date | null, fyStart: number): number {
   if (!dateOfBirth) return 30;
   const fyEnd = new Date(Date.UTC(fyStart + 1, 2, 31));
   let age = fyEnd.getUTCFullYear() - dateOfBirth.getUTCFullYear();
@@ -58,7 +59,7 @@ function ageAtFyEnd(dateOfBirth: Date | null, fyStart: number): number {
  * table in which the upper slabs repeat, which over-deducts tax for every
  * old-regime employee.
  */
-function slabsFor(
+export function slabsFor(
   bands: AgeBandedSlabs[] | undefined,
   age: number,
 ): TaxSlab[] {
@@ -67,7 +68,7 @@ function slabsFor(
   return (match ?? bands[0]).slabs;
 }
 
-async function loadStatutoryTables(
+export async function loadStatutoryTables(
   payGroupId: string,
   fyStart: number,
   periodEnd: Date,
@@ -269,6 +270,15 @@ export async function calculateRun(runId: string): Promise<{
 
   const employeeIds = employees.map((e) => e.id);
 
+  // Investment declarations for the year: what each line counts for, after
+  // every section ceiling, feeds the TDS projection (declared amounts until
+  // a proof is ruled on, then what was accepted).
+  const declarations = await prisma.investmentDeclaration.findMany({
+    where: { employeeId: { in: employeeIds }, fyStartYear: fyStart, status: { not: "REJECTED" } },
+    include: { items: true, hraDetail: true },
+  });
+  const declarationOf = new Map(declarations.map((d) => [d.employeeId, d]));
+
   const [lopAdjustments, arrears, bonuses, adhoc, claims, loanInstallments, overtime, shiftAllowances, priorRuns] =
     await Promise.all([
       prisma.lopAdjustment.findMany({
@@ -436,6 +446,14 @@ export async function calculateRun(runId: string): Promise<{
     const ptEntry = emp.locationId ? tables.ptByState.get(emp.locationId) : undefined;
     const lwfRule = emp.locationId ? tables.lwfByState.get(emp.locationId) ?? null : null;
     const regime = emp.statutoryProfile?.taxRegime ?? "NEW";
+    const decl = declarationOf.get(emp.id);
+    const declared = cappedDeductions(
+      (decl?.items ?? []).map((i) => ({ section: i.section, declaredAmount: Number(i.declaredAmount), approvedAmount: Number(i.approvedAmount), proofStatus: i.proofStatus })),
+      ageAtFyEnd(emp.dateOfBirth, fyStart),
+    );
+    const rentDeclared = decl?.hraDetail
+      ? Number(decl.hraDetail.annualRent ?? 0) || Object.values((decl.hraDetail.monthlyRent ?? {}) as Record<string, number>).reduce((a, v) => a + Number(v || 0), 0)
+      : 0;
     const ytd = ytdByEmp.get(emp.id) ?? { gross: 0, tds: 0, pt: 0 };
 
     const input: CalculatePayrollInput = {
@@ -527,8 +545,13 @@ export async function calculateRun(runId: string): Promise<{
         ytdTdsDeducted: ytd.tds,
         previousEmployerIncome: emp.statutoryProfile?.previousEmployerIncome
           ? Number(emp.statutoryProfile.previousEmployerIncome) : undefined,
-        previousEmployerTds: emp.statutoryProfile?.previousEmployerTds
-          ? Number(emp.statutoryProfile.previousEmployerTds) : undefined,
+        previousEmployerTds: (Number(emp.statutoryProfile?.previousEmployerTds ?? 0) + declared.otherTds) || undefined,
+        chapterViaDeductions: declared.chapterVia || undefined,
+        employerNpsDeduction: declared.employerNps || undefined,
+        housePropertyIncome: declared.houseProperty || undefined,
+        otherIncome: declared.otherIncome || undefined,
+        rentPaidAnnual: rentDeclared || undefined,
+        isMetro: decl?.hraDetail?.isMetro ?? false,
         flatTdsAmount: emp.statutoryProfile?.flatTdsAmount
           ? Number(emp.statutoryProfile.flatTdsAmount) : null,
         tdsDisabled: emp.statutoryProfile?.tdsDisabled ?? false,

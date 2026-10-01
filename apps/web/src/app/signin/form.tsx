@@ -1,8 +1,13 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import Link from "next/link";
+import { useActionState, useEffect, useRef, useState, type FormEvent } from "react";
 import { signIn, type SignInState } from "@/app/actions/auth";
+import { IconChevronDown, IconEye, IconEyeOff } from "@/components/icons";
+import { AuthLayout } from "./auth-layout";
+import s from "./auth.module.css";
 
+const DEMO_PASSWORD = "Keka@2026";
 const DEMO_ACCOUNTS = [
   { email: "vikram.menon@acme.test", name: "Vikram Menon", role: "Global Admin" },
   { email: "ramesh.iyer@acme.test", name: "Ramesh Iyer", role: "Payroll Admin" },
@@ -15,85 +20,168 @@ const DEMO_ACCOUNTS = [
 
 const initial: SignInState = {};
 
-export function SignInForm() {
+/**
+ * Sign-in in two steps, as Keka does it: email first, then password.
+ *
+ * Step one never talks to the server. Asking the server "does this email
+ * exist?" before the password would hand out a list of valid accounts, so
+ * the email is only checked for shape here and both values go to the same
+ * `signIn` action together — whose answers are already the same whether or
+ * not the account exists (lockout included). Two-factor still redirects to
+ * /signin/verify from inside the action.
+ */
+export function SignInForm({ product = "Keka", next }: { product?: string; next?: string }) {
   const [state, formAction, pending] = useActionState(signIn, initial);
-  const [email, setEmail] = useState("vikram.menon@acme.test");
-  const [password, setPassword] = useState("Keka@2026");
+  const [step, setStep] = useState<"email" | "password">("email");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [reveal, setReveal] = useState(false);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const firstRender = useRef(true);
+  // An error belongs to the attempt that caused it: hide it once the email changes.
+  const [dismissed, setDismissed] = useState<SignInState | null>(null);
+  const error = state !== dismissed ? state.error : undefined;
+
+  // Move focus with the step, so the keyboard never has to hunt for it.
+  useEffect(() => {
+    if (step === "password") passwordRef.current?.focus();
+    else if (!firstRender.current) { emailRef.current?.focus(); emailRef.current?.select(); }
+    firstRender.current = false;
+  }, [step]);
+
+  // After a failed attempt, put the cursor back in the password, ready to retype.
+  useEffect(() => {
+    if (error && step === "password") passwordRef.current?.select();
+  }, [state, error, step]);
+
+  const toPassword = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const value = email.trim();
+    if (!emailRef.current?.checkValidity() || !value) { emailRef.current?.reportValidity(); return; }
+    setEmail(value);
+    setStep("password");
+  };
+
+  const changeEmail = () => {
+    setDismissed(state);
+    setReveal(false);
+    setStep("email");
+  };
+
+  const pickDemo = (address: string) => {
+    setEmail(address);
+    setPassword(DEMO_PASSWORD);
+    setReveal(false);
+    if (step === "password") passwordRef.current?.focus();
+    else setStep("password");
+  };
 
   return (
-    <div className="auth-page">
-      <div className="auth-card">
-        <div className="auth-brand">
-          <div className="brand-mark" style={{ width: 34, height: 34, fontSize: 15 }}>K</div>
-          <div>
-            <div style={{ fontWeight: 650, fontSize: 16 }}>Keka</div>
-            <div className="text-xs subtle">HR &amp; Payroll</div>
+    <AuthLayout title={`Login to ${product}`}>
+      <p className="sr-only" aria-live="polite">
+        {step === "password" ? `Enter the password for ${email}.` : ""}
+      </p>
+
+      {step === "email" ? (
+        <form onSubmit={toPassword}>
+          <div className={s.field}>
+            <label className={s.label} htmlFor="signin-email">Email</label>
+            <input
+              ref={emailRef}
+              id="signin-email"
+              name="email"
+              type="email"
+              className={s.control}
+              placeholder="you@company.com"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              autoFocus
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
           </div>
-        </div>
-
-        <h2 style={{ marginBottom: 4 }}>Sign in</h2>
-        <p className="muted text-sm" style={{ marginBottom: 20 }}>
-          Enter your work email to continue to your organisation.
-        </p>
-
+          <button className={s.submit} type="submit">Continue</button>
+        </form>
+      ) : (
         <form action={formAction}>
           <input type="hidden" name="subdomain" value="acme" />
+          {next ? <input type="hidden" name="next" value={next} /> : null}
+          {/* The username travels with the password, and password managers see the pair. */}
+          <input type="email" name="email" value={email} autoComplete="username" readOnly hidden />
 
-          <div className="field">
-            <label className="label" htmlFor="email">Work email</label>
-            <input
-              id="email" name="email" type="email" className="input"
-              autoComplete="username" required
-              value={email} onChange={(e) => setEmail(e.target.value)}
-            />
+          <div className={s.who}>
+            <span className={s.whoAvatar} aria-hidden="true">{email.charAt(0) || "?"}</span>
+            <span className={s.whoEmail} title={email}>
+              <span className="sr-only">Signing in as </span>{email}
+            </span>
+            <button type="button" className={s.linkBtn} onClick={changeEmail} aria-label={`Change email address (currently ${email})`}>
+              Change
+            </button>
           </div>
 
-          <div className="field">
-            <label className="label" htmlFor="password">Password</label>
-            <input
-              id="password" name="password" type="password" className="input"
-              autoComplete="current-password" required
-              value={password} onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
-
-          {state.error ? (
-            <div className="callout danger" style={{ marginBottom: 14 }}>
-              <div>{state.error}</div>
+          <div className={s.field}>
+            <label className={s.label} htmlFor="signin-password">Password</label>
+            <div className={s.passwordWrap}>
+              <input
+                ref={passwordRef}
+                id="signin-password"
+                name="password"
+                type={reveal ? "text" : "password"}
+                className={s.control}
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                aria-invalid={error ? true : undefined}
+                aria-describedby={error ? "signin-error" : undefined}
+              />
+              <button
+                type="button"
+                className={s.reveal}
+                onClick={() => setReveal((r) => !r)}
+                aria-label={reveal ? "Hide password" : "Show password"}
+                aria-pressed={reveal}
+                aria-controls="signin-password"
+              >
+                {reveal ? <IconEyeOff aria-hidden="true" /> : <IconEye aria-hidden="true" />}
+              </button>
             </div>
+          </div>
+
+          <div className={s.forgot}>
+            <Link href="/signin/forgot">Forgot password?</Link>
+          </div>
+
+          {error ? (
+            <div id="signin-error" className={s.error} role="alert">{error}</div>
           ) : null}
 
-          <button className="btn primary block lg" type="submit" disabled={pending}>
+          <button className={s.submit} type="submit" disabled={pending}>
             {pending ? "Signing in…" : "Sign in"}
           </button>
         </form>
+      )}
 
-        <div className="demo-accounts">
-          <div className="text-xs subtle" style={{ marginBottom: 8, fontWeight: 600 }}>
-            SEEDED ACCOUNTS — password Keka@2026
-          </div>
-          <div className="stack gap-1">
-            {DEMO_ACCOUNTS.map((a) => (
-              <button
-                key={a.email}
-                type="button"
-                className="demo-account"
-                onClick={() => { setEmail(a.email); setPassword("Keka@2026"); }}
-              >
-                <div className="avatar sm">
-                  {a.name.split(" ").map((p) => p[0]).join("")}
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 550 }}>{a.name}</div>
-                  <div className="text-xs subtle" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {a.role}
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
+      <details className={s.demo}>
+        <summary>
+          <span>Demo accounts <span className={s.demoHint}>· password {DEMO_PASSWORD}</span></span>
+          <IconChevronDown aria-hidden="true" />
+        </summary>
+        <div className={s.demoList}>
+          {DEMO_ACCOUNTS.map((a) => (
+            <button key={a.email} type="button" className={s.demoItem} onClick={() => pickDemo(a.email)}>
+              <span className={s.demoAvatar} aria-hidden="true">{a.name.split(" ").map((p) => p[0]).join("")}</span>
+              <span className={s.demoText}>
+                <span className={s.demoName}>{a.name}</span>
+                <span className={s.demoRole}>{a.role}</span>
+              </span>
+            </button>
+          ))}
         </div>
-      </div>
-    </div>
+      </details>
+    </AuthLayout>
   );
 }
