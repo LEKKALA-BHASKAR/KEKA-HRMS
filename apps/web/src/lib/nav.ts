@@ -262,6 +262,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     can(viewer, P.STATUTORY_MANAGE) && { label: "Statutory", href: "/payroll/statutory" },
     can(viewer, P.STATUTORY_MANAGE) && { label: "Filings", href: "/payroll/filings" },
     can(viewer, P.LOAN_MANAGE) && { label: "Loans", href: "/payroll/loans" },
+    can(viewer, P.TAX_DECLARATION_APPROVE) && { label: "Tax Proofs", href: "/payroll/tax-proofs" },
     can(viewer, P.LEDGER_VIEW) && { label: "Accounting", href: "/accounting" },
   ]);
   if (payroll.length) sections.push({ key: "payroll", label: "Payroll", icon: "payroll", href: payroll[0].href, tabs: payroll, admin: true });
@@ -318,6 +319,7 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     { label: "Employee directory", href: "/directory", keywords: "people colleagues search" },
     { label: "Organisation tree", href: "/directory/tree", keywords: "org chart hierarchy reporting" },
     can(viewer, P.PAYROLL_VIEW) && { label: "Run payroll", href: "/payroll/runs", keywords: "payroll process month" },
+    can(viewer, P.TAX_DECLARATION_APPROVE) && { label: "Review tax proofs", href: "/payroll/tax-proofs", keywords: "investment declaration proof 80c verify" },
     can(viewer, P.EMPLOYEE_CREATE) && { label: "Add an employee", href: "/employees/new", keywords: "hire onboard new joinee" },
     canAny(viewer, [P.EMPLOYEE_CREATE, P.LEAVE_MANAGE, P.SALARY_REVISE, P.EMPLOYEE_MANAGE_FINANCIALS]) && { label: "Bulk import", href: "/admin/import", keywords: "import csv upload spreadsheet migrate employees balances salary bank" },
     can(viewer, P.ORG_SETTINGS_MANAGE) && { label: "Custom fields", href: "/admin/settings?tab=fields", keywords: "custom field profile extra attribute dropdown" },
