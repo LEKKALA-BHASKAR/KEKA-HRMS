@@ -424,7 +424,7 @@ export async function generateLetter(formData: FormData): Promise<void> {
         legalEntity: { select: { legalName: true, signatories: { take: 1 } } },
         location: { select: { name: true } },
         reportingManager: { select: { displayName: true } },
-        salaryRevisions: { orderBy: { effectiveFrom: "desc" }, take: 1 },
+        salaryRevisions: { where: { status: "APPLIED" }, orderBy: { effectiveFrom: "desc" }, take: 1 },
         exitRecord: true,
       },
     }),

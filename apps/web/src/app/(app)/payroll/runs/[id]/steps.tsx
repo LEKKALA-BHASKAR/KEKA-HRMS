@@ -384,6 +384,7 @@ export async function Step3({ run, lines, editable }: StepProps) {
     prisma.salaryRevision.findMany({
       where: {
         employeeId: { in: employeeIds },
+        status: "APPLIED",
         effectiveFrom: { gte: run.periodStart, lte: run.periodEnd },
       },
       include: { employee: { select: { displayName: true, employeeNumber: true } } },

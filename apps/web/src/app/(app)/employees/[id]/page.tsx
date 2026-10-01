@@ -86,7 +86,7 @@ export default async function EmployeePage({
   const showFinancials = isSelf || canAccessEmployee(viewer, target, P.EMPLOYEE_VIEW_FINANCIALS);
 
   const name = employee.displayName ?? `${employee.firstName} ${employee.lastName}`;
-  const currentSalary = employee.salaryRevisions[0] ?? null;
+  const currentSalary = employee.salaryRevisions.find((r) => r.status === "APPLIED") ?? null;
   const pan = employee.identityDocs.find((d) => d.type === "PAN")?.number ?? null;
 
   const canEdit = canAccessEmployee(viewer, target, P.EMPLOYEE_UPDATE);
@@ -664,10 +664,8 @@ export default async function EmployeePage({
                   </thead>
                   <tbody>
                     {employee.salaryRevisions.map((r, i) => {
-                      const prev = employee.salaryRevisions[i + 1];
-                      const delta = prev
-                        ? ((Number(r.annualCtc) - Number(prev.annualCtc)) / Number(prev.annualCtc)) * 100
-                        : null;
+                      const prevCtc = r.previousCtc ? Number(r.previousCtc) : Number(employee.salaryRevisions.slice(i + 1).find((p) => p.status === "APPLIED")?.annualCtc ?? 0);
+                      const delta = prevCtc ? ((Number(r.annualCtc) - prevCtc) / prevCtc) * 100 : null;
                       return (
                         <tr key={r.id}>
                           <td className="nowrap">{formatDate(r.effectiveFrom)}</td>
@@ -677,7 +675,11 @@ export default async function EmployeePage({
                           </td>
                           <td className="text-sm">{r.structure?.name ?? "—"}</td>
                           <td className="text-sm muted">{r.reason ?? "—"}</td>
-                          <td><Badge tone={r.status === "APPLIED" ? "success" : "warning"}>{r.status.toLowerCase()}</Badge></td>
+                          <td>
+                            {r.status === "PENDING_APPROVAL"
+                              ? <Link href="/payroll/approvals"><Badge tone="warning">awaiting approval</Badge></Link>
+                              : <Badge tone={r.status === "APPLIED" ? "success" : r.status === "REJECTED" ? "danger" : "warning"}>{r.status.toLowerCase().replace(/_/g, " ")}</Badge>}
+                          </td>
                         </tr>
                       );
                     })}

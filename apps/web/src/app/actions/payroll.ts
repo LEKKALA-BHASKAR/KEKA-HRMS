@@ -6,7 +6,7 @@ import { safeRevalidate } from "@/lib/forms";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatPeriod } from "@keka/shared";
 import { requireAuth } from "@/lib/context";
-import { calculateRun, createRun, finalizePayrollRun, releasePayslipsForRun, rollbackPayrollRun } from "@keka/services";
+import { calculateRun, createRun, decideApproval, finalizePayrollRun, openApproval, releasePayslipsForRun, rollbackPayrollRun, withdrawApprovalRequest } from "@keka/services";
 
 const P = PERMISSIONS;
 
@@ -224,36 +224,23 @@ export async function setStatutoryOverride(formData: FormData): Promise<void> {
 
 /**
  * Lock the run. With maker-checker enabled this raises an approval request
- * instead, and the button reads "Lock & Send for Approval".
+ * that climbs the pay group's lock-approval chain, and the button reads
+ * "Lock & Send for Approval".
  */
 export async function lockRun(formData: FormData): Promise<void> {
   const viewer = await requireAuth(P.PAYROLL_LOCK);
   const runId = String(formData.get("runId"));
 
-  const run = await prisma.payrollRun.findFirst({
-    where: { id: runId, tenantId: viewer.tenantId },
-    include: { payGroup: { include: { approvalRules: { where: { action: "LOCK_PAYROLL", isActive: true } } } } },
-  });
+  const run = await prisma.payrollRun.findFirst({ where: { id: runId, tenantId: viewer.tenantId } });
   if (!run) throw new Error("Payroll run not found");
-  if (run.status === "FINALIZED" || run.status === "LOCKED") return;
+  if (run.status === "FINALIZED" || run.status === "LOCKED" || run.status === "PENDING_APPROVAL") return;
 
-  const needsApproval = run.payGroup.approvalWorkflowEnabled &&
-    run.payGroup.approvalRules.length > 0;
-
-  if (needsApproval) {
-    await prisma.payrollApprovalRequest.create({
-      data: {
-        runId,
-        action: "LOCK_PAYROLL",
-        status: "PENDING",
-        currentLevel: 0,
-        requestedBy: viewer.user.id,
-      },
-    });
-    await prisma.payrollRun.update({
-      where: { id: runId },
-      data: { status: "PENDING_APPROVAL" },
-    });
+  const approval = await openApproval({
+    tenantId: viewer.tenantId, payGroupId: run.payGroupId, action: "LOCK_PAYROLL", requestedBy: viewer.user.id, runId,
+    summary: `Lock ${formatPeriod(run.year, run.month)} payroll`, link: `/payroll/runs/${runId}`,
+  });
+  if (approval.required && approval.status === "PENDING") {
+    await prisma.payrollRun.update({ where: { id: runId }, data: { status: "PENDING_APPROVAL" } });
     await audit({
       tenantId: viewer.tenantId, actorId: viewer.user.id, actorLabel: viewer.user.email,
       action: "UPDATE", entityId: runId,
@@ -282,16 +269,12 @@ export async function withdrawApproval(formData: FormData): Promise<void> {
     where: { id: runId, tenantId: viewer.tenantId, status: "PENDING_APPROVAL" },
   });
   if (!run) return;
-
-  // The initiator can withdraw before the approver acts.
-  await prisma.payrollApprovalRequest.updateMany({
-    where: { runId, status: "PENDING" },
-    data: { status: "WITHDRAWN", resolvedAt: new Date() },
-  });
-  await prisma.payrollRun.update({
-    where: { id: runId },
-    data: { status: "IN_PROGRESS" },
-  });
+  const req = await prisma.payrollApprovalRequest.findFirst({ where: { runId, status: "PENDING" } });
+  if (req) {
+    const res = await withdrawApprovalRequest(viewer.tenantId, req.id, viewer.user.id);
+    if (!res.ok) throw new Error(res.message);
+  }
+  await prisma.payrollRun.update({ where: { id: runId }, data: { status: "IN_PROGRESS" } });
   safeRevalidate(`/payroll/runs/${runId}`);
 }
 
@@ -304,30 +287,30 @@ export async function approveLock(formData: FormData): Promise<void> {
     where: { id: runId, tenantId: viewer.tenantId, status: "PENDING_APPROVAL" },
   });
   if (!run) throw new Error("No pending approval for this run");
+  const req = await prisma.payrollApprovalRequest.findFirst({ where: { runId, status: "PENDING" } });
+  if (!req) throw new Error("No pending approval for this run");
 
-  if (decision === "approve") {
-    await prisma.payrollApprovalRequest.updateMany({
-      where: { runId, status: "PENDING" },
-      data: { status: "APPROVED", resolvedAt: new Date() },
-    });
-    await prisma.payrollRun.update({
-      where: { id: runId },
-      data: { status: "LOCKED", lockedAt: new Date(), lockedBy: viewer.user.id },
-    });
-    await audit({
-      tenantId: viewer.tenantId, actorId: viewer.user.id, actorLabel: viewer.user.email,
-      action: "APPROVE", entityId: runId,
-      summary: `Approved and locked ${formatPeriod(run.year, run.month)} payroll`,
-    });
-  } else {
-    await prisma.payrollApprovalRequest.updateMany({
-      where: { runId, status: "PENDING" },
-      data: { status: "REJECTED", resolvedAt: new Date() },
-    });
+  const res = await decideApproval({
+    tenantId: viewer.tenantId, requestId: req.id, userId: viewer.user.id, approve: decision === "approve",
+    comment: String(formData.get("comment") ?? "") || (decision === "approve" ? null : "Rejected from the payroll run"), link: `/payroll/runs/${runId}`,
+  });
+  if (!res.ok) throw new Error(res.message);
+  await applyLockOutcome(runId, res.outcome, viewer.user.id);
+  await audit({
+    tenantId: viewer.tenantId, actorId: viewer.user.id, actorLabel: viewer.user.email,
+    action: "APPROVE", entityId: runId,
+    summary: `${res.outcome === "REJECTED" ? "Rejected" : "Approved"} the lock of ${formatPeriod(run.year, run.month)} payroll${res.outcome === "ADVANCED" ? " (next level)" : ""}`,
+  });
+  safeRevalidate(`/payroll/runs/${runId}`);
+}
+
+/** What a lock decision does to the run. */
+async function applyLockOutcome(runId: string, outcome: "ADVANCED" | "APPROVED" | "REJECTED", byUserId: string): Promise<void> {
+  if (outcome === "APPROVED") {
+    await prisma.payrollRun.update({ where: { id: runId }, data: { status: "LOCKED", lockedAt: new Date(), lockedBy: byUserId } });
+  } else if (outcome === "REJECTED") {
     await prisma.payrollRun.update({ where: { id: runId }, data: { status: "IN_PROGRESS" } });
   }
-
-  safeRevalidate(`/payroll/runs/${runId}`);
 }
 
 /** Finalise: close the month and generate payslips. */
