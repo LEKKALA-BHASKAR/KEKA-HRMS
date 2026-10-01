@@ -6,7 +6,9 @@ import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import {
   applyLeave, previewLeave, decideLeave, cancelLeave, adjustBalance, runAccrual,
   recordPunch, raiseAttendanceRequest, decideAttendanceRequest, processAttendance,
+  notifyTimeRequest, lapseExpiredCompOffs,
 } from "@keka/services";
+import { formatDate } from "@keka/shared";
 import { foreignReference } from "@/lib/ownership";
 import { requireAuth, requireViewer, can, type Viewer } from "@/lib/context";
 import {
@@ -42,6 +44,15 @@ const applySchema = z.object({
   reason: zOptional(500),
   intent: z.enum(["preview", "apply"]).default("apply"),
 });
+
+/** Colleagues copied on a request ("Notify"), kept to real people in the tenant. */
+async function copiedIds(viewer: Viewer, formData: FormData, self: string | undefined): Promise<string[]> {
+  const raw = [...new Set(formList(formData, "notify"))].filter((id) => id !== self).slice(0, 20);
+  if (raw.length === 0) return [];
+  const rows = await prisma.employee.findMany({ where: { tenantId: viewer.tenantId, id: { in: raw } }, select: { id: true } });
+  return rows.map((r) => r.id);
+}
+const between = (a: Date, b: Date) => (a.getTime() === b.getTime() ? `on ${formatDate(a)}` : `from ${formatDate(a)} to ${formatDate(b)}`);
 
 export async function applyLeaveAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const viewer = await requireViewer();
@@ -97,6 +108,14 @@ export async function applyLeaveAction(_prev: ActionState, formData: FormData): 
       module: "LEAVE", action: "CREATE", entityType: "LeaveRequest", entityId: res.requestId,
       summary: `${onBehalf ? "Applied on behalf" : "Applied"}: ${type.name}, ${res.totalDays} day(s)`,
     });
+    const copied = await copiedIds(viewer, formData, employeeId);
+    if (copied.length) await prisma.leaveRequest.update({ where: { id: res.requestId! }, data: { notifyEmployeeIds: copied } });
+    if (!onBehalf) {
+      await notifyTimeRequest({
+        tenantId: viewer.tenantId, employeeId, kind: "LEAVE", event: "RAISED",
+        what: `${type.name} ${between(d.fromDate, d.toDate)}`, notifyEmployeeIds: copied, note: d.reason,
+      });
+    }
     return done(["/me/leave", "/leave", "/inbox"],
       `Submitted ${res.totalDays} day(s) of ${type.name}${res.sandwichDays ? ` (${res.sandwichDays} sandwiched)` : ""}. It is now awaiting approval.`);
   } catch (err) {
@@ -131,6 +150,11 @@ export async function decideLeaveAction(_prev: ActionState, formData: FormData):
       module: "LEAVE", action: decision === "APPROVE" ? "APPROVE" : "REJECT",
       entityType: "LeaveRequest", entityId: requestId,
       summary: `${decision === "APPROVE" ? "Approved" : "Rejected"} ${request.leaveType.name}, ${request.totalDays} day(s)`,
+    });
+    await notifyTimeRequest({
+      tenantId: viewer.tenantId, employeeId: request.employeeId, kind: "LEAVE",
+      event: decision === "APPROVE" ? "APPROVED" : "REJECTED",
+      what: `${request.leaveType.name} ${between(request.fromDate, request.toDate)}`, note,
     });
     return done(["/leave", "/inbox", "/me/leave"], res.message);
   } catch (err) {
@@ -206,6 +230,8 @@ export async function runAccrualAction(_prev: ActionState, formData: FormData): 
   const parsed = parseForm(accrualSchema, formData);
   if (parsed.state) return parsed.state;
   const s = await runAccrual({ tenantId: viewer.tenantId, year: parsed.data.year, month: parsed.data.month });
+  // Comp-off credits past their expiry lapse on the same run.
+  await lapseExpiredCompOffs(viewer.tenantId);
   await writeAudit(viewer, {
     module: "LEAVE", action: "CREATE", entityType: "LeaveAccrual",
     summary: `Ran accrual for ${parsed.data.month}/${parsed.data.year}: ${s.credits} credits, ${s.totalDays} days`,
@@ -458,16 +484,36 @@ export async function clockAction(_prev: ActionState, formData: FormData): Promi
   const viewer = await requireViewer();
   if (!viewer.employee) return { ok: false, message: "No employee record linked to this login." };
   const direction = String(formData.get("direction")) === "out" ? 1 : 0;
-  const comment = String(formData.get("comment") ?? "") || null;
+  const comment = String(formData.get("comment") ?? "").trim().slice(0, 1024) || null;
+  const remote = String(formData.get("mode") ?? "") === "remote";
   const h = await headers();
   const ip = (h.get("x-forwarded-for") ?? "").split(",")[0].trim() || h.get("x-real-ip") || null;
+  // A location is only kept when it is a real coordinate.
+  const lat = Number(formData.get("latitude")), lng = Number(formData.get("longitude"));
+  const located = remote && formData.get("latitude") && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
 
   const res = await recordPunch({
-    employeeId: viewer.employee.id, direction: direction as 0 | 1, source: "WEB",
+    employeeId: viewer.employee.id, direction: direction as 0 | 1, source: remote ? "REMOTE" : "WEB",
     ipAddress: ip, comment,
+    latitude: located ? lat : null, longitude: located ? lng : null,
   });
   if (!res.ok) return { ok: false, message: res.message };
-  return done(["/me/attendance", "/attendance", "/"], res.message);
+  if (res.pendingApproval && res.requestId) {
+    await writeAudit(viewer, {
+      module: "ATTENDANCE", action: "CREATE", entityType: "AttendanceRequest", entityId: res.requestId,
+      summary: `Remote clock-${direction === 0 ? "in" : "out"}${comment ? `: ${comment}` : ""}`,
+    });
+    // The approver hears once per day, on the first remote punch.
+    const punches = await prisma.attendanceLog.count({ where: { attendanceRequestId: res.requestId } });
+    if (punches === 1) {
+      const req = await prisma.attendanceRequest.findUniqueOrThrow({ where: { id: res.requestId }, select: { fromDate: true } });
+      await notifyTimeRequest({
+        tenantId: viewer.tenantId, employeeId: viewer.employee.id, kind: "ATTENDANCE", event: "RAISED",
+        what: `a remote clock-in on ${formatDate(req.fromDate)}`, note: comment,
+      });
+    }
+  }
+  return done(["/me/attendance", "/attendance", "/", "/inbox"], res.message);
 }
 
 const requestSchema = z.object({
@@ -477,6 +523,8 @@ const requestSchema = z.object({
   inTime: z.string().optional(),
   outTime: z.string().optional(),
   partialMinutes: zNumber({ min: 1, max: 480 }),
+  portion: z.enum(["FULL_DAY", "FIRST_HALF", "SECOND_HALF"]).optional(),
+  hourly: zBool(),
   reason: zName(500),
 });
 
@@ -495,16 +543,45 @@ export async function raiseAttendanceRequestAction(_prev: ActionState, formData:
   const d = parsed.data;
   const to = d.toDate ?? d.fromDate;
 
+  // "+Add Log": alternate IN/OUT time rows, `logTime` with `logDir`.
+  const times = formData.getAll("logTime").map(String);
+  const dirs = formData.getAll("logDir").map(String);
+  const proposedLogs = d.type === "ADJUSTMENT" && times.some((t) => t)
+    ? times.flatMap((t, i) => {
+        const at = istInstant(d.fromDate, t);
+        return at ? [{ at, direction: (dirs[i] === "out" ? 1 : 0) as 0 | 1 }] : [];
+      })
+    : null;
+  if (proposedLogs && proposedLogs.length !== times.filter((t) => t).length) {
+    return { ok: false, message: "Enter every time entry as HH:MM." };
+  }
+  const remoteWork = d.type === "WORK_FROM_HOME" || d.type === "ON_DUTY";
+  const hourly = remoteWork && d.hourly;
+  const copied = await copiedIds(viewer, formData, viewer.employee.id);
+
   const res = await raiseAttendanceRequest({
     employeeId: viewer.employee.id, type: d.type,
     from: d.fromDate, to,
-    proposedIn: d.type === "ADJUSTMENT" ? istInstant(d.fromDate, d.inTime) : null,
-    proposedOut: d.type === "ADJUSTMENT" ? istInstant(d.fromDate, d.outTime) : null,
+    proposedIn: d.type === "ADJUSTMENT" || hourly ? istInstant(d.fromDate, d.inTime) : null,
+    proposedOut: d.type === "ADJUSTMENT" || hourly ? istInstant(d.fromDate, d.outTime) : null,
+    proposedLogs,
     partialMinutes: d.type === "PARTIAL_DAY" ? d.partialMinutes : null,
+    portion: remoteWork && !hourly ? d.portion ?? "FULL_DAY" : null,
+    isHourly: hourly,
+    notifyEmployeeIds: copied,
     reason: d.reason,
   });
   if (!res.ok) return { ok: false, message: res.message };
-  return done(["/me/attendance", "/attendance", "/inbox"], `${res.message} It is now awaiting approval.`);
+  const label = { ADJUSTMENT: "an attendance adjustment", REGULARISATION: "regularization", PARTIAL_DAY: "a partial day", WORK_FROM_HOME: "work from home", ON_DUTY: "on duty" }[d.type];
+  await writeAudit(viewer, {
+    module: "ATTENDANCE", action: "CREATE", entityType: "AttendanceRequest", entityId: res.requestId,
+    summary: `Requested ${label} ${between(d.fromDate, to)}`,
+  });
+  await notifyTimeRequest({
+    tenantId: viewer.tenantId, employeeId: viewer.employee.id, kind: "ATTENDANCE", event: "RAISED",
+    what: `${label} ${between(d.fromDate, to)}`, notifyEmployeeIds: copied, note: d.reason,
+  });
+  return done(["/me/attendance", "/attendance", "/inbox", "/team/attendance", "/time/approvals"], `${res.message} It is now awaiting approval.`);
 }
 
 export async function decideAttendanceRequestAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -526,6 +603,11 @@ export async function decideAttendanceRequestAction(_prev: ActionState, formData
     entityType: "AttendanceRequest", entityId: requestId,
     summary: `${decision === "APPROVE" ? "Approved" : "Rejected"} a ${req.type.replace(/_/g, " ").toLowerCase()} request`,
   });
+  await notifyTimeRequest({
+    tenantId: viewer.tenantId, employeeId: req.employeeId, kind: "ATTENDANCE",
+    event: decision === "APPROVE" ? "APPROVED" : "REJECTED",
+    what: `${req.type.replace(/_/g, " ").toLowerCase()} ${between(req.fromDate, req.toDate)}`, note,
+  });
   return done(["/attendance", "/inbox", "/me/attendance"], res.message);
 }
 
@@ -537,7 +619,10 @@ export async function cancelAttendanceRequestAction(_prev: ActionState, formData
     data: { status: "CANCELLED" },
   });
   if (u.count === 0) return { ok: false, message: "Only your own pending requests can be withdrawn." };
-  return done(["/me/attendance"], "Withdrawn.");
+  // Withdrawn remote punches never count.
+  await prisma.attendanceLog.updateMany({ where: { attendanceRequestId: requestId, status: "PENDING" }, data: { status: "REJECTED" } });
+  await writeAudit(viewer, { module: "ATTENDANCE", action: "UPDATE", entityType: "AttendanceRequest", entityId: requestId, summary: "Withdrew a pending attendance request" });
+  return done(["/me/attendance", "/inbox"], "Withdrawn.");
 }
 
 const processSchema = z.object({ fromDate: zRequiredDate(), toDate: zRequiredDate() });

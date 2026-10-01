@@ -3,7 +3,7 @@ import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { requireViewer, can } from "@/lib/context";
 import { AppShell } from "@/components/shell";
-import { buildNav, quickActions } from "@/lib/nav";
+import { buildNav, quickActions, settingsLink } from "@/lib/nav";
 import { NavProgress } from "@/components/nav-progress";
 import { Suspense } from "react";
 import { scopedEmployeeIds, inScope, scopedEmployeeWhere, timesheetsToApproveWhere } from "@/lib/scope";
@@ -61,7 +61,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         })
       : Promise.resolve(0),
   ]);
-  const [pendingExits, myTasks, unreadNotifications, myExit, pendingSheets, managedProjects] = await Promise.all([
+  const [pendingExits, myTasks, unreadNotifications, myExit, pendingSheets, managedProjects, myProfile] = await Promise.all([
     can(viewer, P.EXIT_APPROVE)
       ? prisma.exitRecord.count({
           where: {
@@ -84,6 +84,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       : Promise.resolve(null),
     viewer.employee ? prisma.timesheet.count({ where: timesheetsToApproveWhere(viewer) }) : Promise.resolve(0),
     viewer.employee ? prisma.project.count({ where: { tenantId: viewer.tenantId, projectManagerId: viewer.employee.id } }) : Promise.resolve(0),
+    viewer.employee ? prisma.employee.findUnique({ where: { id: viewer.employee.id }, select: { profileCompletion: true } }) : Promise.resolve(null),
   ]);
   const myDept = viewer.employee
     ? (await prisma.employee.findUnique({ where: { id: viewer.employee.id }, select: { departmentId: true } }))?.departmentId ?? null
@@ -142,7 +143,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     surveys: pendingSurveys, learning: myCourses, exits: pendingExits, runs: openRunCount,
     documents: pendingDocuments, acks: pendingAcks, sheets: pendingSheets, notifications: unreadNotifications,
     probation: probationsToDecide,
-  }, { hasExit: !!myExit, managesProject: managedProjects > 0 });
+  }, {
+    hasExit: !!myExit, managesProject: managedProjects > 0,
+    welcomeDot: !!myProfile && myProfile.profileCompletion < 100,
+  });
 
   const name = viewer.employee?.displayName ?? viewer.user.email;
   return (
@@ -153,6 +157,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         company={viewer.tenant.name}
         notifications={unreadNotifications}
         actions={quickActions(viewer)}
+        settingsHref={settingsLink(viewer)}
         user={{
           name, email: viewer.user.email, roles: viewer.roleNames, title: viewer.employee?.jobTitleName ?? null,
           employeeId: viewer.employee?.id ?? null, photoUrl: viewer.employee?.photoUrl ?? null,

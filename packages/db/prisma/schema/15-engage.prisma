@@ -1,0 +1,237 @@
+// ============================================================================
+//  KEKA — Engage: Home dashboard widgets, Keka Wall, praise badges, profile Q&A
+// ============================================================================
+//  Spec: home-ess-wall.
+//  The Wall is one feed of posts, polls, praise and wishes, scoped to the
+//  organisation or to a department group. Praise keeps its Praise rows (one
+//  per recipient) and hangs them off a WallPost(PRAISE) so per-person counts
+//  still work. Likes and comments attach to a WallPost or an Announcement.
+// ============================================================================
+
+enum DashboardWidgetType {
+  QUICK_LINKS
+  ON_LEAVE_TODAY
+  LEAVE_BALANCES
+  TIME_TODAY
+  WORKING_REMOTELY
+  HOLIDAYS
+  INBOX
+  FEEDBACK_RECEIVED
+  PROJECT_TIME_TODAY
+  NEEDS_ATTENTION
+  TEAM_TODAY
+}
+
+/// Org-wide Quick Access layout ("changes are applied to all employees").
+/// No rows = the default layout from WIDGETS; the first edit materialises it.
+/// Not the same thing as PsaDashboardLayout (per-user, PSA boards).
+model DashboardWidget {
+  id        String              @id @default(cuid())
+  tenantId  String
+  tenant    Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type      DashboardWidgetType
+  position  Int
+  /// plain | violet | sand | teal | magenta | coral | amber
+  color     String              @default("plain")
+  /// QUICK_LINKS: { links: [{ label, url }] }. Others: unused.
+  config    Json?
+  updatedBy String?
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@unique([tenantId, type])
+  @@index([tenantId, position])
+  @@map("dashboard_widgets")
+}
+
+/// Which composer tabs employees get (the employee portal tour shows Praise only).
+model WallSetting {
+  id            String   @id @default(cuid())
+  tenantId      String   @unique
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  allowPosts    Boolean  @default(true)
+  allowPolls    Boolean  @default(true)
+  allowPraise   Boolean  @default(true)
+  allowComments Boolean  @default(true)
+  updatedAt     DateTime @updatedAt
+
+  @@map("wall_settings")
+}
+
+enum WallPostKind {
+  POST
+  POLL
+  PRAISE
+  WISH
+}
+
+enum WishOccasion {
+  BIRTHDAY
+  WORK_ANNIVERSARY
+  NEW_JOINEE
+}
+
+model WallPost {
+  id           String       @id @default(cuid())
+  tenantId     String
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind         WallPostKind
+  authorId     String
+  author       Employee     @relation("WallPostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  /// Plain text; mentions stored as @[Display Name](employeeId). Poll: the question.
+  body         String
+  imageUrl     String?
+  /// Null = Organization; otherwise visible to that department's group only.
+  departmentId String?
+  department   Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  // Poll
+  pollExpiresAt DateTime?
+  pollAnonymous Boolean   @default(false)
+  pollNotify    Boolean   @default(false)
+
+  // Wish
+  wishForId    String?
+  wishFor      Employee?     @relation("WallWishFor", fields: [wishForId], references: [id], onDelete: Cascade)
+  wishOccasion WishOccasion?
+  wishYear     Int?
+
+  /// Soft delete.
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  praises     Praise[]
+  pollOptions WallPollOption[]
+  pollVotes   WallPollVote[]
+  likes       WallLike[]
+  comments    WallComment[]
+
+  @@index([tenantId, deletedAt, createdAt])
+  @@index([tenantId, departmentId, createdAt])
+  @@index([authorId])
+  @@index([wishForId, wishOccasion, wishYear])
+  @@map("wall_posts")
+}
+
+model WallPollOption {
+  id       String         @id @default(cuid())
+  postId   String
+  post     WallPost       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  label    String
+  position Int
+  votes    WallPollVote[]
+
+  @@index([postId])
+  @@map("wall_poll_options")
+}
+
+/// Single choice; changing your vote before expiry updates the row.
+model WallPollVote {
+  id         String         @id @default(cuid())
+  postId     String
+  post       WallPost       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  optionId   String
+  option     WallPollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdAt  DateTime       @default(now())
+
+  @@unique([postId, employeeId])
+  @@index([optionId])
+  @@index([employeeId])
+  @@map("wall_poll_votes")
+}
+
+/// Exactly one of postId / announcementId is set (enforced in the action).
+model WallLike {
+  id             String        @id @default(cuid())
+  tenantId       String
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  postId         String?
+  post           WallPost?     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  announcementId String?
+  announcement   Announcement? @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  employeeId     String
+  employee       Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now())
+
+  @@unique([postId, employeeId])
+  @@unique([announcementId, employeeId])
+  @@index([tenantId])
+  @@index([employeeId])
+  @@map("wall_likes")
+}
+
+/// Exactly one of postId / announcementId is set (enforced in the action).
+model WallComment {
+  id             String        @id @default(cuid())
+  tenantId       String
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  postId         String?
+  post           WallPost?     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  announcementId String?
+  announcement   Announcement? @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  authorId       String
+  author         Employee      @relation("WallCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  body           String
+  deletedAt      DateTime?
+  createdAt      DateTime      @default(now())
+
+  @@index([postId, createdAt])
+  @@index([announcementId, createdAt])
+  @@index([tenantId])
+  @@index([authorId])
+  @@map("wall_comments")
+}
+
+/// Configurable praise badges (picker grid with descriptions).
+/// Praise.badgeId points here; Praise.badge keeps the name copy.
+model PraiseBadge {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  /// Icon key from our own icon set (no Keka art).
+  icon        String   @default("star")
+  color       String   @default("#F5B83D")
+  position    Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  praises     Praise[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("praise_badges")
+}
+
+/// "Introduce yourself" questions beyond About (Employee.aboutMe stays the first one).
+model ProfileQuestion {
+  id        String          @id @default(cuid())
+  tenantId  String
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  prompt    String
+  position  Int             @default(0)
+  isActive  Boolean         @default(true)
+  createdAt DateTime        @default(now())
+  answers   ProfileAnswer[]
+
+  @@unique([tenantId, prompt])
+  @@index([tenantId, position])
+  @@map("profile_questions")
+}
+
+model ProfileAnswer {
+  id         String          @id @default(cuid())
+  questionId String
+  question   ProfileQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  answer     String
+  updatedAt  DateTime        @updatedAt
+
+  @@unique([questionId, employeeId])
+  @@index([employeeId])
+  @@map("profile_answers")
+}

@@ -4,7 +4,7 @@ import {
   resolveStructure, calculateAnnualTax, compareRegimes, calculateHraExemption,
   type AnnualTaxResult, type ResolvedStructure,
 } from "@keka/payroll";
-import { loadStatutoryTables, slabsFor, ageAtFyEnd } from "@keka/services";
+import { loadStatutoryTables, slabsFor, ageAtFyEnd, previousIncomeApplies } from "@keka/services";
 import { fyMonths, fyRange, fyStartYear } from "@keka/shared";
 import type { Viewer } from "@/lib/context";
 import { cappedDeductions, declarationWindows, regimeSwitchState, type DeductionTotals, type WindowState } from "./rules";
@@ -118,6 +118,10 @@ export interface TaxPicture {
   remaining: number;
   perProjectedMonth: number;
   months: MonthRow[];
+  /** Taxable earnings by component and month: paid where processed, at the current structure where projected. */
+  grid: Array<{ code: string; name: string; cells: number[]; total: number }>;
+  /** Whether previous-employer figures belong to this FY (the year of joining). */
+  previousApplies: boolean;
 
   declaration: Awaited<ReturnType<typeof loadDeclaration>>;
   profile: {
@@ -146,8 +150,9 @@ async function loadDeclaration(employeeId: string, fy: number) {
  * balance spreads over the remaining months.
  *
  * Declared amounts count until a reviewer rules on the proof; after that the
- * accepted amount does. Previous-employer figures apply to the current year
- * only, because the profile does not record which year they belong to.
+ * accepted amount does. Previous-employer figures apply to the year the
+ * employee joined in only — the profile does not record a year, and any
+ * other year was either before them or entirely with this employer.
  */
 export async function loadTaxPicture(viewer: Viewer, fy: number): Promise<TaxPicture> {
   const employeeId = viewer.employee!.id;
@@ -181,7 +186,7 @@ export async function loadTaxPicture(viewer: Viewer, fy: number): Promise<TaxPic
       select: {
         grossEarnings: true, tds: true, professionalTax: true,
         run: { select: { year: true, month: true } },
-        lines: { where: { OR: [{ type: "REIMBURSEMENT" }, { code: { in: ["BASIC", "DA", "HRA"] } }] }, select: { code: true, type: true, amount: true } },
+        lines: { where: { type: { in: ["EARNING", "REIMBURSEMENT"] } }, orderBy: { sequence: "asc" }, select: { code: true, name: true, type: true, amount: true } },
       },
     }),
     prisma.salaryRevision.findFirst({
@@ -255,8 +260,26 @@ export async function loadTaxPicture(viewer: Viewer, fy: number): Promise<TaxPic
   }
 
   const isCurrent = fy === currentFy;
-  const previousIncome = isCurrent ? n(profile?.previousEmployerIncome) : 0;
-  const previousTds = isCurrent ? n(profile?.previousEmployerTds) : 0;
+  // Previous-employer figures belong to the FY the employee joined in, and only that one.
+  const previousApplies = previousIncomeApplies(emp.dateOfJoining, fy, fyStartMonth);
+  const previousIncome = previousApplies ? n(profile?.previousEmployerIncome) : 0;
+  const previousTds = previousApplies ? n(profile?.previousEmployerTds) : 0;
+
+  // --- Gross earnings, component by month (section A of the computation) -----
+  const gridRows = new Map<string, { code: string; name: string; cells: number[] }>();
+  const cell = (code: string, name: string, i: number, amount: number) => {
+    const row = gridRows.get(code) ?? { code, name, cells: months.map(() => 0) };
+    row.cells[i] += amount;
+    gridRows.set(code, row);
+  };
+  rows.forEach((r, i) => {
+    if (r.kind === "processed") {
+      for (const l of byMonth.get(`${r.year}-${r.month}`) ?? []) for (const x of l.lines) if (x.type === "EARNING") cell(x.code, x.name, i, n(x.amount));
+    } else if (r.kind === "projected" && resolved) {
+      for (const c of resolved.components) if (c.type === "EARNING" && !c.monthly.isZero()) cell(c.code, c.name, i, c.monthly.toNumber());
+    }
+  });
+  const grid = [...gridRows.values()].map((g) => ({ ...g, total: g.cells.reduce((a, b) => a + b, 0) })).filter((g) => g.total !== 0);
 
   // --- Tax --------------------------------------------------------------------
   let result: AnnualTaxResult | null = null;
@@ -313,7 +336,7 @@ export async function loadTaxPicture(viewer: Viewer, fy: number): Promise<TaxPic
     fy, currentFy, regime, age, result, comparison, missingTables,
     actualGross, projectedGross, monthlyGross, processedMonths: processed.length, projectedMonths: projected.length,
     reimbursements, previousIncome, hraExemption, professionalTax, deductions,
-    tdsDeducted, previousTds, otherTds: deductions.otherTds, taxPaid, totalTax, remaining, perProjectedMonth, months: rows,
+    tdsDeducted, previousTds, otherTds: deductions.otherTds, taxPaid, totalTax, remaining, perProjectedMonth, months: rows, grid, previousApplies,
     declaration,
     profile: profile ? {
       taxRegime: profile.taxRegime, regimeLockedAt: profile.regimeLockedAt,

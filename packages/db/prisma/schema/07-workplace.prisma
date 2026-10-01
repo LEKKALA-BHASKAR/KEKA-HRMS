@@ -19,32 +19,35 @@ enum AnnouncementStatus {
 }
 
 model Announcement {
-  id            String             @id @default(cuid())
-  tenantId      String
-  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  title         String
-  body          String
-  bannerUrl     String?
-  status        AnnouncementStatus @default(DRAFT)
+  title     String
+  body      String
+  bannerUrl String?
+  status    AnnouncementStatus @default(DRAFT)
 
   /// Audience filters. Empty means everyone.
   /// { departmentIds: [], locationIds: [], businessUnitIds: [], workerTypeIds: [],
   ///   excludeOnNotice: bool }
-  audience      Json?
+  audience Json?
 
   publishAt     DateTime?
   expiresAt     DateTime?
   /// Employees must tick to confirm they have read it.
-  requireAck    Boolean            @default(false)
-  notifyByEmail Boolean            @default(false)
-  isPinned      Boolean            @default(false)
+  requireAck    Boolean   @default(false)
+  notifyByEmail Boolean   @default(false)
+  isPinned      Boolean   @default(false)
 
-  createdBy     String?
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  reads         AnnouncementRead[]
+  reads    AnnouncementRead[]
+  /// Wall reactions on the announcement (15-engage).
+  likes    WallLike[]
+  comments WallComment[]
 
   @@index([tenantId, status, publishAt])
   @@map("announcements")
@@ -57,7 +60,7 @@ model AnnouncementRead {
   employeeId     String
   employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  viewedAt       DateTime     @default(now())
+  viewedAt       DateTime  @default(now())
   acknowledgedAt DateTime?
 
   @@unique([announcementId, employeeId])
@@ -77,9 +80,9 @@ enum AwardCadence {
 }
 
 model AwardType {
-  id          String       @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name        String
   description String?
@@ -92,9 +95,9 @@ model AwardType {
   points      Int?
   isActive    Boolean      @default(true)
 
-  createdAt   DateTime     @default(now())
+  createdAt DateTime @default(now())
 
-  awards      EmployeeAward[]
+  awards EmployeeAward[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -104,26 +107,26 @@ model AwardType {
 model EmployeeAward {
   id          String    @id @default(cuid())
   tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   awardTypeId String
   awardType   AwardType @relation(fields: [awardTypeId], references: [id], onDelete: Cascade)
   employeeId  String
   employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   /// The period the award recognises, e.g. "2026-06" or "2026-Q2".
-  period      String?
-  awardedOn   DateTime
-  citation    String?
+  period         String?
+  awardedOn      DateTime
+  citation       String?
   /// Set when a cash award is pushed into a payroll run.
-  cashAmount  Decimal?  @db.Decimal(18, 2)
-  paidInRunId String?
+  cashAmount     Decimal? @db.Decimal(18, 2)
+  paidInRunId    String?
   certificateUrl String?
 
   nominatedBy String?
   approvedBy  String?
-  isPublished Boolean   @default(true)
+  isPublished Boolean @default(true)
 
-  createdAt   DateTime  @default(now())
+  createdAt DateTime @default(now())
 
   @@index([tenantId, awardedOn])
   @@index([employeeId])
@@ -132,24 +135,37 @@ model EmployeeAward {
 
 /// Peer-to-peer praise, distinct from a formal award.
 model Praise {
-  id          String   @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   fromEmployeeId String
   fromEmployee   Employee @relation("PraiseGiven", fields: [fromEmployeeId], references: [id], onDelete: Cascade)
   toEmployeeId   String
   toEmployee     Employee @relation("PraiseReceived", fields: [toEmployeeId], references: [id], onDelete: Cascade)
 
-  /// Badge name, e.g. "Team Player", "Above and Beyond".
-  badge       String?
-  message     String
+  /// Badge name, e.g. "Team Player", "Above and Beyond". Kept as the name copy
+  /// even when badgeId is set.
+  badge    String?
+  message  String
   /// Visible on the organisation praise wall.
-  isPublic    Boolean  @default(true)
+  isPublic Boolean @default(true)
 
-  createdAt   DateTime @default(now())
+  // --- Keka parity (15-engage) ---
+  /// Configured badge; `badge` keeps the name copy.
+  badgeId    String?
+  badgeRef   PraiseBadge? @relation(fields: [badgeId], references: [id], onDelete: SetNull)
+  /// One WallPost(PRAISE) holds N Praise rows, one per recipient.
+  wallPostId String?
+  wallPost   WallPost?    @relation(fields: [wallPostId], references: [id], onDelete: Cascade)
+  projectId  String?
+  project    Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
 
   @@index([tenantId, createdAt])
   @@index([toEmployeeId])
+  @@index([wallPostId])
+  @@index([badgeId])
   @@map("praises")
 }
 
@@ -171,23 +187,38 @@ enum AssetCondition {
   NEW
   GOOD
   FAIR
+  POOR
   DAMAGED
   UNUSABLE
 }
 
+/// Snapshot of AssetType.requireAck taken at assignment.
+enum AssetAckStatus {
+  NOT_APPLICABLE
+  PENDING
+  ACKNOWLEDGED
+}
+
+enum AssetRequestType {
+  NEW_ASSET
+  REPLACEMENT
+  RETURN
+}
+
 model AssetCategory {
-  id          String   @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name        String
-  description String?
+  id               String  @id @default(cuid())
+  tenantId         String
+  tenant           Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
   /// Straight-line depreciation over this many months. Null means none.
   usefulLifeMonths Int?
-  isActive    Boolean  @default(true)
+  isActive         Boolean @default(true)
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 
-  types       AssetType[]
+  types    AssetType[]
+  requests AssetRequest[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -203,10 +234,15 @@ model AssetType {
   model       String?
   /// Requires employee acknowledgement on assignment.
   requireAck  Boolean       @default(true)
+  description String?
+  /// laptop | desktop | monitor | phone | tablet | chair | card | network | other
+  icon        String        @default("other")
+  isActive    Boolean       @default(true)
 
-  createdAt   DateTime      @default(now())
+  createdAt DateTime @default(now())
 
-  assets      Asset[]
+  assets   Asset[]
+  requests AssetRequest[]
 
   @@unique([categoryId, name])
   @@index([categoryId])
@@ -215,18 +251,18 @@ model AssetType {
 
 /// Configurable asset ID series, mirroring the employee number series.
 model AssetIdSeries {
-  id          String   @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name        String
-  prefix      String   @default("AST")
-  digits      Int      @default(5)
-  suffix      String   @default("")
-  nextNumber  Int      @default(1)
-  isDefault   Boolean  @default(false)
-  isActive    Boolean  @default(true)
+  id         String  @id @default(cuid())
+  tenantId   String
+  tenant     Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  prefix     String  @default("AST")
+  digits     Int     @default(5)
+  suffix     String  @default("")
+  nextNumber Int     @default(1)
+  isDefault  Boolean @default(false)
+  isActive   Boolean @default(true)
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -234,68 +270,94 @@ model AssetIdSeries {
 }
 
 model Asset {
-  id             String         @id @default(cuid())
-  tenantId       String
-  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  assetTypeId    String
-  assetType      AssetType      @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetTypeId String
+  assetType   AssetType @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
 
   /// Generated from an AssetIdSeries.
-  assetTag       String
-  serialNumber   String?
-  status         AssetStatus    @default(AVAILABLE)
-  condition      AssetCondition @default(NEW)
+  assetTag     String
+  serialNumber String?
+  status       AssetStatus    @default(AVAILABLE)
+  condition    AssetCondition @default(NEW)
 
   purchaseDate   DateTime?
-  purchaseCost   Decimal?       @db.Decimal(18, 2)
+  purchaseCost   Decimal?  @db.Decimal(18, 2)
   vendor         String?
   invoiceNumber  String?
   warrantyExpiry DateTime?
   /// Book value after depreciation, recomputed on demand.
-  currentValue   Decimal?       @db.Decimal(18, 2)
+  currentValue   Decimal?  @db.Decimal(18, 2)
 
-  locationId     String?
-  notes          String?
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  notes      String?
 
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  // --- Keka parity (assets) ---
+  /// Keka "Asset Name"; UI falls back to assetType.name.
+  name              String?
+  description       String?
+  /// Required when status is IN_REPAIR | LOST | UNAVAILABLE | RETIRED.
+  unavailableReason String?
+  /// StoredFile id; documents are StoredFile rows with relatedType "Asset".
+  imageFileId       String?
+  customFields      Json?
 
-  assignments    AssetAssignment[]
-  requests       AssetRequest[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments AssetAssignment[]
+  requests    AssetRequest[]
+  events      AssetEvent[]
 
   @@unique([tenantId, assetTag])
   @@index([tenantId, status])
   @@index([assetTypeId])
+  @@index([tenantId, locationId])
+  @@index([tenantId, warrantyExpiry])
   @@map("assets")
 }
 
 model AssetAssignment {
-  id             String         @id @default(cuid())
-  assetId        String
-  asset          Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  employeeId     String
-  employee       Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  assetId    String
+  asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  assignedOn     DateTime
-  assignedBy     String?
-  conditionOut   AssetCondition @default(GOOD)
+  assignedOn   DateTime
+  assignedBy   String?
+  conditionOut AssetCondition @default(GOOD)
 
   /// Acknowledgement by the employee that they have received it.
   acknowledgedAt DateTime?
 
-  returnedOn     DateTime?
-  conditionIn    AssetCondition?
+  returnedOn      DateTime?
+  conditionIn     AssetCondition?
   /// Recovered from the employee, and flows into the F&F settlement.
-  damageCharge   Decimal?       @db.Decimal(18, 2)
-  damageNote     String?
+  damageCharge    Decimal?        @db.Decimal(18, 2)
+  damageNote      String?
   /// Set once the charge has been pushed to payroll or a settlement.
-  chargeRecovered Boolean       @default(false)
+  chargeRecovered Boolean         @default(false)
 
-  notes          String?
-  createdAt      DateTime       @default(now())
+  // --- Keka parity (assets) ---
+  /// Snapshot of assetType.requireAck at assignment.
+  ackStatus      AssetAckStatus @default(PENDING)
+  ackRemindedAt  DateTime?
+  ackRemindCount Int            @default(0)
+  /// The request this assignment fulfils.
+  requestId      String?        @unique
+  request        AssetRequest?  @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  /// Employee id of whoever recovered it.
+  returnedBy     String?
+
+  notes     String?
+  createdAt DateTime @default(now())
 
   @@index([assetId])
   @@index([employeeId, returnedOn])
+  @@index([ackStatus])
   @@map("asset_assignments")
 }
 
@@ -308,28 +370,45 @@ enum AssetRequestStatus {
 }
 
 model AssetRequest {
-  id          String             @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId  String
-  employee    Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   /// Set once a specific asset is allocated against the request.
-  assetId     String?
-  asset       Asset?             @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  assetId    String?
+  asset      Asset?   @relation(fields: [assetId], references: [id], onDelete: SetNull)
 
   assetTypeId String?
+  assetType   AssetType?         @relation(fields: [assetTypeId], references: [id], onDelete: SetNull)
   reason      String
   status      AssetRequestStatus @default(PENDING)
   neededBy    DateTime?
 
-  approvedBy  String?
-  approvedAt  DateTime?
+  approvedBy   String?
+  approvedAt   DateTime?
   rejectReason String?
 
-  createdAt   DateTime           @default(now())
+  // --- Keka parity (assets) ---
+  requestType  AssetRequestType       @default(NEW_ASSET)
+  /// "Asset requested for" (free text).
+  title        String?
+  categoryId   String?
+  category     AssetCategory?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  /// REPLACEMENT/RETURN: asset currently held (plain id; assetId already relates Asset).
+  heldAssetId  String?
+  currentLevel Int                    @default(1)
+  closedAt     DateTime?
+  /// Employee id shown as "Action taken by".
+  closedBy     String?
+  approvals    AssetRequestApproval[]
+  assignment   AssetAssignment?
+
+  createdAt DateTime @default(now())
 
   @@index([tenantId, status])
   @@index([employeeId])
+  @@index([tenantId, status, createdAt])
   @@map("asset_requests")
 }
 
@@ -347,7 +426,7 @@ enum DocumentScope {
 model DocumentFolder {
   id             String        @id @default(cuid())
   tenantId       String
-  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name           String
   description    String?
   scope          DocumentScope @default(EMPLOYEE)
@@ -357,11 +436,11 @@ model DocumentFolder {
   viewRoles      Json?
   editRoles      Json?
 
-  createdAt      DateTime      @default(now())
+  createdAt DateTime @default(now())
 
-  types          DocumentType[]
-  documents      EmployeeDocument[]
-  orgDocuments   OrgDocument[]
+  types        DocumentType[]
+  documents    EmployeeDocument[]
+  orgDocuments OrgDocument[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -369,24 +448,24 @@ model DocumentFolder {
 }
 
 model DocumentType {
-  id             String          @id @default(cuid())
-  folderId       String
-  folder         DocumentFolder  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  id       String         @id @default(cuid())
+  folderId String
+  folder   DocumentFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
 
-  name           String
+  name                String
   /// Single upload, or many of this type.
-  allowMultiple  Boolean         @default(false)
-  isMandatory    Boolean         @default(false)
+  allowMultiple       Boolean @default(false)
+  isMandatory         Boolean @default(false)
   /// Routes to admin verification after upload.
-  requireVerification Boolean    @default(true)
+  requireVerification Boolean @default(true)
   /// Prompts the employee for an expiry date.
-  trackExpiry    Boolean         @default(false)
+  trackExpiry         Boolean @default(false)
   /// Employee may mark it as not applicable to them.
-  allowNotApplicable Boolean     @default(false)
+  allowNotApplicable  Boolean @default(false)
 
-  createdAt      DateTime        @default(now())
+  createdAt DateTime @default(now())
 
-  documents      EmployeeDocument[]
+  documents EmployeeDocument[]
 
   @@unique([folderId, name])
   @@index([folderId])
@@ -403,33 +482,33 @@ enum EmployeeDocumentStatus {
 }
 
 model EmployeeDocument {
-  id          String                 @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId  String
-  employee    Employee               @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  folderId    String?
-  folder      DocumentFolder?        @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  id             String          @id @default(cuid())
+  tenantId       String
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId     String
+  employee       Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  folderId       String?
+  folder         DocumentFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
   documentTypeId String?
-  documentType DocumentType?         @relation(fields: [documentTypeId], references: [id], onDelete: SetNull)
+  documentType   DocumentType?   @relation(fields: [documentTypeId], references: [id], onDelete: SetNull)
 
-  name        String
-  fileUrl     String?
-  fileSize    Int?
-  mimeType    String?
-  status      EmployeeDocumentStatus @default(PENDING_ON_EMPLOYEE)
+  name     String
+  fileUrl  String?
+  fileSize Int?
+  mimeType String?
+  status   EmployeeDocumentStatus @default(PENDING_ON_EMPLOYEE)
 
-  issuedOn    DateTime?
-  expiresOn   DateTime?
+  issuedOn  DateTime?
+  expiresOn DateTime?
 
-  uploadedBy  String?
-  uploadedAt  DateTime?
-  verifiedBy  String?
-  verifiedAt  DateTime?
+  uploadedBy   String?
+  uploadedAt   DateTime?
+  verifiedBy   String?
+  verifiedAt   DateTime?
   rejectReason String?
 
-  createdAt   DateTime               @default(now())
-  updatedAt   DateTime               @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([tenantId, status])
   @@index([employeeId])
@@ -439,22 +518,22 @@ model EmployeeDocument {
 
 /// Organisation policy documents, with enforced acknowledgement.
 model OrgDocument {
-  id          String          @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  folderId    String?
-  folder      DocumentFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  id       String          @id @default(cuid())
+  tenantId String
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  folderId String?
+  folder   DocumentFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
 
-  title       String
-  description String?
-  fileUrl     String?
-  version     String?
+  title         String
+  description   String?
+  fileUrl       String?
+  version       String?
   effectiveFrom DateTime?
-  requireAck  Boolean         @default(false)
-  isPublished Boolean         @default(true)
+  requireAck    Boolean   @default(false)
+  isPublished   Boolean   @default(true)
 
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   acknowledgements OrgDocumentAck[]
 
@@ -463,12 +542,12 @@ model OrgDocument {
 }
 
 model OrgDocumentAck {
-  id            String      @id @default(cuid())
-  documentId    String
-  document      OrgDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  employeeId    String
-  employee      Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  acknowledgedAt DateTime   @default(now())
+  id             String      @id @default(cuid())
+  documentId     String
+  document       OrgDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  employeeId     String
+  employee       Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  acknowledgedAt DateTime    @default(now())
 
   @@unique([documentId, employeeId])
   @@index([employeeId])
@@ -477,27 +556,27 @@ model OrgDocumentAck {
 
 /// Letter and document generation templates with dynamic placeholders.
 model DocumentTemplate {
-  id            String   @id @default(cuid())
-  tenantId      String
-  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  name          String
+  name           String
   /// OFFER | CONFIRMATION | RELIEVING | APPOINTMENT | EXPERIENCE | WARNING | CUSTOM
-  category      String   @default("CUSTOM")
+  category       String  @default("CUSTOM")
   /// HTML body containing {{placeholders}}.
-  body          String
+  body           String
   /// Placeholder keys the template uses, for validation before generation.
-  placeholders  Json?
+  placeholders   Json?
   /// Scope to specific legal entities. Empty means org-wide.
   legalEntityIds Json?
   /// Attached workflow: ACKNOWLEDGE | APPROVE | SIGN
-  workflow      String?
-  isArchived    Boolean  @default(false)
+  workflow       String?
+  isArchived     Boolean @default(false)
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  generated     GeneratedDocument[]
+  generated GeneratedDocument[]
 
   @@unique([tenantId, name])
   @@index([tenantId, category])
@@ -505,23 +584,23 @@ model DocumentTemplate {
 }
 
 model GeneratedDocument {
-  id          String           @id @default(cuid())
-  templateId  String
-  template    DocumentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  employeeId  String
-  employee    Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String           @id @default(cuid())
+  templateId String
+  template   DocumentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   /// Rendered HTML at the time of generation, so a later template edit does
   /// not rewrite history.
   renderedBody String
-  fileUrl     String?
+  fileUrl      String?
   /// DRAFT | PENDING_APPROVAL | PENDING_SIGNATURE | ISSUED | ACKNOWLEDGED
-  status      String           @default("ISSUED")
+  status       String  @default("ISSUED")
 
-  issuedOn    DateTime         @default(now())
-  issuedBy    String?
+  issuedOn       DateTime  @default(now())
+  issuedBy       String?
   acknowledgedAt DateTime?
-  signedAt    DateTime?
+  signedAt       DateTime?
 
   @@index([employeeId])
   @@index([templateId])
@@ -538,32 +617,32 @@ enum ContractStatus {
 }
 
 model EmployeeContract {
-  id          String         @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId  String
-  employee    Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   contractNumber String?
   /// PERMANENT | FIXED_TERM | PROBATION | CONSULTANT | INTERNSHIP
-  contractType String        @default("FIXED_TERM")
-  startDate   DateTime
-  endDate     DateTime?
-  status      ContractStatus @default(ACTIVE)
+  contractType   String         @default("FIXED_TERM")
+  startDate      DateTime
+  endDate        DateTime?
+  status         ContractStatus @default(ACTIVE)
 
   /// Contracted annual value, which may differ from the payroll CTC.
-  contractValue Decimal?     @db.Decimal(18, 2)
-  noticeDays   Int?
-  fileUrl      String?
-  terms        String?
+  contractValue Decimal? @db.Decimal(18, 2)
+  noticeDays    Int?
+  fileUrl       String?
+  terms         String?
 
   /// Chain when a contract is renewed rather than replaced.
   renewedFromId String?
-  renewedFrom   EmployeeContract? @relation("ContractRenewal", fields: [renewedFromId], references: [id], onDelete: SetNull)
+  renewedFrom   EmployeeContract?  @relation("ContractRenewal", fields: [renewedFromId], references: [id], onDelete: SetNull)
   renewals      EmployeeContract[] @relation("ContractRenewal")
 
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([tenantId, status])
   @@index([employeeId])
@@ -590,11 +669,11 @@ enum HrActivityType {
 /// A timeline of discrete HR events, distinct from the effective-dated job
 /// record. A warning or a work trip is an event, not a position change.
 model HrActivity {
-  id          String         @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId  String
-  employee    Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   type        HrActivityType
   title       String
@@ -613,10 +692,10 @@ model HrActivity {
 
   attachmentUrl String?
   /// Links to the effective-dated job record where one was created.
-  jobRecordId String?
+  jobRecordId   String?
 
-  recordedBy  String?
-  createdAt   DateTime       @default(now())
+  recordedBy String?
+  createdAt  DateTime @default(now())
 
   @@index([tenantId, type, occurredOn])
   @@index([employeeId, occurredOn])
@@ -642,18 +721,25 @@ enum EnrolmentStatus {
   WITHDRAWN
 }
 
+/// Lifecycle of a self-paced COURSE built in Learn. Null for PROGRAMME rows.
+enum CourseState {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
 model TrainingType {
-  id          String   @id @default(cuid())
+  id          String  @id @default(cuid())
   tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name        String
   description String?
   /// INTERNAL | EXTERNAL | ONLINE | CERTIFICATION
-  mode        String   @default("INTERNAL")
-  isActive    Boolean  @default(true)
+  mode        String  @default("INTERNAL")
+  isActive    Boolean @default(true)
 
-  createdAt   DateTime @default(now())
-  programs    TrainingProgram[]
+  createdAt DateTime          @default(now())
+  programs  TrainingProgram[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -661,52 +747,72 @@ model TrainingType {
 }
 
 model TrainingProgram {
-  id             String         @id @default(cuid())
+  id             String       @id @default(cuid())
   tenantId       String
-  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   trainingTypeId String
-  trainingType   TrainingType   @relation(fields: [trainingTypeId], references: [id], onDelete: Cascade)
+  trainingType   TrainingType @relation(fields: [trainingTypeId], references: [id], onDelete: Cascade)
 
-  title          String
-  description    String?
-  trainer        String?
+  title         String
+  description   String?
+  trainer       String?
   /// Cost per participant, for training budget reporting.
-  costPerHead    Decimal?       @db.Decimal(18, 2)
-  venue          String?
-  startDate      DateTime?
-  endDate        DateTime?
-  durationHours  Decimal?       @db.Decimal(9, 2)
-  maxSeats       Int?
-  status         TrainingStatus @default(PLANNED)
+  costPerHead   Decimal?       @db.Decimal(18, 2)
+  venue         String?
+  startDate     DateTime?
+  endDate       DateTime?
+  durationHours Decimal?       @db.Decimal(9, 2)
+  maxSeats      Int?
+  status        TrainingStatus @default(PLANNED)
   /// Skills this programme develops, awarded on completion.
-  skills         Json?
-  materialUrl    String?
+  skills        Json?
+  materialUrl   String?
 
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  // --- Keka parity: Learn (19-perform-learn) ---
+  /// PROGRAMME (scheduled, instructor-led — all rows today) | COURSE (self-paced, built in Learn)
+  format      String       @default("PROGRAMME")
+  courseState CourseState?
+  category    String?
+  authorId    String?
+  author      Employee?    @relation("CourseAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  selfEnrol   Boolean      @default(true)
+  /// Drives the compliance tab instead of trainingType.mode.
+  isMandatory Boolean      @default(false)
+  publishedAt DateTime?
 
-  enrolments     TrainingEnrolment[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  enrolments TrainingEnrolment[]
+  sections   CourseSection[]
+  modules    CourseModule[]
 
   @@index([tenantId, status])
+  @@index([tenantId, format, courseState])
   @@map("training_programs")
 }
 
 model TrainingEnrolment {
-  id          String          @id @default(cuid())
-  programId   String
-  program     TrainingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
-  employeeId  String
-  employee    Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String          @id @default(cuid())
+  programId  String
+  program    TrainingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  status      EnrolmentStatus @default(ASSIGNED)
-  progressPercent Int         @default(0)
-  score       Decimal?        @db.Decimal(9, 2)
-  completedAt DateTime?
-  certificateUrl String?
-  feedback    String?
+  status          EnrolmentStatus @default(ASSIGNED)
+  progressPercent Int             @default(0)
+  score           Decimal?        @db.Decimal(9, 2)
+  completedAt     DateTime?
+  certificateUrl  String?
+  feedback        String?
 
-  assignedAt  DateTime        @default(now())
-  assignedBy  String?
+  assignedAt DateTime @default(now())
+  assignedBy String?
+
+  /// Learn: per-module completion and assessment attempts. For COURSE rows
+  /// progressPercent and score are derived from these.
+  moduleProgress ModuleProgress[]
+  attempts       AssessmentAttempt[]
 
   @@unique([programId, employeeId])
   @@index([employeeId, status])
@@ -725,18 +831,18 @@ enum MeetingStatus {
 }
 
 model MeetingRoom {
-  id          String   @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name        String
-  locationId  String?
-  capacity    Int?
+  id         String  @id @default(cuid())
+  tenantId   String
+  tenant     Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  locationId String?
+  capacity   Int?
   /// Projector, video conferencing, whiteboard.
-  facilities  Json?
-  isActive    Boolean  @default(true)
+  facilities Json?
+  isActive   Boolean @default(true)
 
-  createdAt   DateTime @default(now())
-  meetings    Meeting[]
+  createdAt DateTime  @default(now())
+  meetings  Meeting[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -744,11 +850,11 @@ model MeetingRoom {
 }
 
 model Meeting {
-  id          String        @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  roomId      String?
-  room        MeetingRoom?  @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  id       String       @id @default(cuid())
+  tenantId String
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roomId   String?
+  room     MeetingRoom? @relation(fields: [roomId], references: [id], onDelete: SetNull)
 
   title       String
   /// REVIEW | ONE_ON_ONE | STANDUP | INTERVIEW | TOWN_HALL | OTHER
@@ -760,33 +866,50 @@ model Meeting {
   meetingUrl  String?
   status      MeetingStatus @default(SCHEDULED)
 
-  /// Minutes recorded after the meeting.
+  /// Minutes recorded after the meeting. For 1:1s this holds the SHARED notes.
   minutes     String?
   organiserId String?
 
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  // --- Keka parity: 1:1 meetings (19-perform-learn) ---
+  /// "Career track", "Weekly check-in" — feeds the AI agenda.
+  purpose     String?
+  /// NONE | WEEKLY | BIWEEKLY | MONTHLY. Occurrences share seriesId.
+  recurrence  String                 @default("NONE")
+  seriesId    String?
+  templateId  String?
+  template    MeetingAgendaTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  /// { summary: string, decisions: string[] } — from agenda, talking points, shared notes only.
+  aiSummary   Json?
+  aiSummaryAt DateTime?
+  completedAt DateTime?
 
-  attendees   MeetingAttendee[]
-  actionItems MeetingActionItem[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attendees     MeetingAttendee[]
+  actionItems   MeetingActionItem[]
+  talkingPoints MeetingTalkingPoint[]
+  privateNotes  MeetingPrivateNote[]
 
   @@index([tenantId, startsAt])
   @@index([roomId, startsAt])
+  @@index([tenantId, meetingType, startsAt])
+  @@index([seriesId])
   @@map("meetings")
 }
 
 model MeetingAttendee {
-  id          String   @id @default(cuid())
-  meetingId   String
-  meeting     Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
-  employeeId  String
-  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  meetingId  String
+  meeting    Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   /// REQUIRED | OPTIONAL
-  attendance  String   @default("REQUIRED")
+  attendance String   @default("REQUIRED")
   /// PENDING | ACCEPTED | DECLINED | TENTATIVE
-  response    String   @default("PENDING")
-  attended    Boolean?
+  response   String   @default("PENDING")
+  attended   Boolean?
 
   @@unique([meetingId, employeeId])
   @@index([employeeId])
@@ -794,9 +917,9 @@ model MeetingAttendee {
 }
 
 model MeetingActionItem {
-  id          String    @id @default(cuid())
-  meetingId   String
-  meeting     Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  id        String  @id @default(cuid())
+  meetingId String
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
   description String
   ownerId     String?
@@ -806,7 +929,7 @@ model MeetingActionItem {
   status      String    @default("OPEN")
   completedAt DateTime?
 
-  createdAt   DateTime  @default(now())
+  createdAt DateTime @default(now())
 
   @@index([meetingId])
   @@index([ownerId, status])

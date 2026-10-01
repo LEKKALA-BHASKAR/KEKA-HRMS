@@ -1,0 +1,209 @@
+/* Assets — Keka's Org › Assets screens in our light palette. */
+
+.pageHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+.pageTitle { font-size: 22px; font-weight: 500; letter-spacing: -0.01em; color: var(--text); }
+.pageSub { font-size: 14px; color: var(--text-muted); margin-top: 4px; }
+
+/* ---- Panels and KPI cards ---------------------------------------------- */
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px; margin-bottom: 22px; }
+.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 20px 18px 16px; display: flex; flex-direction: column; gap: 10px; min-height: 96px; }
+.kpiLabel { font-size: 15px; color: var(--text); }
+.kpiRow { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.kpiValue { font-size: 20px; font-weight: 500; color: var(--text); }
+.kpiLink { font-size: 14px; color: var(--brand-600); }
+.kpiLink:hover { text-decoration: underline; }
+
+.chartPanel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 22px; }
+.chartHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.chartTitle { font-size: 15.5px; font-weight: 500; color: var(--text); }
+.toggle { display: flex; align-items: center; font-size: 14px; }
+.toggle a { padding: 2px 13px; color: var(--brand-600); }
+.toggle a + a { border-left: 1px solid var(--border); }
+.toggle a.on { color: var(--text); pointer-events: none; }
+.chartBody { padding: 14px 18px 18px; }
+.chartLegend { display: flex; justify-content: center; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--text-muted); margin-top: 8px; }
+.chartLegend span { display: inline-flex; align-items: center; gap: 6px; }
+.chartLegend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.chartSvg { width: 100%; height: auto; display: block; overflow: visible; }
+.chartSvg text { font-family: inherit; }
+.chartSelects { display: flex; gap: 10px; flex-wrap: wrap; }
+.chartSelects select { min-width: 170px; }
+
+/* ---- Filter bar (Keka's boxed dropdown row) ----------------------------- */
+.filters { background: var(--surface); border: 1px solid var(--border); border-radius: 6px 6px 0 0; display: flex; flex-wrap: wrap; }
+.filters.solo { border-radius: 6px; }
+.fcell { position: relative; flex: 0 0 222px; min-height: 54px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: -1px; display: flex; flex-direction: column; justify-content: center; }
+.fcell label { position: absolute; top: 7px; left: 18px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-subtle); pointer-events: none; }
+.fcell select, .fcell input {
+  appearance: none; -webkit-appearance: none; border: 0; outline: none; background: transparent; color: var(--text);
+  font: inherit; font-size: 14.5px; height: 100%; min-height: 54px; padding: 18px 36px 4px 18px; width: 100%; cursor: pointer;
+}
+.fcell select.placeholder { color: var(--text-muted); padding-top: 4px; }
+.fcell input[type="date"] { padding-right: 10px; cursor: text; }
+.fcell::after { content: ""; position: absolute; right: 18px; top: 50%; width: 7px; height: 7px; border-right: 1.5px solid var(--text-subtle); border-bottom: 1.5px solid var(--text-subtle); transform: translateY(-70%) rotate(45deg); pointer-events: none; }
+.fcell.date::after { display: none; }
+.fcell:focus-within { background: var(--surface-hover); }
+.fsearch { flex: 1 1 260px; display: flex; align-items: center; gap: 10px; padding: 0 16px 0 18px; min-height: 54px; border-bottom: 1px solid var(--border); margin-bottom: -1px; }
+.fsearch input { border: 0; outline: none; background: transparent; font: inherit; font-size: 14.5px; color: var(--text); flex: 1; min-width: 0; }
+.fsearch svg { color: var(--text-subtle); flex-shrink: 0; }
+.fclear { color: var(--text-subtle); display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; }
+.fclear:hover { background: var(--surface-hover); color: var(--text); }
+
+/* ---- Toolbar and table ------------------------------------------------- */
+.tableCard { background: var(--surface); border: 1px solid var(--border); border-top: 0; border-radius: 0 0 6px 6px; }
+.tableCard.alone { border-top: 1px solid var(--border); border-radius: 6px; }
+.toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 12px 18px; min-height: 56px; border-bottom: 1px solid var(--border); }
+.toolbar .spacer { flex: 1; }
+.total { font-size: 13px; color: var(--text-muted); }
+.iconBtn { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; color: var(--text-muted); border: 0; background: none; cursor: pointer; }
+.iconBtn:hover { background: var(--surface-hover); color: var(--text); }
+.tableWrap { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+.table th {
+  text-align: left; font-size: 11.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted);
+  background: var(--surface-sunken); padding: 12px 18px; border-right: 1px solid var(--border); white-space: nowrap;
+}
+.table td { padding: 14px 18px; border-top: 1px solid var(--border); border-right: 1px solid var(--border); vertical-align: middle; color: var(--text); }
+.table th:last-child, .table td:last-child { border-right: 0; }
+.table tr:hover td { background: color-mix(in srgb, var(--surface-hover) 60%, transparent); }
+.table .sub { display: block; font-size: 13px; color: var(--text-muted); margin-top: 3px; }
+.table .clip { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link { color: var(--brand-600); }
+.link:hover { text-decoration: underline; }
+.check { width: 46px; text-align: center; }
+.empty { padding: 44px 20px; text-align: center; }
+.emptyTitle { font-size: 20px; color: var(--text-muted); font-weight: 500; }
+.emptyText { font-size: 14px; color: var(--text-subtle); margin-top: 10px; }
+.emptyArt { margin: 18px auto 10px; color: var(--text-subtle); opacity: .7; }
+
+.pager { display: flex; align-items: center; justify-content: flex-end; gap: 22px; padding: 16px 22px; border-top: 1px solid var(--border); font-size: 14px; color: var(--text); }
+.pager a, .pager span.off { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 4px; color: var(--text-muted); }
+.pager span.off { opacity: .35; }
+.pager a:hover { background: var(--surface-hover); }
+.pagerNav { display: flex; align-items: center; gap: 6px; }
+
+/* ---- Keka's yellow information strip ------------------------------------ */
+.yellow { background: #fff5d6; border: 1px solid #f2d27a; color: #5c4a14; border-radius: 4px; padding: 13px 16px; font-size: 14px; }
+.yellow a, .yellow button.linkish { color: var(--brand-600); }
+.linkish { border: 0; background: none; padding: 0; font: inherit; color: var(--brand-600); cursor: pointer; }
+.linkish:hover { text-decoration: underline; }
+
+/* ---- Inner segmented tabs ("Pending Requests | Closed Requests") -------- */
+.segments { display: flex; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 22px; overflow: hidden; }
+.segments a { padding: 15px 22px; font-size: 14.5px; color: var(--text-muted); }
+.segments a:hover { color: var(--text); }
+.segments a.on { background: var(--brand-50); color: var(--text); }
+
+.sectionHead { margin: 2px 0 18px; }
+.sectionTitle { font-size: 21px; font-weight: 500; color: var(--text); }
+.sectionSub { font-size: 14px; color: var(--text-muted); margin-top: 5px; }
+
+/* ---- Asset cards in the Assigned Assets grid ---------------------------- */
+.cards { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.card { position: relative; display: flex; align-items: center; gap: 14px; width: 222px; height: 58px; padding: 0 10px 0 18px; background: var(--surface-sunken); border-radius: 4px; overflow: hidden; }
+.card .flag { position: absolute; top: 0; right: 0; width: 0; height: 0; border-style: solid; border-width: 0 12px 12px 0; border-color: transparent #c4c8d0 transparent transparent; }
+.card .flag.pending { border-right-color: #f08c2e; }
+.card .flag.done { border-right-color: #8bc34a; }
+.cardIcon { color: var(--brand-500); flex-shrink: 0; display: inline-grid; }
+.cardText { min-width: 0; flex: 1; line-height: 1.25; }
+.cardName { font-size: 14.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cardTag { font-size: 13px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.more { color: var(--brand-600); font-size: 14.5px; white-space: nowrap; }
+
+/* ---- Kebab menu --------------------------------------------------------- */
+.menuWrap { position: relative; display: inline-block; }
+.kebab { display: inline-grid; place-items: center; width: 26px; height: 30px; border: 0; background: none; color: var(--text-subtle); border-radius: 4px; cursor: pointer; }
+.kebab:hover, .kebab[aria-expanded="true"] { color: var(--brand-600); background: color-mix(in srgb, var(--brand-50) 70%, transparent); }
+.menu {
+  position: absolute; z-index: 40; right: 0; top: calc(100% + 4px); min-width: 252px; padding: 6px 0;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow-lg);
+}
+.menu.up { top: auto; bottom: calc(100% + 4px); }
+.menu a, .menu button { display: flex; align-items: center; gap: 14px; width: 100%; padding: 11px 20px; font: inherit; font-size: 14.5px; color: var(--text); background: none; border: 0; text-align: left; cursor: pointer; white-space: nowrap; }
+.menu a:hover, .menu button:hover { background: var(--surface-hover); }
+.menu svg { color: var(--text-muted); flex-shrink: 0; }
+.menu hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
+
+/* ---- Two-pane layouts (Asset List, Categories, Reports) ----------------- */
+.split { display: grid; grid-template-columns: 288px minmax(0, 1fr); gap: 22px; align-items: start; }
+.rail { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.railGroup { padding: 11px 18px; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); background: var(--surface-sunken); border-top: 1px solid var(--border); }
+.railGroup:first-child { border-top: 0; }
+.railItem { display: flex; align-items: center; gap: 12px; padding: 13px 22px; font-size: 14.5px; color: var(--text); border-top: 1px solid var(--border); }
+.railItem:hover { background: var(--surface-hover); }
+.railItem.on { background: var(--brand-50); }
+.railItem .count { display: block; font-size: 13px; color: var(--text-muted); margin-top: 6px; }
+.railSearch { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.railSearch input { border: 0; outline: none; background: none; font: inherit; font-size: 14px; flex: 1; color: var(--text); }
+.detailHead { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 22px; }
+.detailHeadTop { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 18px 16px; }
+.detailTitle { font-size: 19px; font-weight: 500; }
+.detailSub { font-size: 14px; color: var(--text-muted); margin-top: 6px; }
+.detailTabs { display: flex; gap: 28px; padding: 0 18px; border-top: 1px solid var(--border); }
+.detailTabs span { padding: 12px 4px 10px; font-size: 14.5px; border-bottom: 3px solid var(--brand-600); color: var(--text); }
+.actionsRow { display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.btnOutline { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 18px; border: 1px solid var(--brand-600); color: var(--brand-700); background: var(--surface); border-radius: 4px; font-size: 14.5px; cursor: pointer; white-space: nowrap; }
+.btnOutline:hover { background: var(--brand-50); }
+.btnSoft { background: var(--brand-50) !important; }
+
+/* ---- Drawers ------------------------------------------------------------ */
+.drawerPerson { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.drawerPerson .who { display: flex; align-items: center; gap: 12px; font-size: 15px; }
+.drawerSection { border-top: 1px solid var(--border); padding: 18px 0; }
+.drawerSection h4 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+.timeline { display: flex; flex-direction: column; gap: 22px; margin-top: 12px; }
+.tlRow { display: flex; align-items: flex-start; gap: 14px; font-size: 14.5px; }
+.tlRow .tick { color: #5cb85c; flex-shrink: 0; margin-top: 1px; }
+.tlRow .tick.grey { color: var(--text-subtle); }
+.tlRow .tick.red { color: var(--danger); }
+.tlRow .at { color: var(--text-muted); font-size: 13px; margin-left: 10px; white-space: nowrap; }
+.tlNote { display: block; color: var(--text-muted); font-size: 13.5px; margin-top: 4px; }
+
+/* ---- Full-screen modal body (Assign Asset, Add Asset, Bulk import) ------ */
+.full { position: fixed; inset: 0; z-index: 80; background: var(--surface); display: flex; flex-direction: column; }
+.fullHead { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 22px; border-bottom: 1px solid var(--border); min-height: 56px; }
+.fullTitle { font-size: 18px; font-weight: 500; }
+.fullBody { flex: 1; overflow-y: auto; padding: 22px; }
+.stepper { display: flex; align-items: center; gap: 18px; font-size: 14.5px; color: var(--text-muted); }
+.stepper .num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid currentColor; font-size: 12px; margin-right: 6px; }
+.stepper .on { color: var(--text); }
+.stepper .on .num { background: var(--brand-600); border-color: var(--brand-600); color: #fff; }
+.stepper .chev { color: var(--text-subtle); }
+
+.formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 34px; }
+.formGrid .wide { grid-column: 1 / -1; }
+.formSection { font-size: 15px; font-weight: 500; margin: 6px 0 14px; }
+.addLayout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+.attachPane { background: #4a5263; color: #e8ebf1; border-radius: 2px; min-height: 520px; display: grid; place-items: center; font-size: 14.5px; overflow: hidden; }
+.attachPane img { max-width: 100%; max-height: 520px; object-fit: contain; }
+.formPane { border: 1px solid var(--border); border-radius: 2px; padding: 22px; }
+
+/* ---- Small badges ------------------------------------------------------- */
+.dotBadge { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; }
+.dotBadge i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.decide { display: inline-flex; align-items: center; gap: 12px; }
+.round { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; border: 1.5px solid currentColor; background: none; cursor: pointer; }
+.round.ok { color: #4caf50; }
+.round.no { color: #ef5350; }
+.round:hover { background: var(--surface-hover); }
+
+.myCards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 18px; }
+.myCard { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+.myCardTop { display: flex; gap: 14px; align-items: flex-start; }
+.myIcon { width: 44px; height: 44px; border-radius: 8px; background: var(--brand-50); color: var(--brand-600); display: grid; place-items: center; flex-shrink: 0; }
+.kvGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; font-size: 13.5px; }
+.kvGrid dt { color: var(--text-muted); font-size: 12px; }
+.kvGrid dd { margin: 2px 0 0; }
+
+@media (max-width: 1100px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .split { grid-template-columns: 1fr; }
+  .addLayout { grid-template-columns: 1fr; }
+  .attachPane { min-height: 160px; }
+}
+@media (max-width: 640px) {
+  .kpis { grid-template-columns: 1fr; }
+  .fcell { flex: 1 1 100%; border-right: 0; }
+  .formGrid { grid-template-columns: 1fr; }
+}

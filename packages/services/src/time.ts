@@ -59,6 +59,16 @@ export interface ResolvedTimePolicy {
   ipAllowList: string[];
   requireClockInComment: boolean;
   regularisationWindowDays: number;
+  allowRemoteClockIn: boolean;
+  remoteClockInNeedsApproval: boolean;
+  allowHalfDayRemoteWork: boolean;
+  allowHourlyRemoteWork: boolean;
+  overtimeNeedsRequest: boolean;
+  overtimeRequestWindowDays: number;
+  allowShiftChangeRequests: boolean;
+  allowWeeklyOffRequests: boolean;
+  /** Days a penalty waits before applying, so the employee can regularise. */
+  penaltyBufferDays: number;
 }
 
 const GENERAL_SHIFT: ShiftSpec = { startTime: "09:30", endTime: "18:30", breakMinutes: 60, isFlexible: false };
@@ -142,6 +152,15 @@ export async function resolveTimePolicy(employeeId: string, at: Date): Promise<R
     ipAllowList: Array.isArray(policy?.ipAllowList) ? (policy!.ipAllowList as string[]) : [],
     requireClockInComment: policy?.requireClockInComment ?? false,
     regularisationWindowDays: policy?.regularisationWindowDays ?? 30,
+    allowRemoteClockIn: policy?.allowRemoteClockIn ?? false,
+    remoteClockInNeedsApproval: policy?.remoteClockInNeedsApproval ?? true,
+    allowHalfDayRemoteWork: policy?.allowHalfDayRemoteWork ?? true,
+    allowHourlyRemoteWork: policy?.allowHourlyRemoteWork ?? false,
+    overtimeNeedsRequest: policy?.overtimeNeedsRequest ?? true,
+    overtimeRequestWindowDays: policy?.overtimeRequestWindowDays ?? 30,
+    allowShiftChangeRequests: policy?.allowShiftChangeRequests ?? true,
+    allowWeeklyOffRequests: policy?.allowWeeklyOffRequests ?? true,
+    penaltyBufferDays: policy?.penaltyBufferDays ?? 0,
   };
 }
 
@@ -724,7 +743,7 @@ export interface PunchInput {
   employeeId: string;
   direction: 0 | 1;
   at?: Date;
-  source?: "WEB" | "MOBILE" | "BIOMETRIC" | "KIOSK" | "API" | "MANUAL";
+  source?: "WEB" | "MOBILE" | "BIOMETRIC" | "KIOSK" | "API" | "MANUAL" | "REMOTE";
   ipAddress?: string | null;
   latitude?: number | null;
   longitude?: number | null;
@@ -732,7 +751,7 @@ export interface PunchInput {
   deviceId?: string | null;
 }
 
-export async function recordPunch(input: PunchInput): Promise<{ ok: boolean; message: string }> {
+export async function recordPunch(input: PunchInput): Promise<{ ok: boolean; message: string; pendingApproval?: boolean; requestId?: string }> {
   const at = input.at ?? new Date();
   const emp = await prisma.employee.findUniqueOrThrow({
     where: { id: input.employeeId }, select: { tenantId: true, status: true },
@@ -746,6 +765,13 @@ export async function recordPunch(input: PunchInput): Promise<{ ok: boolean; mes
     if (policy.ipAllowList.length > 0 && (!input.ipAddress || !policy.ipAllowList.includes(input.ipAddress))) {
       return { ok: false, message: "Web clock-in is only allowed from an approved office network." };
     }
+    if (policy.requireClockInComment && !input.comment) {
+      return { ok: false, message: "A comment is required to clock in." };
+    }
+  }
+  // Remote Clock-In: from anywhere, but held for approval when the policy says so.
+  if (source === "REMOTE") {
+    if (!policy.allowRemoteClockIn) return { ok: false, message: "Remote clock-in is not enabled for your attendance policy." };
     if (policy.requireClockInComment && !input.comment) {
       return { ok: false, message: "A comment is required to clock in." };
     }
@@ -765,6 +791,26 @@ export async function recordPunch(input: PunchInput): Promise<{ ok: boolean; mes
     return { ok: false, message: "Already recorded a moment ago." };
   }
 
+  const local = new Date(`${localDateKey(at, policy.tzOffset)}T00:00:00Z`);
+  const held = source === "REMOTE" && policy.remoteClockInNeedsApproval;
+
+  // A day's remote punches travel together as one REMOTE_CLOCK_IN request,
+  // so the approver decides the day, not each punch.
+  let requestId: string | null = null;
+  if (held) {
+    const open = await prisma.attendanceRequest.findFirst({
+      where: { employeeId: input.employeeId, type: "REMOTE_CLOCK_IN", status: "PENDING", fromDate: local },
+      select: { id: true },
+    });
+    requestId = open?.id ?? (await prisma.attendanceRequest.create({
+      data: {
+        tenantId: emp.tenantId, employeeId: input.employeeId, type: "REMOTE_CLOCK_IN",
+        fromDate: local, toDate: local, reason: input.comment?.trim() || "Remote clock-in",
+      },
+      select: { id: true },
+    })).id;
+  }
+
   await prisma.attendanceLog.create({
     data: {
       tenantId: emp.tenantId, employeeId: input.employeeId,
@@ -772,10 +818,17 @@ export async function recordPunch(input: PunchInput): Promise<{ ok: boolean; mes
       ipAddress: input.ipAddress ?? null, deviceId: input.deviceId ?? null,
       latitude: input.latitude ?? null, longitude: input.longitude ?? null,
       comment: input.comment ?? null,
+      status: held ? "PENDING" : "VALID",
+      attendanceRequestId: requestId,
     },
   });
 
-  const local = new Date(`${localDateKey(at, policy.tzOffset)}T00:00:00Z`);
+  if (held) {
+    return {
+      ok: true, pendingApproval: true, requestId: requestId!,
+      message: `${input.direction === 0 ? "Clocked in" : "Clocked out"} remotely — awaiting your manager's approval.`,
+    };
+  }
   await reprocessRange(input.employeeId, local, local);
   return { ok: true, message: input.direction === 0 ? "Clocked in." : "Clocked out." };
 }
@@ -836,7 +889,7 @@ export async function processAttendance(opts: {
     const [logs, leaveDays, requests, shiftOverrides] = await Promise.all([
       prisma.attendanceLog.findMany({
         where: {
-          employeeId: emp.id,
+          employeeId: emp.id, status: "VALID",
           timestamp: { gte: new Date(empFrom.getTime() - tz * 60_000), lt: new Date(empTo.getTime() + DAY - tz * 60_000) },
         },
         orderBy: { timestamp: "asc" },
@@ -873,7 +926,13 @@ export async function processAttendance(opts: {
       const key = dayKey(date);
       const leave = leaveByDay.get(key);
       const covering = requests.filter((r) => r.fromDate.getTime() <= date.getTime() && r.toDate.getTime() >= date.getTime());
-      const remote = covering.find((r) => r.type === "WORK_FROM_HOME" || r.type === "ON_DUTY");
+      // A full or half-day WFH/OD covers the day (or half of it); an hourly one
+      // credits its window like a permitted partial absence.
+      const remotes = covering.filter((r) => r.type === "WORK_FROM_HOME" || r.type === "ON_DUTY");
+      const remote = remotes.find((r) => !r.isHourly && (!r.portion || r.portion === "FULL_DAY"))
+        ?? remotes.find((r) => !r.isHourly);
+      const hourlyRemoteMinutes = remotes.filter((r) => r.isHourly && r.proposedIn && r.proposedOut)
+        .reduce((s, r) => s + Math.max(0, (r.proposedOut!.getTime() - r.proposedIn!.getTime()) / 60_000), 0);
       const override = shiftByDay.get(key);
 
       let kind = classifyDay(date, policy.calendar);
@@ -892,8 +951,9 @@ export async function processAttendance(opts: {
         logs: (logsByDay.get(key) ?? []).map((l) => ({ timestamp: l.timestamp, direction: l.direction === 1 ? 1 : 0 })),
         leave: leave ? { portion: leave.portion as DayPortion, isPaid: leave.isPaid } : null,
         remote: remote ? (remote.type as "WORK_FROM_HOME" | "ON_DUTY") : null,
+        remotePortion: remote?.portion ?? null,
         regularised: covering.some((r) => r.type === "REGULARISATION" || r.type === "ADJUSTMENT"),
-        partialMinutes: covering.filter((r) => r.type === "PARTIAL_DAY").reduce((s, r) => s + (r.partialMinutes ?? 0), 0),
+        partialMinutes: covering.filter((r) => r.type === "PARTIAL_DAY").reduce((s, r) => s + (r.partialMinutes ?? 0), 0) + hourlyRemoteMinutes,
         tzOffsetMinutes: tz,
         trackAttendance: policy.trackAttendance,
       });
@@ -907,8 +967,15 @@ export async function processAttendance(opts: {
       byMonth.set(m, [...(byMonth.get(m) ?? []), r]);
     }
 
+    // Penalties wait out the policy's buffer, so a day the employee can still
+    // regularise is not docked yet; it is penalised on a later reprocess.
+    const bufferEdge = today.getTime() - policy.penaltyBufferDays * DAY;
     for (const monthDays of byMonth.values()) {
-      const penalised = applyMonthlyPenalties(monthDays, policy.rules);
+      const penalised = applyMonthlyPenalties(monthDays, policy.rules).map((r) => {
+        if (!r.penaltyReason || r.date.getTime() <= bufferEdge) return r;
+        const before = monthDays.find((x) => x.key === dayKey(r.date))!;
+        return { ...r, lopValue: before.lopValue, payableValue: before.payableValue, penaltyReason: null };
+      });
       for (const r of penalised) {
         const key = dayKey(r.date);
         const status = r.status;
@@ -954,12 +1021,22 @@ export async function processAttendance(opts: {
 //  Attendance requests
 // ---------------------------------------------------------------------------
 
+export interface ProposedPunch { at: Date; direction: 0 | 1 }
+
 export async function raiseAttendanceRequest(input: {
   employeeId: string;
   type: "ADJUSTMENT" | "REGULARISATION" | "PARTIAL_DAY" | "WORK_FROM_HOME" | "ON_DUTY";
   from: Date; to: Date;
   proposedIn?: Date | null; proposedOut?: Date | null;
+  /** ADJUSTMENT with several punches ("+Add Log"). */
+  proposedLogs?: ProposedPunch[] | null;
   partialMinutes?: number | null;
+  /** WFH / OD: part of the day. */
+  portion?: "FULL_DAY" | "FIRST_HALF" | "SECOND_HALF" | null;
+  /** WFH / OD by the hour: proposedIn/proposedOut carry the window. */
+  isHourly?: boolean;
+  notifyEmployeeIds?: string[] | null;
+  attachmentFileId?: string | null;
   reason: string;
   today?: Date;
 }): Promise<{ ok: boolean; message: string; requestId?: string }> {
@@ -978,11 +1055,42 @@ export async function raiseAttendanceRequest(input: {
   if (pastOnly && (today.getTime() - from.getTime()) / DAY > policy.regularisationWindowDays) {
     return { ok: false, message: `Corrections can only go back ${policy.regularisationWindowDays} days.` };
   }
-  if (input.type === "ADJUSTMENT" && (!input.proposedIn || !input.proposedOut)) {
-    return { ok: false, message: "An adjustment needs both a clock-in and a clock-out time." };
+  // An adjustment carries either one in/out pair or a list of punches.
+  let proposedLogs: ProposedPunch[] | null = null;
+  if (input.type === "ADJUSTMENT") {
+    if (input.proposedLogs && input.proposedLogs.length > 0) {
+      proposedLogs = [...input.proposedLogs].sort((a, b) => a.at.getTime() - b.at.getTime());
+      if (proposedLogs.length > 12) return { ok: false, message: "Add at most 12 time entries for a day." };
+      for (let i = 0; i < proposedLogs.length; i++) {
+        if (proposedLogs[i].direction !== (i % 2 === 0 ? 0 : 1)) {
+          return { ok: false, message: "Time entries must alternate IN and OUT, starting with an IN." };
+        }
+      }
+      if (proposedLogs.length % 2 === 1) return { ok: false, message: "The last IN needs a matching OUT." };
+    } else {
+      if (!input.proposedIn || !input.proposedOut) {
+        return { ok: false, message: "An adjustment needs both a clock-in and a clock-out time." };
+      }
+      if (input.proposedOut.getTime() <= input.proposedIn.getTime()) {
+        return { ok: false, message: "Clock-out must be after clock-in." };
+      }
+    }
   }
-  if (input.type === "ADJUSTMENT" && input.proposedOut!.getTime() <= input.proposedIn!.getTime()) {
-    return { ok: false, message: "Clock-out must be after clock-in." };
+
+  const remoteWork = input.type === "WORK_FROM_HOME" || input.type === "ON_DUTY";
+  const half = input.portion === "FIRST_HALF" || input.portion === "SECOND_HALF";
+  if (half && !remoteWork) return { ok: false, message: "Only work from home and on duty can be requested by the half day." };
+  if (half && !policy.allowHalfDayRemoteWork) {
+    return { ok: false, message: "Your attendance policy allows only full-day work from home and on duty." };
+  }
+  if (half && to.getTime() !== from.getTime()) return { ok: false, message: "A half-day request covers a single date." };
+  if (input.isHourly) {
+    if (!remoteWork) return { ok: false, message: "Only work from home and on duty can be requested by the hour." };
+    if (!policy.allowHourlyRemoteWork) return { ok: false, message: "Your attendance policy does not allow hourly requests." };
+    if (to.getTime() !== from.getTime()) return { ok: false, message: "An hourly request covers a single date." };
+    if (!input.proposedIn || !input.proposedOut || input.proposedOut.getTime() <= input.proposedIn.getTime()) {
+      return { ok: false, message: "Give the start and end time of the hourly request, end after start." };
+    }
   }
 
   const clash = await prisma.attendanceRequest.findFirst({
@@ -997,8 +1105,14 @@ export async function raiseAttendanceRequest(input: {
     data: {
       tenantId: emp.tenantId, employeeId: input.employeeId, type: input.type,
       fromDate: from, toDate: to,
-      proposedIn: input.proposedIn ?? null, proposedOut: input.proposedOut ?? null,
+      proposedIn: proposedLogs ? proposedLogs[0].at : input.proposedIn ?? null,
+      proposedOut: proposedLogs ? proposedLogs[proposedLogs.length - 1].at : input.proposedOut ?? null,
+      proposedLogs: proposedLogs ? proposedLogs.map((l) => ({ at: l.at.toISOString(), direction: l.direction })) : undefined,
       partialMinutes: input.partialMinutes ?? null, reason: input.reason,
+      portion: remoteWork && !input.isHourly ? (input.portion ?? "FULL_DAY") : null,
+      isHourly: !!input.isHourly,
+      notifyEmployeeIds: input.notifyEmployeeIds?.length ? input.notifyEmployeeIds : undefined,
+      attachmentFileId: input.attachmentFileId ?? null,
     },
   });
   return { ok: true, message: "Request raised.", requestId: req.id };
@@ -1019,12 +1133,27 @@ export async function decideAttendanceRequest(opts: {
       },
     });
     // An approved adjustment writes the corrected punches as manual logs.
-    if (opts.decision === "APPROVE" && req.type === "ADJUSTMENT" && req.proposedIn && req.proposedOut) {
+    const listed = Array.isArray(req.proposedLogs) ? (req.proposedLogs as Array<{ at: string; direction: number }>) : null;
+    if (opts.decision === "APPROVE" && req.type === "ADJUSTMENT" && listed && listed.length > 0) {
+      await tx.attendanceLog.createMany({
+        data: listed.map((l) => ({
+          tenantId: req.tenantId, employeeId: req.employeeId, timestamp: new Date(l.at),
+          direction: l.direction === 1 ? 1 : 0, source: "MANUAL" as const, comment: `Adjustment ${req.id}`,
+        })),
+      });
+    } else if (opts.decision === "APPROVE" && req.type === "ADJUSTMENT" && req.proposedIn && req.proposedOut) {
       await tx.attendanceLog.createMany({
         data: [
           { tenantId: req.tenantId, employeeId: req.employeeId, timestamp: req.proposedIn, direction: 0, source: "MANUAL", comment: `Adjustment ${req.id}` },
           { tenantId: req.tenantId, employeeId: req.employeeId, timestamp: req.proposedOut, direction: 1, source: "MANUAL", comment: `Adjustment ${req.id}` },
         ],
+      });
+    }
+    // A remote clock-in day: its held punches count, or never will.
+    if (req.type === "REMOTE_CLOCK_IN") {
+      await tx.attendanceLog.updateMany({
+        where: { attendanceRequestId: req.id, status: "PENDING" },
+        data: { status: opts.decision === "APPROVE" ? "VALID" : "REJECTED" },
       });
     }
   });

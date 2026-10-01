@@ -66,6 +66,12 @@ export interface DayInput {
   leave?: { portion: DayPortion; isPaid: boolean } | null;
   /** Approved WFH / on-duty covering this day. */
   remote?: "WORK_FROM_HOME" | "ON_DUTY" | null;
+  /**
+   * The part of the day the remote work covers. FIRST_HALF / SECOND_HALF
+   * leave the other half to be accounted for by punches; absent or FULL_DAY
+   * covers the whole day.
+   */
+  remotePortion?: DayPortion | null;
   /** An approved regularisation waives this day's penalties. */
   regularised?: boolean;
   /** Minutes of approved partial-day absence. */
@@ -200,15 +206,21 @@ export function evaluateDay(input: DayInput): DayResult {
   }
 
   // --- Remote work counts as attended --------------------------------------
-  if (input.remote) {
+  const halfRemote = !!input.remote && (input.remotePortion === "FIRST_HALF" || input.remotePortion === "SECOND_HALF");
+  const remoteShare = input.remote ? (halfRemote ? 0.5 : 1) : 0;
+  if (input.remote && (!halfRemote || leaveShare + remoteShare >= 1)) {
     return {
       ...base, status: input.remote, isMissingPunch: false,
       payableValue: 1, lopValue: 0,
     };
   }
+  if (halfRemote) notes.push(`${input.remote === "ON_DUTY" ? "On duty" : "Work from home"} for the ${input.remotePortion === "FIRST_HALF" ? "first" : "second"} half`);
 
   // The part of the day that has to be accounted for by attendance.
-  const workShare = 1 - leaveShare;
+  const workShare = 1 - leaveShare - remoteShare;
+  // Half the day already accounted for (leave or remote work) makes a
+  // fully-worked remainder a half day of attendance rather than absence.
+  const partShare = leaveShare + remoteShare;
   const workRequired = required * workShare - (input.partialMinutes ?? 0) / 60;
 
   // --- Nothing punched -----------------------------------------------------
@@ -220,7 +232,7 @@ export function evaluateDay(input: DayInput): DayResult {
     const lop = rules.noAttendanceIsLop ? workShare : 0;
     notes.push(rules.noAttendanceIsLop ? "No attendance recorded" : "No attendance recorded (not treated as LOP)");
     return {
-      ...base, status: leaveShare > 0 ? "HALF_DAY" : "NO_ATTENDANCE",
+      ...base, status: partShare > 0 ? "HALF_DAY" : "NO_ATTENDANCE",
       payableValue: r2(1 - lop), lopValue: r2(lop),
     };
   }
@@ -231,12 +243,15 @@ export function evaluateDay(input: DayInput): DayResult {
   if (!input.shift.isFlexible && first) {
     const start = hhmmToMinutes(input.shift.startTime);
     const arrived = localMinutes(first, tz);
-    // A first-half leave means the shift effectively starts at mid-day.
-    const expected = input.leave?.portion === "FIRST_HALF"
+    // A first-half leave (or first-half remote work) means the shift
+    // effectively starts at mid-day in the office.
+    const firstHalfOff = input.leave?.portion === "FIRST_HALF" || (halfRemote && input.remotePortion === "FIRST_HALF");
+    const secondHalfOff = input.leave?.portion === "SECOND_HALF" || (halfRemote && input.remotePortion === "SECOND_HALF");
+    const expected = firstHalfOff
       ? start + (required * 60 + input.shift.breakMinutes) / 2
       : start;
     lateMinutes = Math.max(0, arrived - expected);
-    if (last && input.leave?.portion !== "SECOND_HALF") {
+    if (last && !secondHalfOff) {
       const end = hhmmToMinutes(input.shift.endTime);
       const left = localMinutes(last, tz);
       if (!input.shift.crossesMidnight) earlyExitMinutes = Math.max(0, end - left);
@@ -269,14 +284,14 @@ export function evaluateDay(input: DayInput): DayResult {
       notes.push(`Worked ${effectiveHours}h of ${r2(workRequired)}h required — half day`);
     } else {
       worked = 0;
-      status = leaveShare > 0 ? "HALF_DAY" : "ABSENT";
+      status = partShare > 0 ? "HALF_DAY" : "ABSENT";
       notes.push(`Worked ${effectiveHours}h of ${r2(workRequired)}h required — below the half-day threshold`);
     }
   }
 
   const lopValue = r2(workShare * (1 - worked));
   const leavePaid = input.leave ? (input.leave.isPaid ? leaveShare : 0) : 0;
-  const payableValue = r2(workShare * worked + leavePaid);
+  const payableValue = r2(workShare * worked + leavePaid + remoteShare);
 
   // --- Overtime ------------------------------------------------------------
   let overtimeHours = 0;

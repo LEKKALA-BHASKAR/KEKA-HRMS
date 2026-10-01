@@ -1,7 +1,7 @@
 import "server-only";
 import { revalidatePath } from "next/cache";
 import { z, type ZodTypeAny } from "zod";
-import { prisma } from "@keka/db";
+import { prisma, type AuditModule, type AuditAction } from "@keka/db";
 import type { Viewer } from "./context";
 
 /**
@@ -113,8 +113,8 @@ export function actionDone(paths: string[], message: string): ActionState {
 export async function writeAudit(
   viewer: Viewer,
   opts: {
-    module: "EMPLOYEE" | "PAYROLL" | "LEAVE" | "ATTENDANCE" | "ROLE" | "AUTH" | "FINANCE" | "REPORT" | "LIFECYCLE" | "HELPDESK" | "SYSTEM";
-    action: "CREATE" | "UPDATE" | "DELETE" | "APPROVE" | "REJECT" | "LOCK" | "UNLOCK" | "EXPORT";
+    module: AuditModule;
+    action: AuditAction;
     entityType: string;
     entityId?: string | null;
     summary: string;

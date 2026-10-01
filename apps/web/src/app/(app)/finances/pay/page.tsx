@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { prisma } from "@keka/db";
-import { formatDate, formatINR, formatPeriod, fyLabel, fyRange, fyStartYear } from "@keka/shared";
-import { explainEmployeePay } from "@keka/services";
+import { formatDate, fyLabel, fyRange, fyStartYear } from "@keka/shared";
+import { explainEmployeePay, salaryTimeline } from "@keka/services";
 import { requireViewer } from "@/lib/context";
 import { Panel, Field, Chip, EmptyState } from "@/components/keka";
 import { ExplainCard } from "@/components/explain";
 import { IconWallet } from "@/components/icons";
 import { IconChevron, IconTrend } from "../_components/icons";
 import { RegimeBanner } from "../_components/regime-banner";
-import { resolveFor, STRUCTURE_INCLUDE } from "../_lib/data";
+import { BreakupButton } from "../_components/breakup";
 import { inr, regimeSwitchState } from "../_lib/rules";
 import s from "../finances.module.css";
 
@@ -16,9 +16,6 @@ export const metadata = { title: "My Salary" };
 
 const n = (v: unknown) => Number(v ?? 0);
 const FREQ: Record<string, string> = { MONTHLY: "Monthly", SEMI_MONTHLY: "Semi-monthly", WEEKLY: "Weekly", BI_WEEKLY: "Fortnightly" };
-const TYPE_LABEL: Record<string, string> = {
-  EARNING: "Earnings", EMPLOYER_CONTRIBUTION: "Employer contributions", DEDUCTION: "Deductions", REIMBURSEMENT: "Reimbursements", PERK: "Perquisites",
-};
 
 export default async function MySalaryPage() {
   const viewer = await requireViewer();
@@ -29,7 +26,7 @@ export default async function MySalaryPage() {
   const fy = fyStartYear(new Date(), viewer.tenant.fyStartMonth);
   const { start, end } = fyRange(fy, viewer.tenant.fyStartMonth);
 
-  const [emp, revisions, ytd, claims, loans] = await Promise.all([
+  const [emp, timeline, ytd] = await Promise.all([
     prisma.employee.findFirst({
       where: { id: employeeId, tenantId: viewer.tenantId },
       select: {
@@ -37,11 +34,7 @@ export default async function MySalaryPage() {
         payGroup: { select: { frequency: true, name: true, allowRegimeChoice: true, regimeChangeCutoff: true } },
       },
     }),
-    prisma.salaryRevision.findMany({
-      where: { employeeId, status: { in: ["APPLIED", "APPROVED"] } },
-      orderBy: { effectiveFrom: "desc" },
-      include: { structure: { include: STRUCTURE_INCLUDE } },
-    }),
+    salaryTimeline(employeeId),
     prisma.payrollRunEmployee.findMany({
       where: {
         employeeId,
@@ -49,20 +42,10 @@ export default async function MySalaryPage() {
       },
       select: { grossEarnings: true, totalDeductions: true, netPay: true, pfEmployee: true, vpf: true, esiEmployee: true, professionalTax: true, tds: true },
     }),
-    prisma.componentClaim.findMany({
-      where: { employeeId, fyStartYear: fy },
-      include: { component: { select: { name: true, annualExemptLimit: true } } },
-      orderBy: { createdAt: "desc" },
-      take: 10,
-    }),
-    prisma.loan.findMany({
-      where: { employeeId, status: { in: ["ACTIVE", "DISBURSED"] } },
-      include: { category: { select: { name: true } } },
-    }),
   ]);
 
   const today = new Date();
-  const current = revisions.find((r) => r.effectiveFrom <= today) ?? null;
+  const current = timeline.find((t) => t.isCurrent) ?? null;
   const regime = emp?.statutoryProfile?.taxRegime ?? "NEW";
   const canSwitch = regimeSwitchState(emp?.payGroup ?? null, emp?.statutoryProfile?.regimeLockedAt ?? null, { isCurrentFy: true, now: today }).allowed;
   const sum = (f: (r: (typeof ytd)[number]) => unknown) => ytd.reduce((a, r) => a + n(f(r)), 0);
@@ -85,77 +68,72 @@ export default async function MySalaryPage() {
       <div className={s.mt}>
         <Panel title={<span style={{ fontSize: 21, fontWeight: 400 }}>Salary Timeline</span>}>
           <RegimeBanner regime={regime} canSwitch={canSwitch} tone="warning" />
-          {revisions.length === 0 ? (
+          {timeline.length === 0 ? (
             <EmptyState title="No salary on record">Your compensation has not been set up yet. It will appear here once your payroll team adds it.</EmptyState>
           ) : (
             <ol className={s.timeline}>
-              {revisions.map((r, i) => {
-                const resolved = resolveFor(r.annualCtc, r.structure);
-                const isCurrent = r.id === current?.id;
-                const upcoming = r.effectiveFrom > today;
-                const prev = r.previousCtc ?? revisions[i + 1]?.annualCtc ?? null;
-                const change = prev && n(prev) > 0 ? ((n(r.annualCtc) - n(prev)) / n(prev)) * 100 : null;
-                const groups = resolved
-                  ? (["EARNING", "EMPLOYER_CONTRIBUTION", "REIMBURSEMENT", "DEDUCTION"] as const)
-                      .map((t) => ({ t, rows: resolved.components.filter((c) => c.type === t && !(t === "DEDUCTION" && c.monthly.isZero())) }))
-                      .filter((g) => g.rows.length > 0)
-                  : [];
+              {timeline.map((t, i) => {
+                const terms: Array<[string, number]> = [["Regular Salary", t.regular]];
+                if (t.other > 0) terms.push(["Other", t.other]);
+                if (t.bonuses.length) terms.push(["Bonus", t.bonus]);
                 return (
-                  <li key={r.id} className={s.tlItem}>
+                  <li key={t.revisionId} className={s.tlItem}>
                     <div className={s.tlRail}><span className={s.tlDot}><IconTrend width={20} height={20} /></span></div>
                     <div style={{ minWidth: 0 }}>
                       <div className={s.tlHead}>
-                        <span className={s.tlTitle}>{i === revisions.length - 1 && !r.previousCtc ? "Joining Salary" : "Salary Revision"}</span>
-                        <span className={s.muted}>Effective {formatDate(r.effectiveFrom)}</span>
-                        {isCurrent ? <Chip kind="current">Current</Chip> : upcoming ? <Chip kind="on-duty">Upcoming</Chip> : null}
-                        {change !== null && Math.abs(change) >= 0.05 ? (
-                          <span className={s.muted} style={{ fontSize: 13 }}>{change > 0 ? "+" : ""}{change.toFixed(1)}% on {inr(prev)}</span>
-                        ) : null}
+                        <span className={s.tlTitle}>{t.isJoining ? "Joining Salary" : "Salary Revision"}</span>
+                        <span className={s.muted}>Effective {formatDate(t.effectiveFrom)}</span>
+                        {t.isCurrent ? <Chip kind="current">Current</Chip> : t.isUpcoming ? <Chip kind="on-duty">Upcoming</Chip> : null}
                       </div>
                       <div className={s.tlBody}>
                         <details className={s.salaryBox}>
-                          <summary>
+                          <summary aria-label={`${t.isJoining ? "Joining salary" : "Salary revision"} effective ${formatDate(t.effectiveFrom)}`}>
                             <IconChevron className={s.chev} width={20} height={20} />
-                            <Field label="Regular Salary">{inr(r.annualCtc)}</Field>
-                            <span className={s.eq} aria-hidden="true">=</span>
-                            <Field label="Total">{inr(r.annualCtc)}</Field>
-                            <span className={s.viewLink}>
-                              <span className={s.whenClosed}>View Salary Breakdown</span>
-                              <span className={s.whenOpen}>Hide Salary Breakdown</span>
-                            </span>
+                            {terms.map(([label, value], k) => (
+                              <span key={label} className={s.term}>
+                                {k > 0 ? <span className={s.op} aria-hidden="true">+</span> : null}
+                                <Field label={label}>{inr(value)}</Field>
+                              </span>
+                            ))}
+                            <span className={s.op} aria-hidden="true">=</span>
+                            <Field label="Total">{inr(t.total)}</Field>
                           </summary>
-                          <div className={s.breakdown}>
-                            {resolved ? (
+                          <div className={s.revBody}>
+                            <div className={s.revBar}>
+                              <span className={s.revBarLabel}>Regular Salary</span>
+                              <span>{inr(t.regular)} / Annum</span>
+                              <BreakupButton annualCtc={t.annualCtc} breakup={t.breakup} versions={t.versions} />
+                            </div>
+                            <div className={s.revRow}>
+                              <Field label="Salary Per Month">{inr(Math.round(t.regular / 12))}</Field>
+                              <Field label="Effective From">{formatDate(t.effectiveFrom)}</Field>
+                              {t.structureName ? <Field label="Salary Structure">{t.structureName}</Field> : null}
+                            </div>
+                            {t.other > 0 ? (
                               <>
-                                <div className={s.muted} style={{ fontSize: 13.5, marginBottom: 12 }}>
-                                  {r.structure?.name ? `${r.structure.name} · ` : ""}{r.reason ?? "Salary revision"}
-                                </div>
-                                <div className={s.tableWrap}>
-                                  <table className={`${s.table} ${s.compact}`}>
-                                    <thead><tr><th scope="col">Component</th><th scope="col" className={s.right}>Monthly</th><th scope="col" className={s.right}>Annual</th></tr></thead>
-                                    <tbody>
-                                      {groups.map((g) => [
-                                        <tr key={`${g.t}-h`} className={s.groupRow}><td colSpan={3}>{TYPE_LABEL[g.t]}{g.t === "DEDUCTION" ? " (from your pay)" : ""}</td></tr>,
-                                        ...g.rows.map((c) => (
-                                          <tr key={`${g.t}-${c.code}`}>
-                                            <td>{c.name}{c.isOutsideCtc ? <span className={s.muted}> · outside CTC</span> : null}</td>
-                                            <td className={`${s.right} ${s.num}`}>{formatINR(c.monthly.toNumber(), false)}</td>
-                                            <td className={`${s.right} ${s.num}`}>{formatINR(c.annual.toNumber(), false)}</td>
-                                          </tr>
-                                        )),
-                                      ])}
-                                      <tr className={s.totalRow}>
-                                        <td>Cost to company</td>
-                                        <td className={`${s.right} ${s.num}`}>{formatINR(resolved.monthlyCtcValue.toNumber(), false)}</td>
-                                        <td className={`${s.right} ${s.num}`}>{formatINR(resolved.annualCtc.toNumber(), false)}</td>
-                                      </tr>
-                                    </tbody>
-                                  </table>
+                                <div className={s.revBar}><span className={s.revBarLabel}>Other</span><span>{inr(t.other)} / Annum</span></div>
+                                <div className={s.revRow}>
+                                  {t.otherItems.map((o) => (
+                                    <Field key={o.code} label={`${o.name} / ${o.varies ? "Year" : "Month"}`}>{inr(o.varies ? o.annual : o.monthly)}</Field>
+                                  ))}
                                 </div>
                               </>
-                            ) : (
-                              <span className={s.muted}>No salary structure is attached to this revision, so its split into components is not available.</span>
-                            )}
+                            ) : null}
+                            {t.bonuses.length ? (
+                              <>
+                                <div className={s.revBar}><span className={s.revBarLabel}>Bonus</span><span>{inr(t.bonus)}</span></div>
+                                {t.bonuses.map((b) => (
+                                  <div key={b.id} className={s.bonusRow}>
+                                    <span className={s.bonusName}>{b.name}</span>
+                                    <Field label="Type">{b.type}</Field>
+                                    <Field label="Status">{b.status}</Field>
+                                    <Field label="Amount">{inr(b.amount)}</Field>
+                                    <Field label="Due">{formatDate(b.due)}</Field>
+                                    {b.note ? <div className={s.bonusNote}>Note: {b.note}</div> : null}
+                                  </div>
+                                ))}
+                              </>
+                            ) : null}
                           </div>
                         </details>
                       </div>
@@ -187,48 +165,6 @@ export default async function MySalaryPage() {
         </Panel>
         <ExplainCard title="Why did my pay change?" measure="Your net pay" explanation={await explainEmployeePay(employeeId, { releasedOnly: true })} />
       </div>
-
-      {claims.length > 0 || loans.length > 0 ? (
-        <div className={s.cols}>
-          {claims.length > 0 ? (
-            <Panel title={`Reimbursement claims — ${fyLabel(fy)}`} className={s.ruled}>
-              <div className={s.tableWrap}>
-                <table className={`${s.table} ${s.compact}`}>
-                  <thead><tr><th scope="col">Component</th><th scope="col" className={s.right}>Claimed</th><th scope="col" className={s.right}>Annual limit</th><th scope="col">Status</th></tr></thead>
-                  <tbody>
-                    {claims.map((c) => (
-                      <tr key={c.id}>
-                        <td>{c.component.name}</td>
-                        <td className={`${s.right} ${s.num}`}>{formatINR(n(c.claimedAmount), false)}</td>
-                        <td className={`${s.right} ${s.num}`}>{c.component.annualExemptLimit ? formatINR(n(c.component.annualExemptLimit), false) : "—"}</td>
-                        <td>{c.status.charAt(0) + c.status.slice(1).toLowerCase().replace(/_/g, " ")}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
-          ) : null}
-          {loans.length > 0 ? (
-            <Panel title="Loans" action={<Link className={s.link} href="/me/loans">Manage loans</Link>} className={s.ruled}>
-              <div className={s.tableWrap}>
-                <table className={`${s.table} ${s.compact}`}>
-                  <thead><tr><th scope="col">Loan</th><th scope="col" className={s.right}>EMI</th><th scope="col" className={s.right}>Outstanding</th></tr></thead>
-                  <tbody>
-                    {loans.map((l) => (
-                      <tr key={l.id}>
-                        <td>{l.category.name}{l.disbursedAt ? <span className={s.muted}> · since {formatPeriod(l.disbursedAt.getUTCFullYear(), l.disbursedAt.getUTCMonth() + 1)}</span> : null}</td>
-                        <td className={`${s.right} ${s.num}`}>{formatINR(n(l.emiAmount), false)}</td>
-                        <td className={`${s.right} ${s.num}`}>{formatINR(n(l.outstanding), false)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
-          ) : null}
-        </div>
-      ) : null}
     </>
   );
 }

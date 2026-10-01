@@ -1,0 +1,98 @@
+// ============================================================================
+//  KEKA — Hire operations: requisition backfills, interview question sets,
+//  candidate notes, JD templates, hiring settings
+// ============================================================================
+//  Spec: hire. Requisition, Job, Scorecard and Application live in
+//  08-recruitment (with their Keka-parity fields).
+// ============================================================================
+
+enum BackfillReason {
+  INTERNAL_MOVEMENT
+  MATERNITY_LEAVE
+  PROMOTION
+  RELIEVED
+  RELOCATED
+  RETIRED
+  OTHERS
+}
+
+/// One employee a requisition backfills. Requisition.replacingEmployeeId
+/// mirrors the first of these (deprecated).
+model RequisitionBackfill {
+  id            String         @id @default(cuid())
+  tenantId      String
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requisitionId String
+  requisition   Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  employeeId    String
+  employee      Employee       @relation("RequisitionBackfillFor", fields: [employeeId], references: [id], onDelete: Cascade)
+  reason        BackfillReason
+
+  @@unique([requisitionId, employeeId])
+  @@index([tenantId])
+  @@index([employeeId])
+  @@map("requisition_backfills")
+}
+
+/// AI- or hand-written interview questions for one scorecard section of a job.
+model InterviewQuestionSet {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  jobId       String
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  section     String
+  /// 1..HiringSetting.aiQuestionAttempts
+  attempt     Int
+  /// [{ skill, questions: string[] }]
+  questions   Json
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@unique([jobId, section, attempt])
+  @@index([tenantId])
+  @@map("interview_question_sets")
+}
+
+model CandidateNote {
+  id            String      @id @default(cuid())
+  tenantId      String
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  /// User id
+  authorId      String
+  body          String
+  createdAt     DateTime    @default(now())
+
+  @@index([applicationId])
+  @@index([tenantId])
+  @@map("candidate_notes")
+}
+
+model JobDescriptionTemplate {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title     String
+  /// Markdown.
+  body      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, title])
+  @@map("job_description_templates")
+}
+
+model HiringSetting {
+  id                      String   @id @default(cuid())
+  tenantId                String   @unique
+  tenant                  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requisitionInstructions String?
+  /// User id requisitions are "Pending on" by default.
+  defaultApproverUserId   String?
+  aiQuestionAttempts      Int      @default(2)
+  updatedAt               DateTime @updatedAt
+
+  @@map("hiring_settings")
+}

@@ -2,6 +2,7 @@ import { prisma, Prisma } from "@keka/db";
 import { buildLoanSchedule, resolveStructure, type InterestTypeLiteral } from "@keka/payroll";
 import { notify, usersWithPermission } from "./lifecycle";
 import { postLoanDisbursement, postLoanForeclosure } from "./accounting";
+import { compareMonths, firstOpenPayrollMonth } from "./finances-math";
 
 /**
  * Loans from request to closure. The schedule is built by the pure engine;
@@ -76,12 +77,38 @@ function startFrom(at: Date, commencementMonths: number) {
   return { year: Math.floor(idx / 12), month: (idx % 12) + 1 };
 }
 
+/**
+ * The first payroll month a new loan can touch for this employee: this month,
+ * or the month after their pay group's last locked or finalised run.
+ */
+export async function openPayrollMonthFor(employeeId: string, today = new Date()): Promise<{ year: number; month: number }> {
+  const emp = await prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { payGroupId: true } });
+  const last = emp.payGroupId
+    ? await prisma.payrollRun.findFirst({
+        where: { payGroupId: emp.payGroupId, type: "REGULAR", status: { in: ["LOCKED", "FINALIZED", "PENDING_APPROVAL"] } },
+        orderBy: [{ year: "desc" }, { month: "desc" }], select: { year: true, month: true },
+      })
+    : null;
+  return firstOpenPayrollMonth(today, last ? [last] : []);
+}
+
 export async function requestLoan(input: {
   employeeId: string; categoryId: string; amount: number; installments: number; purpose?: string | null;
+  /** "Expected Month (Payroll Month)" — when the money is wanted. */
+  expected?: { year: number; month: number } | null;
+  /** "EMI Starts From (Payroll Month)". */
+  start?: { year: number; month: number } | null;
 }): Promise<{ ok: boolean; message: string; loanId?: string; reasons?: string[] }> {
   const e = await checkLoanEligibility(input.employeeId, input.categoryId, input.amount, input.installments);
   if (!e.eligible) return { ok: false, message: e.reasons.join(" "), reasons: e.reasons };
-  const start = startFrom(new Date(), e.commencementMonths);
+  const open = await openPayrollMonthFor(input.employeeId);
+  if (input.expected && compareMonths(input.expected, open) < 0) {
+    return { ok: false, message: `The expected month must be ${open.month}/${open.year} or later — earlier payroll months are closed.` };
+  }
+  if (input.start && compareMonths(input.start, input.expected ?? open) < 0) {
+    return { ok: false, message: "EMIs cannot start before the month the loan is paid out." };
+  }
+  const start = input.start ?? startFrom(new Date(), e.commencementMonths);
   const preview = buildLoanSchedule({ principal: input.amount, installments: input.installments, interestType: e.interestType, annualRate: e.interestRate, startYear: start.year, startMonth: start.month });
   const loan = await prisma.loan.create({
     data: {
@@ -89,6 +116,8 @@ export async function requestLoan(input: {
       principal: input.amount, interestType: e.interestType, interestRate: e.interestRate,
       installments: input.installments, emiAmount: preview.emi.toNumber(),
       status: "PENDING_APPROVAL", purpose: input.purpose ?? null, outstanding: input.amount,
+      expectedYear: input.expected?.year ?? null, expectedMonth: input.expected?.month ?? null,
+      startYear: input.start?.year ?? null, startMonth: input.start?.month ?? null,
     },
     include: { employee: { select: { tenantId: true, displayName: true } }, category: { select: { name: true } } },
   });
@@ -107,7 +136,11 @@ export async function approveLoan(loanId: string, byUserId: string, note?: strin
   if (!loan) return { ok: false, message: "Loan not found." };
   if (!["REQUESTED", "PENDING_APPROVAL"].includes(loan.status)) return { ok: false, message: `This loan is already ${loan.status.toLowerCase()}.` };
   const rule = loan.policy?.rules.find((r) => r.categoryId === loan.categoryId);
-  const start = startFrom(new Date(), rule?.commencementMonths ?? 1);
+  // Keep the month the employee asked EMIs to start in, unless payroll has moved past it.
+  const asked = loan.startYear && loan.startMonth ? { year: loan.startYear, month: loan.startMonth } : null;
+  const start = asked && compareMonths(asked, await openPayrollMonthFor(loan.employeeId)) >= 0
+    ? asked
+    : startFrom(new Date(), rule?.commencementMonths ?? 1);
   const s = buildLoanSchedule({ principal: Number(loan.principal), installments: loan.installments, interestType: loan.interestType, annualRate: Number(loan.interestRate), startYear: start.year, startMonth: start.month });
   await prisma.$transaction([
     prisma.loanInstallment.deleteMany({ where: { loanId } }),
@@ -123,7 +156,7 @@ export async function approveLoan(loanId: string, byUserId: string, note?: strin
       data: { status: "APPROVED", approvedAt: new Date(), approvedBy: byUserId, emiAmount: s.emi.toNumber(), startYear: start.year, startMonth: start.month, outstanding: loan.principal, decisionNote: note ?? null },
     }),
   ]);
-  await notify({ tenantId: loan.employee.tenantId, userIds: [loan.employee.userId], kind: "LOAN", title: "Your loan was approved", body: `EMI ₹${s.emi.toNumber().toLocaleString("en-IN")} from ${start.month}/${start.year}.`, link: "/me/loans", email: true });
+  await notify({ tenantId: loan.employee.tenantId, userIds: [loan.employee.userId], kind: "LOAN", title: "Your loan was approved", body: `EMI ₹${s.emi.toNumber().toLocaleString("en-IN")} from ${start.month}/${start.year}.`, link: "/finances/loans", email: true });
   return { ok: true, message: `Approved. ${loan.installments} instalments of ₹${s.emi.toNumber().toLocaleString("en-IN")} from ${start.month}/${start.year}; disburse to activate.` };
 }
 
@@ -132,8 +165,17 @@ export async function rejectLoan(loanId: string, byUserId: string, note: string)
   if (!loan) return { ok: false, message: "Loan not found." };
   if (!["REQUESTED", "PENDING_APPROVAL"].includes(loan.status)) return { ok: false, message: `This loan is already ${loan.status.toLowerCase()}.` };
   await prisma.loan.update({ where: { id: loanId }, data: { status: "REJECTED", approvedBy: byUserId, approvedAt: new Date(), decisionNote: note } });
-  await notify({ tenantId: loan.employee.tenantId, userIds: [loan.employee.userId], kind: "LOAN", title: "Your loan request was declined", body: note, link: "/me/loans" });
+  await notify({ tenantId: loan.employee.tenantId, userIds: [loan.employee.userId], kind: "LOAN", title: "Your loan request was declined", body: note, link: "/finances/loans?view=requests" });
   return { ok: true, message: "Rejected." };
+}
+
+/** The employee takes back a request nobody has decided yet. */
+export async function withdrawLoan(loanId: string, employeeId: string): Promise<{ ok: boolean; message: string }> {
+  const loan = await prisma.loan.findFirst({ where: { id: loanId, employeeId }, include: { category: { select: { name: true } } } });
+  if (!loan) return { ok: false, message: "Loan request not found." };
+  if (!["REQUESTED", "PENDING_APPROVAL"].includes(loan.status)) return { ok: false, message: `This request is already ${loan.status.toLowerCase().replace(/_/g, " ")} and cannot be withdrawn.` };
+  await prisma.loan.update({ where: { id: loanId }, data: { status: "WITHDRAWN", decisionNote: "Withdrawn by the employee" } });
+  return { ok: true, message: `Withdrew your ${loan.category.name} request.` };
 }
 
 /** Money paid out. Payroll starts deducting from the first scheduled month. */

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useForm, FormBanner } from "@/components/form";
 import type { ActionState } from "@/lib/forms";
 import { givePraiseAction, giveFeedbackAction } from "@/app/actions/feedback";
-import { Sheet } from "../expenses/sheet";
+import { Sheet } from "@/components/sheet";
 import { PRAISE_BADGES, MESSAGE_MAX, TOPIC_MAX } from "./constants";
 import s from "./performance.module.css";
 

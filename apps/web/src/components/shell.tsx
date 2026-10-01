@@ -9,13 +9,13 @@ import { SearchPalette, type QuickAction } from "./search-palette";
 import { Avatar } from "./avatar";
 import {
   IconHome, IconUser, IconInbox, IconTeam, IconDollarCircle, IconOrg, IconEngage, IconUsers, IconUserPlus,
-  IconTarget, IconTimer, IconWallet, IconLedger, IconSettings, IconBell, IconMenu, IconBook, IconChart,
+  IconTarget, IconTimer, IconWallet, IconLedger, IconSettings, IconBell, IconMenu, IconAlarm, IconGraduationCap, IconChart,
 } from "./icons";
 
 const ICONS: Record<string, (p: { className?: string }) => ReactNode> = {
   home: IconHome, user: IconUser, inbox: IconInbox, team: IconTeam, finance: IconDollarCircle, org: IconOrg,
   engage: IconEngage, people: IconUsers, hire: IconUserPlus, performance: IconTarget, projects: IconTimer,
-  payroll: IconWallet, ledger: IconLedger, settings: IconSettings, learn: IconBook, analytics: IconChart,
+  payroll: IconWallet, ledger: IconLedger, settings: IconSettings, time: IconAlarm, learn: IconGraduationCap, analytics: IconChart,
 };
 
 const pathOf = (href: string) => href.split("?")[0];
@@ -39,8 +39,10 @@ export function activeLocation(sections: NavSection[], pathname: string) {
 
 export interface ShellUser { name: string; email: string; roles: string[]; title: string | null; employeeId: string | null; photoUrl: string | null }
 
-export function AppShell({ sections, user, company, notifications, actions, children }: {
-  sections: NavSection[]; user: ShellUser; company: string; notifications: number; actions: QuickAction[]; children: ReactNode;
+export function AppShell({ sections, user, company, notifications, actions, settingsHref, children }: {
+  sections: NavSection[]; user: ShellUser; company: string; notifications: number; actions: QuickAction[];
+  /** The organisation settings, behind the gear in the top bar, for those who manage them. */
+  settingsHref: string | null; children: ReactNode;
 }) {
   const pathname = usePathname();
   const here = activeLocation(sections, pathname);
@@ -50,7 +52,6 @@ export function AppShell({ sections, user, company, notifications, actions, chil
   // Keep the active section in view on a long rail (admins have many).
   useEffect(() => { rail.current?.querySelector(".k-rail-item.active")?.scrollIntoView({ block: "nearest" }); }, [pathname]);
 
-  const self = sections.filter((s) => !s.admin), admin = sections.filter((s) => s.admin);
   const railItem = (s: NavSection) => {
     const Icon = ICONS[s.icon] ?? IconHome;
     const active = here?.section.key === s.key;
@@ -73,6 +74,11 @@ export function AppShell({ sections, user, company, notifications, actions, chil
         <div className="k-company">{company}</div>
         <SearchPalette actions={actions} />
         <div className="k-topbar-spacer" />
+        {settingsHref ? (
+          <Link href={settingsHref} className={`k-topbar-btn${pathname.startsWith("/admin/") && !pathname.startsWith("/admin/audit") ? " active" : ""}`} aria-label="Settings" title="Settings">
+            <IconSettings width={21} height={21} />
+          </Link>
+        ) : null}
         <Link href="/inbox/notifications" className="k-topbar-btn" aria-label={`Notifications${notifications ? `, ${notifications} unread` : ""}`}>
           <IconBell width={22} height={22} />
           {notifications > 0 ? <span className="k-bell-count">{notifications > 99 ? "99+" : notifications}</span> : null}
@@ -82,9 +88,7 @@ export function AppShell({ sections, user, company, notifications, actions, chil
 
       <div className="k-body">
         <nav ref={rail} className={`k-rail${railOpen ? " open" : ""}`} aria-label="Main">
-          {self.map(railItem)}
-          {admin.length ? <div className="k-rail-divider" role="separator" /> : null}
-          {admin.map(railItem)}
+          {sections.map(railItem)}
         </nav>
         {railOpen ? <div className="k-rail-scrim" onClick={() => setRailOpen(false)} aria-hidden="true" /> : null}
 
@@ -97,6 +101,7 @@ export function AppShell({ sections, user, company, notifications, actions, chil
                   <Link key={t.href} href={t.href} className={`k-tab${active ? " active" : ""}`} aria-current={active ? "page" : undefined}>
                     {t.label}
                     {t.count ? <span className="k-tab-count">{t.count > 99 ? "99+" : t.count}</span> : null}
+                    {t.dot && !t.count ? <span className="k-tab-dot" aria-label="Needs attention" /> : null}
                   </Link>
                 );
               })}
@@ -136,8 +141,7 @@ function AvatarMenu({ user }: { user: ShellUser }) {
           </div>
           {user.roles.length ? <div className="row gap-1 wrap" style={{ padding: "0 14px 10px" }}>{user.roles.map((r) => <span key={r} className="badge neutral" style={{ fontSize: 10.5 }}>{r}</span>)}</div> : null}
           <div className="k-menu-items">
-            {user.employeeId ? <Link role="menuitem" href={`/directory/${user.employeeId}`} onClick={() => setOpen(false)}>My profile</Link> : null}
-            <Link role="menuitem" href="/home/welcome" onClick={() => setOpen(false)}>Welcome page</Link>
+            {user.employeeId ? <Link role="menuitem" href={`/directory/${user.employeeId}`} onClick={() => setOpen(false)}>View profile</Link> : null}
             <Link role="menuitem" href="/account/password" onClick={() => setOpen(false)}>Change password</Link>
             <form action={signOutEverywhere}><button role="menuitem" type="submit">Sign out of all devices</button></form>
             <form action={signOut}><button role="menuitem" type="submit" className="danger">Log out</button></form>

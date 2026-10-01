@@ -91,12 +91,14 @@ export function LoanOps({ loanId, status, upcoming }: { loanId: string; status: 
   );
 }
 
-export function LoanCategoryForm({ category }: { category?: { id: string; name: string; description: string | null; isConcessional: boolean; sbiBenchmarkRate: number | null } }) {
+export function LoanCategoryForm({ category }: { category?: { id: string; name: string; code?: string | null; description: string | null; isConcessional: boolean; sbiBenchmarkRate: number | null } }) {
   return (
     <ActionForm action={saveLoanCategoryAction} submitLabel={category ? "Save" : "Add category"} hidden={category ? { id: category.id } : undefined} compact>
       {(state) => (
         <div className="grid grid-3">
           <Field label="Name" name="name" state={state} required><TextInput name="name" state={state} defaultValue={category?.name} required /></Field>
+          <Field label="Code" name="code" state={state} hint="Shown beside the name, e.g. PL001"><TextInput name="code" state={state} defaultValue={category?.code ?? ""} maxLength={12} /></Field>
+          <Field label="Description" name="description" state={state}><TextInput name="description" state={state} defaultValue={category?.description ?? ""} maxLength={200} /></Field>
           <Field label="SBI benchmark rate (%)" name="sbiBenchmarkRate" state={state} hint="For the perquisite on concessional loans">
             <TextInput name="sbiBenchmarkRate" type="number" step="0.05" state={state} defaultValue={category?.sbiBenchmarkRate ?? ""} />
           </Field>

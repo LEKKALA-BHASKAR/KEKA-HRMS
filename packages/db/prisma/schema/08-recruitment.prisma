@@ -23,47 +23,77 @@ enum RequisitionStatus {
 }
 
 model Requisition {
-  id            String            @id @default(cuid())
-  tenantId      String
-  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  title         String
-  type          RequisitionType   @default(NEW_HIRE)
-  status        RequisitionStatus @default(DRAFT)
+  title  String
+  type   RequisitionType   @default(NEW_HIRE)
+  status RequisitionStatus @default(DRAFT)
 
-  departmentId  String?
-  locationId    String?
+  departmentId   String?
+  locationId     String?
   businessUnitId String?
-  legalEntityId String?
-  jobTitleId    String?
-  bandId        String?
-  workerTypeId  String?
+  legalEntityId  String?
+  jobTitleId     String?
+  bandId         String?
+  workerTypeId   String?
 
   /// A requisition can carry several positions with staggered start plans,
   /// without creating a separate job for each.
-  positions     Int               @default(1)
+  positions    Int   @default(1)
   /// [{ locationId, positions, targetStartDate }]
-  positionPlan  Json?
+  positionPlan Json?
 
-  minAnnualCtc  Decimal?          @db.Decimal(18, 2)
-  maxAnnualCtc  Decimal?          @db.Decimal(18, 2)
-  justification String?
+  minAnnualCtc        Decimal?  @db.Decimal(18, 2)
+  maxAnnualCtc        Decimal?  @db.Decimal(18, 2)
+  justification       String?
   /// Set for a BACKFILL requisition.
   replacingEmployeeId String?
-  replacingEmployee   Employee?   @relation("BackfillFor", fields: [replacingEmployeeId], references: [id], onDelete: SetNull)
+  replacingEmployee   Employee? @relation("BackfillFor", fields: [replacingEmployeeId], references: [id], onDelete: SetNull)
 
-  raisedBy      String?
-  approvedBy    String?
-  approvedAt    DateTime?
-  rejectReason  String?
+  raisedBy        String?
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectReason    String?
   targetStartDate DateTime?
 
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  // --- Keka parity: Hire (18-hire-ops) ---
+  // `positions` = newPositions + backfills.length. `type` = BACKFILL iff
+  // newPositions = 0. replacingEmployeeId mirrors the first backfill (deprecated).
+  // min/maxAnnualCtc = annualised salary when currency = INR, else null.
+  /// "REQ-0001"
+  code               String?
+  isPriority         Boolean   @default(false)
+  newPositions       Int       @default(0)
+  minExperienceYears Decimal?  @db.Decimal(9, 1)
+  /// FULL_TIME | PART_TIME
+  jobType            String    @default("FULL_TIME")
+  /// PERMANENT | CONTRACT | INTERN | CONSULTANT
+  employmentType     String?
+  currency           String    @default("INR")
+  /// HOURLY | BIWEEKLY | MONTHLY | ANNUAL; null = "NA"
+  salaryFrequency    String?
+  salaryMin          Decimal?  @db.Decimal(18, 2)
+  salaryMax          Decimal?  @db.Decimal(18, 2)
+  /// Job description (markdown).
+  description        String?
+  /// "Pending on …"; null = any hire.requisition.approve holder.
+  approverUserId     String?
+  hiringManagerId    String?
+  recruiterId        String?
+  archivedAt         DateTime?
+  archivedBy         String?
 
-  jobs          Job[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  jobs      Job[]
+  backfills RequisitionBackfill[]
+
+  @@unique([tenantId, code])
   @@index([tenantId, status])
+  @@index([tenantId, approverUserId, status])
   @@map("requisitions")
 }
 
@@ -78,17 +108,17 @@ enum JobStatus {
 /// A named, reorderable stage sequence. Different flows can be assigned per
 /// job — senior roles may need more rounds than junior ones.
 model HiringFlow {
-  id          String   @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name        String
-  isDefault   Boolean  @default(false)
-  isActive    Boolean  @default(true)
+  id        String  @id @default(cuid())
+  tenantId  String
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  isDefault Boolean @default(false)
+  isActive  Boolean @default(true)
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 
-  stages      HiringStage[]
-  jobs        Job[]
+  stages HiringStage[]
+  jobs   Job[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -96,14 +126,14 @@ model HiringFlow {
 }
 
 model HiringStage {
-  id          String     @id @default(cuid())
-  flowId      String
-  flow        HiringFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  id     String     @id @default(cuid())
+  flowId String
+  flow   HiringFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
 
-  name        String
-  sequence    Int
+  name             String
+  sequence         Int
   /// SOURCED | SCREENING | ASSESSMENT | INTERVIEW | OFFER | PREBOARDING | HIRED | REJECTED
-  stageKind   String     @default("INTERVIEW")
+  stageKind        String  @default("INTERVIEW")
   /// Requires a scorecard before a candidate can advance.
   requireScorecard Boolean @default(false)
   /// Auto-reject a candidate idle in this stage for N days.
@@ -119,56 +149,60 @@ model HiringStage {
 model Job {
   id            String       @id @default(cuid())
   tenantId      String
-  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   requisitionId String?
   requisition   Requisition? @relation(fields: [requisitionId], references: [id], onDelete: SetNull)
   flowId        String?
   flow          HiringFlow?  @relation(fields: [flowId], references: [id], onDelete: SetNull)
 
-  title         String
-  code          String?
-  description   String?
+  title            String
+  code             String?
+  description      String?
   responsibilities String?
-  requirements  String?
+  requirements     String?
   /// FULL_TIME | PART_TIME | CONTRACT | INTERNSHIP
-  employmentType String      @default("FULL_TIME")
+  employmentType   String  @default("FULL_TIME")
   /// ONSITE | HYBRID | REMOTE
-  workMode      String       @default("ONSITE")
+  workMode         String  @default("ONSITE")
 
-  departmentId  String?
-  locationId    String?
+  departmentId   String?
+  locationId     String?
   businessUnitId String?
-  legalEntityId String?
+  legalEntityId  String?
 
-  openings      Int          @default(1)
-  minAnnualCtc  Decimal?     @db.Decimal(18, 2)
-  maxAnnualCtc  Decimal?     @db.Decimal(18, 2)
+  openings           Int      @default(1)
+  minAnnualCtc       Decimal? @db.Decimal(18, 2)
+  maxAnnualCtc       Decimal? @db.Decimal(18, 2)
   /// Hide the range from the public posting.
-  hideSalary    Boolean      @default(true)
+  hideSalary         Boolean  @default(true)
   minExperienceYears Decimal? @db.Decimal(9, 1)
-  skills        Json?
+  skills             Json?
 
-  status        JobStatus    @default(DRAFT)
+  status        JobStatus @default(DRAFT)
   /// Published on the public career portal.
-  isPublished   Boolean      @default(false)
+  isPublished   Boolean   @default(false)
   /// Open to internal applicants, with its own eligibility rules.
-  allowInternal Boolean      @default(false)
-  allowReferral Boolean      @default(true)
+  allowInternal Boolean   @default(false)
+  allowReferral Boolean   @default(true)
   publishedAt   DateTime?
   closesAt      DateTime?
 
   /// Interview feedback visibility: OPEN | RESTRICTED | PRIVATE.
   /// An explicit bias-reduction control — RESTRICTED hides other panellists'
   /// scores until you have submitted your own.
-  feedbackVisibility String  @default("RESTRICTED")
+  feedbackVisibility String @default("RESTRICTED")
 
   hiringManagerId String?
   recruiterId     String?
 
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  /// Interview kit: [{ section, skills: [{ name, description }] }]; null = DEFAULT_SCORECARD.
+  scorecardTemplate Json?
 
-  applications  Application[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  applications Application[]
+  questionSets InterviewQuestionSet[]
 
   @@unique([tenantId, code])
   @@index([tenantId, status])
@@ -187,38 +221,38 @@ enum CandidateSource {
 }
 
 model Candidate {
-  id            String          @id @default(cuid())
-  tenantId      String
-  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  firstName     String
-  lastName      String
-  email         String
-  phone         String?
-  currentEmployer String?
-  currentTitle  String?
+  firstName            String
+  lastName             String
+  email                String
+  phone                String?
+  currentEmployer      String?
+  currentTitle         String?
   totalExperienceYears Decimal? @db.Decimal(9, 1)
-  currentAnnualCtc Decimal?     @db.Decimal(18, 2)
-  expectedAnnualCtc Decimal?    @db.Decimal(18, 2)
-  noticePeriodDays Int?
+  currentAnnualCtc     Decimal? @db.Decimal(18, 2)
+  expectedAnnualCtc    Decimal? @db.Decimal(18, 2)
+  noticePeriodDays     Int?
 
-  resumeUrl     String?
-  portfolioUrl  String?
-  linkedinUrl   String?
-  skills        Json?
-  city          String?
-  source        CandidateSource @default(CAREER_PORTAL)
+  resumeUrl    String?
+  portfolioUrl String?
+  linkedinUrl  String?
+  skills       Json?
+  city         String?
+  source       CandidateSource @default(CAREER_PORTAL)
   /// Employee who referred them.
-  referredById  String?
-  referredBy    Employee?       @relation("CandidateReferral", fields: [referredById], references: [id], onDelete: SetNull)
+  referredById String?
+  referredBy   Employee?       @relation("CandidateReferral", fields: [referredById], references: [id], onDelete: SetNull)
 
   /// Set once hired and converted.
-  convertedEmployeeId String?   @unique
+  convertedEmployeeId String? @unique
 
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  applications  Application[]
+  applications Application[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -237,31 +271,41 @@ enum ApplicationStatus {
 }
 
 model Application {
-  id            String            @id @default(cuid())
-  tenantId      String
-  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  jobId         String
-  job           Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  candidateId   String
-  candidate     Candidate         @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  jobId       String
+  job         Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
-  status        ApplicationStatus @default(ACTIVE)
+  status         ApplicationStatus @default(ACTIVE)
   /// Current stage id from the job's hiring flow.
   currentStageId String?
   /// Owning recruiter, assigned round-robin or explicitly.
-  ownerId       String?
+  ownerId        String?
 
-  appliedAt     DateTime          @default(now())
-  rejectedAt    DateTime?
-  rejectReason  String?
+  appliedAt    DateTime  @default(now())
+  rejectedAt   DateTime?
+  rejectReason String?
   /// Aggregate of submitted scorecards.
-  averageScore  Decimal?          @db.Decimal(9, 2)
+  averageScore Decimal?  @db.Decimal(9, 2)
 
-  updatedAt     DateTime          @updatedAt
+  // --- Keka parity: Hire feedback (18-hire-ops) ---
+  feedbackSummary       String?
+  /// [{ panelistId, text }]
+  feedbackSummaryDetail Json?
+  feedbackSummaryById   String?
+  feedbackSummaryAt     DateTime?
+  candidateFeedback     String?
+  candidateFeedbackAt   DateTime?
 
-  stageHistory  ApplicationStageHistory[]
-  interviews    Interview[]
-  offer         Offer?
+  updatedAt DateTime @updatedAt
+
+  stageHistory ApplicationStageHistory[]
+  interviews   Interview[]
+  offer        Offer?
+  notes        CandidateNote[]
 
   @@unique([jobId, candidateId])
   @@index([tenantId, status])
@@ -276,10 +320,10 @@ model ApplicationStageHistory {
   stageId       String
   stage         HiringStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
 
-  enteredAt     DateTime    @default(now())
-  exitedAt      DateTime?
-  movedBy       String?
-  note          String?
+  enteredAt DateTime  @default(now())
+  exitedAt  DateTime?
+  movedBy   String?
+  note      String?
 
   @@index([applicationId])
   @@index([stageId])
@@ -295,25 +339,25 @@ enum InterviewStatus {
 }
 
 model Interview {
-  id            String          @id @default(cuid())
+  id            String      @id @default(cuid())
   applicationId String
-  application   Application     @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
 
-  round         Int             @default(1)
-  title         String
+  round           Int             @default(1)
+  title           String
   /// PHONE | VIDEO | ONSITE | TECHNICAL | HR | PANEL
-  mode          String          @default("VIDEO")
-  scheduledAt   DateTime
-  durationMinutes Int           @default(60)
-  meetingUrl    String?
-  roomId        String?
-  status        InterviewStatus @default(SCHEDULED)
+  mode            String          @default("VIDEO")
+  scheduledAt     DateTime
+  durationMinutes Int             @default(60)
+  meetingUrl      String?
+  roomId          String?
+  status          InterviewStatus @default(SCHEDULED)
 
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  panel         InterviewPanelist[]
-  scorecards    Scorecard[]
+  panel      InterviewPanelist[]
+  scorecards Scorecard[]
 
   @@index([applicationId])
   @@index([scheduledAt])
@@ -327,9 +371,9 @@ model InterviewPanelist {
   employeeId  String
   employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  isLead      Boolean   @default(false)
+  isLead   Boolean @default(false)
   /// PENDING | ACCEPTED | DECLINED
-  response    String    @default("PENDING")
+  response String  @default("PENDING")
 
   @@unique([interviewId, employeeId])
   @@index([employeeId])
@@ -342,16 +386,28 @@ model Scorecard {
   interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
   panelistId  String
 
-  /// Per-competency ratings: [{ competency, rating, maxRating, comment }]
-  ratings     Json?
-  overallScore Decimal? @db.Decimal(9, 2)
-  /// STRONG_YES | YES | NO | STRONG_NO
+  /// Legacy: [{ competency, rating, maxRating, comment }].
+  /// Keka parity: [{ section, skill, rating: 1..5 | null, comment }].
+  ratings        Json?
+  /// Mean of rated skills.
+  overallScore   Decimal? @db.Decimal(9, 2)
+  /// Legacy STRONG_YES | YES | NO | STRONG_NO.
+  /// Keka parity: NO_HIRE | NOT_SURE | AVERAGE | HIRE | MUST_HIRE.
   recommendation String?
-  strengths   String?
-  concerns    String?
-  notes       String?
+  strengths      String?
+  concerns       String?
+  /// Overall feedback text.
+  notes          String?
 
-  submittedAt DateTime  @default(now())
+  /// Stamped on create. For Keka-parity drafts, re-stamp it on submit and
+  /// treat it as meaningful only when status = SUBMITTED.
+  submittedAt DateTime @default(now())
+
+  // --- Keka parity (18-hire-ops) ---
+  /// DRAFT | SUBMITTED; drafts are author-only and count nowhere.
+  status     String   @default("SUBMITTED")
+  aiAssisted Boolean  @default(false)
+  updatedAt  DateTime @default(now()) @updatedAt
 
   @@unique([interviewId, panelistId])
   @@index([interviewId])
@@ -374,22 +430,22 @@ model Offer {
   applicationId String      @unique
   application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
 
-  status        OfferStatus @default(DRAFT)
-  annualCtc     Decimal     @db.Decimal(18, 2)
+  status              OfferStatus @default(DRAFT)
+  annualCtc           Decimal     @db.Decimal(18, 2)
   /// Structure to apply once they join.
-  salaryStructureId String?
-  joiningBonus  Decimal?    @db.Decimal(18, 2)
+  salaryStructureId   String?
+  joiningBonus        Decimal?    @db.Decimal(18, 2)
   proposedJoiningDate DateTime?
-  expiresOn     DateTime?
+  expiresOn           DateTime?
 
-  jobTitleId    String?
-  bandId        String?
-  payGradeId    String?
+  jobTitleId         String?
+  bandId             String?
+  payGradeId         String?
   reportingManagerId String?
 
   /// Generated offer letter.
-  letterUrl     String?
-  templateId    String?
+  letterUrl  String?
+  templateId String?
 
   approvedBy    String?
   approvedAt    DateTime?
@@ -397,8 +453,8 @@ model Offer {
   respondedAt   DateTime?
   declineReason String?
 
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
   @@map("offers")
@@ -406,23 +462,23 @@ model Offer {
 
 /// Background verification, runnable against candidates and employees alike.
 model BgvCheck {
-  id            String    @id @default(cuid())
-  tenantId      String
-  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   /// Exactly one of these is set.
-  candidateId   String?
-  employeeId    String?
-  employee      Employee? @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  candidateId String?
+  employeeId  String?
+  employee    Employee? @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  vendor        String?
+  vendor      String?
   /// IDENTITY | ADDRESS | EDUCATION | EMPLOYMENT | CRIMINAL | CREDIT | REFERENCE
-  checkTypes    Json?
+  checkTypes  Json?
   /// INITIATED | IN_PROGRESS | CLEAR | DISCREPANCY | FAILED | CANCELLED
-  status        String    @default("INITIATED")
-  initiatedAt   DateTime  @default(now())
-  completedAt   DateTime?
-  reportUrl     String?
-  findings      String?
+  status      String    @default("INITIATED")
+  initiatedAt DateTime  @default(now())
+  completedAt DateTime?
+  reportUrl   String?
+  findings    String?
 
   @@index([tenantId, status])
   @@index([employeeId])

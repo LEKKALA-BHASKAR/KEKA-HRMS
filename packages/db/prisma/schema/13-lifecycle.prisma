@@ -39,23 +39,23 @@ enum JourneyTaskStatus {
 }
 
 model JourneyTemplate {
-  id          String          @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name        String
-  description String?
-  trigger     JourneyTrigger
+  id           String         @id @default(cuid())
+  tenantId     String
+  tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  trigger      JourneyTrigger
   /// Narrow to a department or location; null applies to everyone.
   departmentId String?
-  locationId  String?
+  locationId   String?
   /// When several templates match a trigger, the most specific wins.
-  isActive    Boolean         @default(true)
+  isActive     Boolean        @default(true)
 
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  tasks       JourneyTaskTemplate[]
-  journeys    Journey[]
+  tasks    JourneyTaskTemplate[]
+  journeys Journey[]
 
   @@unique([tenantId, name])
   @@index([tenantId, trigger])
@@ -84,53 +84,53 @@ model JourneyTaskTemplate {
 }
 
 model Journey {
-  id          String           @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId  String
-  employee    Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  templateId  String?
-  template    JourneyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  id         String           @id @default(cuid())
+  tenantId   String
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  templateId String?
+  template   JourneyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
-  trigger     JourneyTrigger
-  title       String
+  trigger    JourneyTrigger
+  title      String
   /// Joining date, last working day, effective date of the change.
-  anchorDate  DateTime
-  status      JourneyStatus    @default(ACTIVE)
+  anchorDate DateTime
+  status     JourneyStatus  @default(ACTIVE)
   /// The record that caused it — an ExitRecord, a JobRecord.
-  sourceType  String?
-  sourceId    String?
+  sourceType String?
+  sourceId   String?
 
   createdBy   String?
-  createdAt   DateTime         @default(now())
+  createdAt   DateTime  @default(now())
   completedAt DateTime?
 
-  tasks       JourneyTask[]
+  tasks JourneyTask[]
 
+  @@unique([employeeId, trigger, anchorDate])
   @@index([tenantId, status])
   @@index([employeeId])
-  @@unique([employeeId, trigger, anchorDate])
   @@map("journeys")
 }
 
 model JourneyTask {
-  id          String            @id @default(cuid())
-  journeyId   String
-  journey     Journey           @relation(fields: [journeyId], references: [id], onDelete: Cascade)
-  title       String
-  description String?
-  owner       TaskOwner
+  id                 String            @id @default(cuid())
+  journeyId          String
+  journey            Journey           @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  title              String
+  description        String?
+  owner              TaskOwner
   /// The person the owner role resolved to, when one could be found.
   assigneeEmployeeId String?
-  dueDate     DateTime
-  category    String            @default("OTHER")
-  isRequired  Boolean           @default(true)
-  autoCheck   String?
-  status      JourneyTaskStatus @default(PENDING)
-  completedAt DateTime?
-  completedBy String?
-  note        String?
-  sortOrder   Int               @default(0)
+  dueDate            DateTime
+  category           String            @default("OTHER")
+  isRequired         Boolean           @default(true)
+  autoCheck          String?
+  status             JourneyTaskStatus @default(PENDING)
+  completedAt        DateTime?
+  completedBy        String?
+  note               String?
+  sortOrder          Int               @default(0)
 
   @@index([journeyId])
   @@index([assigneeEmployeeId, status])
@@ -141,83 +141,143 @@ model JourneyTask {
 //  HELPDESK
 // ---------------------------------------------------------------------------
 
+/// Keka parity: Keka's list is NA · Low · Medium · High. URGENT is legacy
+/// (map it to HIGH); NA means "not set".
 enum TicketPriority {
   LOW
   MEDIUM
   HIGH
   URGENT
+  /// Keka "NA": no priority set.
+  NA
 }
 
+/// Keka parity: Keka's statuses are Open · In Progress · On Hold · Closed.
+/// WAITING_ON_EMPLOYEE (→ ON_HOLD) and RESOLVED (→ CLOSED) are legacy.
 enum TicketStatus {
   OPEN
   IN_PROGRESS
   WAITING_ON_EMPLOYEE
   RESOLVED
   CLOSED
+  /// SLA clocks pause while ON_HOLD (see HelpdeskTicket.onHoldSince).
+  ON_HOLD
+}
+
+enum HelpdeskAssignMode {
+  /// The category head (defaultAssigneeUserId) gets every ticket.
+  HEAD
+  /// Rotate through HelpdeskCategoryAgent rows (cursor: lastAssignedUserId).
+  ROUND_ROBIN
+  UNASSIGNED
 }
 
 model HelpdeskCategory {
-  id          String   @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name        String
-  description String?
-  /// Hours to first resolution before the ticket is overdue.
-  slaHours    Int      @default(48)
-  /// Agent who picks these up by default.
+  id                    String   @id @default(cuid())
+  tenantId              String
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name                  String
+  description           String?
+  /// Resolution target, in business hours when businessHours is set.
+  slaHours              Int      @default(48)
+  /// UI label "Category head": owns escalations; assignee when assignMode = HEAD.
   defaultAssigneeUserId String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
 
-  tickets     HelpdeskTicket[]
+  // --- Keka parity (17-helpdesk-ops) ---
+  /// First-response target, in business hours.
+  firstResponseHours Int                    @default(8)
+  /// Subcategories: a ticket is raised against a leaf.
+  parentId           String?
+  parent             HelpdeskCategory?      @relation("HelpdeskSubcategory", fields: [parentId], references: [id], onDelete: Cascade)
+  children           HelpdeskCategory[]     @relation("HelpdeskSubcategory")
+  /// Announcement.audience shape; null = everyone.
+  /// { employeeIds: [], departmentIds: [], locationIds: [], businessUnitIds: [] }
+  audience           Json?
+  businessHoursId    String?
+  businessHours      HelpdeskBusinessHours? @relation(fields: [businessHoursId], references: [id], onDelete: SetNull)
+  enableOnHold       Boolean                @default(false)
+  assignMode         HelpdeskAssignMode     @default(HEAD)
+  /// Round-robin cursor.
+  lastAssignedUserId String?
+  defaultPriority    TicketPriority?
+  sortOrder          Int                    @default(0)
+  updatedAt          DateTime               @default(now()) @updatedAt
 
+  tickets HelpdeskTicket[]
+  agents  HelpdeskCategoryAgent[]
+
+  /// Names stay unique per tenant across all levels (subcategories included).
   @@unique([tenantId, name])
+  @@index([tenantId, parentId])
   @@map("helpdesk_categories")
 }
 
 model HelpdeskTicket {
-  id          String           @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id              String           @id @default(cuid())
+  tenantId        String
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   /// Human-friendly, per tenant: HD-1042.
-  number      Int
-  employeeId  String
-  employee    Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  categoryId  String
-  category    HelpdeskCategory @relation(fields: [categoryId], references: [id], onDelete: NoAction)
-  subject     String
-  description String
-  priority    TicketPriority   @default(MEDIUM)
-  status      TicketStatus     @default(OPEN)
-  assigneeUserId String?
-  dueAt       DateTime
+  number          Int
+  employeeId      String
+  employee        Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  categoryId      String
+  category        HelpdeskCategory @relation(fields: [categoryId], references: [id], onDelete: NoAction)
+  subject         String
+  description     String
+  /// NA = Keka's "no priority". URGENT is legacy.
+  priority        TicketPriority   @default(MEDIUM)
+  status          TicketStatus     @default(OPEN)
+  assigneeUserId  String?
+  /// Resolution due.
+  dueAt           DateTime
   firstResponseAt DateTime?
-  resolvedAt  DateTime?
-  closedAt    DateTime?
+  /// Keka parity: set on close, cleared on reopen.
+  resolvedAt      DateTime?
+  closedAt        DateTime?
   /// 1–5, given by the employee on resolution.
-  satisfaction Int?
+  satisfaction    Int?
 
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  // --- Keka parity: SLA, closing and followers (17-helpdesk-ops) ---
+  firstResponseDueAt  DateTime?
+  /// While ON_HOLD; on resume both dues shift by the business time held.
+  onHoldSince         DateTime?
+  missedFirstResponse Boolean                @default(false)
+  missedResolution    Boolean                @default(false)
+  closingReasonId     String?
+  closingReason       HelpdeskClosingReason? @relation(fields: [closingReasonId], references: [id], onDelete: SetNull)
+  closedByUserId      String?
+  lastResponderUserId String?
+  lastRespondedAt     DateTime?
+  reopenCount         Int                    @default(0)
 
-  comments    HelpdeskComment[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  comments  HelpdeskComment[]
+  followers HelpdeskTicketFollower[]
 
   @@unique([tenantId, number])
   @@index([tenantId, status])
   @@index([employeeId])
+  @@index([tenantId, categoryId])
+  @@index([tenantId, assigneeUserId])
   @@map("helpdesk_tickets")
 }
 
 model HelpdeskComment {
-  id          String         @id @default(cuid())
-  ticketId    String
-  ticket      HelpdeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  id           String         @id @default(cuid())
+  ticketId     String
+  ticket       HelpdeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   authorUserId String
-  authorLabel String
-  body        String
-  /// Visible to agents only.
-  isInternal  Boolean        @default(false)
-  createdAt   DateTime       @default(now())
+  authorLabel  String
+  body         String
+  /// Visible to agents only (Keka "internal note").
+  isInternal   Boolean        @default(false)
+  /// System event line ("Status changed to On Hold", "First response was added…").
+  isSystem     Boolean        @default(false)
+  createdAt    DateTime       @default(now())
 
   @@index([ticketId])
   @@map("helpdesk_comments")
@@ -228,18 +288,18 @@ model HelpdeskComment {
 // ---------------------------------------------------------------------------
 
 model Notification {
-  id          String    @id @default(cuid())
-  tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  userId      String
-  title       String
-  body        String?
+  id        String    @id @default(cuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String
+  title     String
+  body      String?
   /// Where clicking it goes.
-  link        String?
+  link      String?
   /// LEAVE | ATTENDANCE | PAYROLL | HELPDESK | JOURNEY | ...
-  kind        String
-  readAt      DateTime?
-  createdAt   DateTime  @default(now())
+  kind      String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
 
   @@index([userId, readAt])
   @@map("notifications")
@@ -256,7 +316,7 @@ enum OutboxStatus {
 model EmailOutbox {
   id          String       @id @default(cuid())
   tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   toAddress   String
   subject     String
   textBody    String
@@ -282,7 +342,7 @@ model EmailOutbox {
 model StoredFile {
   id          String   @id @default(cuid())
   tenantId    String
-  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   filename    String
   mimeType    String
   sizeBytes   Int

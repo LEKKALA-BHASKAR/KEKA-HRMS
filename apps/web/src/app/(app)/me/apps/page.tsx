@@ -127,7 +127,7 @@ async function buildApps(viewer: Viewer): Promise<App[]> {
   const outstanding = loans.reduce((t, l) => t + Number(l.outstanding ?? 0), 0);
   const pendingLoans = loans.filter((l) => ["REQUESTED", "PENDING_APPROVAL"].includes(l.status)).length;
   apps.push({
-    key: "loans", title: "Loans", href: "/me/loans", icon: <IconWallet />, colour: "#ff9f1c",
+    key: "loans", title: "Loans", href: "/finances/loans", icon: <IconWallet />, colour: "#ff9f1c",
     description: "Apply for a salary advance or loan, repaid through payroll.",
     count: loans.length, countLabel: "active loans",
     note: loans.length ? [outstanding ? `${amt(outstanding)} outstanding` : null, pendingLoans ? `${pendingLoans} awaiting approval` : null].filter(Boolean).join(" · ") || plural(loans.length, "active loan") : "No active loans",

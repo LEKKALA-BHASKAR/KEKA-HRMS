@@ -1,0 +1,87 @@
+// ============================================================================
+//  KEKA — Helpdesk operations: category agents, business hours, canned
+//  responses, closing reasons, ticket followers
+// ============================================================================
+//  Spec: helpdesk. HelpdeskCategory, HelpdeskTicket and HelpdeskComment live
+//  in 13-lifecycle (with their Keka-parity fields); this file holds the
+//  settings and the people around a ticket.
+// ============================================================================
+
+/// An agent who works a category's tickets (round-robin pool and agent scope).
+model HelpdeskCategoryAgent {
+  id         String           @id @default(cuid())
+  categoryId String
+  category   HelpdeskCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  /// User id.
+  userId     String
+  createdAt  DateTime         @default(now())
+
+  @@unique([categoryId, userId])
+  @@index([userId])
+  @@map("helpdesk_category_agents")
+}
+
+/// Working hours the SLA clocks run in.
+model HelpdeskBusinessHours {
+  id              String             @id @default(cuid())
+  tenantId        String
+  tenant          Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  description     String?
+  timezone        String             @default("Asia/Kolkata")
+  /// [{ day: 1-7 (Mon=1), from: "09:00", to: "18:00" }]; [] = 24x7; missing day = weekly off.
+  schedule        Json               @default("[]")
+  /// Skip holidays on the tenant's default HolidayCalendar(s).
+  observeHolidays Boolean            @default(false)
+  isDefault       Boolean            @default(false)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  categories      HelpdeskCategory[]
+
+  @@unique([tenantId, name])
+  @@map("helpdesk_business_hours")
+}
+
+model HelpdeskCannedResponse {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title           String
+  body            String
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenantId, title])
+  @@map("helpdesk_canned_responses")
+}
+
+model HelpdeskClosingReason {
+  id          String           @id @default(cuid())
+  tenantId    String
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  tickets     HelpdeskTicket[]
+
+  @@unique([tenantId, name])
+  @@map("helpdesk_closing_reasons")
+}
+
+model HelpdeskTicketFollower {
+  id            String         @id @default(cuid())
+  ticketId      String
+  ticket        HelpdeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  /// User id.
+  userId        String
+  /// REPORTING_MANAGER | L2_MANAGER | DEPARTMENT_HEAD when added by role (resolved at add time).
+  viaRole       String?
+  addedByUserId String?
+  createdAt     DateTime       @default(now())
+
+  @@unique([ticketId, userId])
+  @@index([userId])
+  @@map("helpdesk_ticket_followers")
+}

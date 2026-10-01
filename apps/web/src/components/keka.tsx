@@ -117,6 +117,7 @@ export function Bars({ data, height = 70, colour = "var(--brand-400, #608cfa)", 
 const CHIP: Record<string, string> = {
   in: "#8bc34a", out: "#ef6f6f", "not-in-yet": "#4fc3d9", leave: "#9b7ede", "on-duty": "#f5b83d", wfh: "#4fc3d9",
   verified: "#5cb85c", current: "#36b8c9", closed: "#ef5350", open: "#5cb85c", woff: "#c9b48a", hldy: "#8bc34a",
+  cleared: "#8faa2e", withdrawn: "#9aa3b2", pending: "#f5b83d", "not-in-use": "#ef5350",
 };
 
 /** The small uppercase chips: IN, OUT, NOT IN YET, VERIFIED, CURRENT, W-OFF… */

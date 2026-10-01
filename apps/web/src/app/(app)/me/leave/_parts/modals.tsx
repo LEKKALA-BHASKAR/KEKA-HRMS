@@ -144,7 +144,7 @@ export function CompOffInfo({ worked, hasCompOff, history }: {
             <tbody>
               {history.map((h) => (
                 <tr key={h.id}>
-                  <td>{dateLabel(h.workedOn)} <span className="text-xs muted">· {h.dayType.toLowerCase()}</span></td>
+                  <td>{dateLabel(h.workedOn)} {h.dayType ? <span className="text-xs muted">· {h.dayType.toLowerCase()}</span> : null}</td>
                   <td className={s.r}>{h.days}</td>
                   <td>{statusBadge(h.status)}{h.note ? <div className="text-xs muted">{h.note}</div> : null}</td>
                   <td>{h.status === "APPROVED" && h.expiresOn ? dateLabel(h.expiresOn) : "—"}</td>

@@ -126,6 +126,7 @@ export const PERMISSIONS = {
 
   // --- People analytics ---------------------------------------------------
   ANALYTICS_VIEW: "analytics.dashboard.view",
+  ATTRITION_RISK_VIEW: "analytics.risk.view",
 
   // --- Contracts and letters ---------------------------------------------
   CONTRACT_VIEW: "document.contract.view",
@@ -166,6 +167,11 @@ export const PERMISSIONS = {
   TIMESHEET_SUBMIT: "psa.timesheet.submit",
   RATE_CARD_MANAGE: "psa.ratecard.manage",
   INVOICE_MANAGE: "psa.invoice.manage",
+  OPPORTUNITY_VIEW: "psa.opportunity.view",
+  OPPORTUNITY_MANAGE: "psa.opportunity.manage",
+  RESOURCE_VIEW: "psa.resource.view",
+  RESOURCE_MANAGE: "psa.resource.manage",
+  RESOURCE_REQUEST: "psa.resource.request",
 
   // --- Accounting ---------------------------------------------------------
   ACCOUNT_VIEW: "accounting.account.view",
@@ -366,6 +372,11 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.TIMESHEET_SUBMIT, label: "Submit timesheets" },
       { key: PERMISSIONS.RATE_CARD_MANAGE, label: "Manage rate cards" },
       { key: PERMISSIONS.INVOICE_MANAGE, label: "Manage invoices" },
+      { key: PERMISSIONS.OPPORTUNITY_VIEW, label: "View opportunities" },
+      { key: PERMISSIONS.OPPORTUNITY_MANAGE, label: "Manage opportunities" },
+      { key: PERMISSIONS.RESOURCE_VIEW, label: "View resource plans" },
+      { key: PERMISSIONS.RESOURCE_MANAGE, label: "Manage resource plans" },
+      { key: PERMISSIONS.RESOURCE_REQUEST, label: "Request resources" },
     ],
   },
   {
@@ -404,6 +415,7 @@ export const PERMISSION_GROUPS: Array<{
     label: "People Analytics",
     permissions: [
       { key: PERMISSIONS.ANALYTICS_VIEW, label: "View workforce dashboards" },
+      { key: PERMISSIONS.ATTRITION_RISK_VIEW, label: "View attrition risk" },
     ],
   },
   {

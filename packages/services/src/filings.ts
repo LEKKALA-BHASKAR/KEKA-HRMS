@@ -5,6 +5,7 @@ import {
   type EcrMember, type EsiMember, type BankPayment, type Deductee, type PayslipData,
 } from "@keka/documents";
 import { loadStatutoryTables, ageAtFyEnd, slabsFor } from "./payroll-run";
+import { previousIncomeApplies } from "./finances-math";
 
 /**
  * Statutory outputs from finalised payroll: the PF ECR, the ESI contribution
@@ -120,6 +121,15 @@ export async function buildForm24q(tenantId: string, fy: number, q: number): Pro
 
 /** The data for one payslip PDF, from its finalised run line. */
 export async function payslipPdf(payslipId: string): Promise<{ file: BuiltFile; password: string | null; employeeId: string; status: string }> {
+  const p = await payslipData(payslipId);
+  return {
+    file: { filename: `Payslip-${p.employeeNumber}-${p.year}-${String(p.month).padStart(2, "0")}.pdf`, mimeType: "application/pdf", content: renderPayslip(p.data, { password: p.password ?? undefined }), issues: [], summary: p.data.period },
+    password: p.password, employeeId: p.employeeId, status: p.status,
+  };
+}
+
+/** What a payslip shows, assembled from its finalised run line — one page of a PDF. */
+export async function payslipData(payslipId: string): Promise<{ data: PayslipData; password: string | null; employeeId: string; employeeNumber: string; status: string; year: number; month: number }> {
   const slip = await prisma.payslip.findUniqueOrThrow({
     where: { id: payslipId },
     include: {
@@ -157,10 +167,7 @@ export async function payslipPdf(payslipId: string): Promise<{ file: BuiltFile; 
     ytd: { gross: Number(ytd._sum.grossEarnings ?? 0), tds: Number(ytd._sum.tds ?? 0), pf: Number(ytd._sum.pfEmployee ?? 0) },
     note: pan ? undefined : "No PAN is on record, so this payslip is not password protected. Add your PAN to protect future payslips.",
   };
-  return {
-    file: { filename: `Payslip-${e.employeeNumber}-${slip.year}-${String(slip.month).padStart(2, "0")}.pdf`, mimeType: "application/pdf", content: renderPayslip(data, { password: pan ?? undefined }), issues: [], summary: data.period },
-    password: pan, employeeId: e.id, status: slip.status,
-  };
+  return { data, password: pan, employeeId: e.id, employeeNumber: e.employeeNumber, status: slip.status, year: slip.year, month: slip.month };
 }
 
 /** Runs in the financial year up to and including (year, month). */
@@ -190,7 +197,7 @@ export async function form16Pdf(employeeId: string, fy: number): Promise<BuiltFi
   const config = tables?.taxConfigs.get(regime);
   const tax = config ? calculateAnnualTax({
     regime, grossSalary: gross, professionalTax: pt,
-    previousEmployerIncome: Number(e.statutoryProfile?.previousEmployerIncome ?? 0) || undefined,
+    previousEmployerIncome: (previousIncomeApplies(e.dateOfJoining, fy) && Number(e.statutoryProfile?.previousEmployerIncome ?? 0)) || undefined,
     slabs: slabsFor(tables!.taxSlabBands.get(regime), ageAtFyEnd(e.dateOfBirth, fy)), config,
   }) : null;
   const now = new Date();

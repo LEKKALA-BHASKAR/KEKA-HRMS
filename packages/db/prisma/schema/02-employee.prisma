@@ -47,82 +47,84 @@ enum BloodGroup {
 }
 
 model Employee {
-  id                String         @id @default(cuid())
-  tenantId          String
-  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   /// Generated from an EmployeeNumberSeries; editable after assignment.
-  employeeNumber    String
+  employeeNumber   String
   /// Key that must match the biometric device roster.
-  attendanceNumber  String?
+  attendanceNumber String?
 
-  userId            String?        @unique
-  user              User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   // --- Primary details ---
-  firstName         String
-  middleName        String?
-  lastName          String
-  displayName       String?
-  workEmail         String?
-  personalEmail     String?
-  mobile            String?
-  alternatePhone    String?
-  dateOfBirth       DateTime?
-  gender            Gender?
-  maritalStatus     MaritalStatus?
-  bloodGroup        BloodGroup?
-  nationality       String?        @default("Indian")
-  photoUrl          String?
+  firstName      String
+  middleName     String?
+  lastName       String
+  displayName    String?
+  workEmail      String?
+  personalEmail  String?
+  mobile         String?
+  alternatePhone String?
+  dateOfBirth    DateTime?
+  gender         Gender?
+  maritalStatus  MaritalStatus?
+  bloodGroup     BloodGroup?
+  nationality    String?        @default("Indian")
+  photoUrl       String?
 
   // --- Job ---
-  status            EmployeeStatus @default(ONBOARDING)
-  dateOfJoining     DateTime
+  status           EmployeeStatus @default(ONBOARDING)
+  dateOfJoining    DateTime
   /// Confirmation date once probation completes.
-  confirmationDate  DateTime?
-  legalEntityId     String?
-  legalEntity       LegalEntity?   @relation(fields: [legalEntityId], references: [id], onDelete: SetNull)
-  businessUnitId    String?
-  businessUnit      BusinessUnit?  @relation(fields: [businessUnitId], references: [id], onDelete: SetNull)
-  departmentId      String?
-  department        Department?    @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  locationId        String?
-  location          Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  costCenterId      String?
-  costCenter        CostCenter?    @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
-  bandId            String?
-  band              Band?          @relation(fields: [bandId], references: [id], onDelete: SetNull)
-  payGradeId        String?
-  payGrade          PayGrade?      @relation(fields: [payGradeId], references: [id], onDelete: SetNull)
-  workerTypeId      String?
-  workerType        WorkerType?    @relation(fields: [workerTypeId], references: [id], onDelete: SetNull)
+  confirmationDate DateTime?
+  legalEntityId    String?
+  legalEntity      LegalEntity?   @relation(fields: [legalEntityId], references: [id], onDelete: SetNull)
+  businessUnitId   String?
+  businessUnit     BusinessUnit?  @relation(fields: [businessUnitId], references: [id], onDelete: SetNull)
+  departmentId     String?
+  department       Department?    @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  locationId       String?
+  location         Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  costCenterId     String?
+  costCenter       CostCenter?    @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  bandId           String?
+  band             Band?          @relation(fields: [bandId], references: [id], onDelete: SetNull)
+  payGradeId       String?
+  payGrade         PayGrade?      @relation(fields: [payGradeId], references: [id], onDelete: SetNull)
+  workerTypeId     String?
+  workerType       WorkerType?    @relation(fields: [workerTypeId], references: [id], onDelete: SetNull)
 
   /// Only a single Reporting Manager is documented — there is no dotted-line
   /// or secondary manager field. Department/Business Head come from the org
   /// tree as implicit roles.
   reportingManagerId String?
-  reportingManager  Employee?      @relation("ReportingLine", fields: [reportingManagerId], references: [id], onDelete: SetNull)
-  directReports     Employee[]     @relation("ReportingLine")
+  reportingManager   Employee?  @relation("ReportingLine", fields: [reportingManagerId], references: [id], onDelete: SetNull)
+  directReports      Employee[] @relation("ReportingLine")
 
   /// Current job title, denormalised from the latest EmployeeJobRecord.
-  jobTitleName      String?
+  jobTitleName String?
 
   // --- Payroll linkage ---
-  payGroupId        String?
-  payGroup          PayGroup?      @relation(fields: [payGroupId], references: [id], onDelete: SetNull)
+  payGroupId String?
+  payGroup   PayGroup? @relation(fields: [payGroupId], references: [id], onDelete: SetNull)
 
   // --- Exit ---
-  exitInitiatedAt   DateTime?
-  lastWorkingDay    DateTime?
-  isRehireEligible  Boolean?
+  exitInitiatedAt  DateTime?
+  lastWorkingDay   DateTime?
+  isRehireEligible Boolean?
 
   /// Profile completion percentage, recomputed on save.
-  profileCompletion Int            @default(0)
+  profileCompletion   Int     @default(0)
   /// "Introduce yourself": the employee's own words, shown on their profile.
-  aboutMe           String?
+  aboutMe             String?
+  /// Profile ABOUT → Summary: a short professional summary (Keka parity, 15-engage).
+  professionalSummary String?
 
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // --- Relations ---
   addresses         EmployeeAddress[]
@@ -151,46 +153,46 @@ model Employee {
   exitRecord        ExitRecord?
 
   // --- Workplace (07) ---
-  announcementReads AnnouncementRead[]
-  awards            EmployeeAward[]
-  praiseGiven       Praise[]              @relation("PraiseGiven")
-  praiseReceived    Praise[]              @relation("PraiseReceived")
-  feedbackGiven     Feedback[]            @relation("FeedbackGiven")
-  feedbackReceived  Feedback[]            @relation("FeedbackReceived")
-  assetAssignments  AssetAssignment[]
-  assetRequests     AssetRequest[]
-  documents         EmployeeDocument[]
-  orgDocumentAcks   OrgDocumentAck[]
+  announcementReads  AnnouncementRead[]
+  awards             EmployeeAward[]
+  praiseGiven        Praise[]            @relation("PraiseGiven")
+  praiseReceived     Praise[]            @relation("PraiseReceived")
+  feedbackGiven      Feedback[]          @relation("FeedbackGiven")
+  feedbackReceived   Feedback[]          @relation("FeedbackReceived")
+  assetAssignments   AssetAssignment[]
+  assetRequests      AssetRequest[]
+  documents          EmployeeDocument[]
+  orgDocumentAcks    OrgDocumentAck[]
   generatedDocuments GeneratedDocument[]
-  contracts         EmployeeContract[]
-  hrActivities      HrActivity[]
+  contracts          EmployeeContract[]
+  hrActivities       HrActivity[]
   trainingEnrolments TrainingEnrolment[]
-  meetingAttendance MeetingAttendee[]
+  meetingAttendance  MeetingAttendee[]
   meetingActionItems MeetingActionItem[]
 
   // --- Recruitment (08) ---
-  backfillRequisitions Requisition[]      @relation("BackfillFor")
-  referredCandidates   Candidate[]        @relation("CandidateReferral")
+  backfillRequisitions Requisition[]       @relation("BackfillFor")
+  referredCandidates   Candidate[]         @relation("CandidateReferral")
   interviewPanels      InterviewPanelist[]
   bgvChecks            BgvCheck[]
 
   // --- Performance (09) ---
-  goals             Goal[]
-  reviewsAboutMe    EmployeeReview[]      @relation("ReviewSubject")
-  reviewsIWrote     ReviewResponse[]      @relation("ReviewAuthor")
-  improvementPlans  ImprovementPlan[]
-  employeeSkills    EmployeeSkill[]
+  goals            Goal[]
+  reviewsAboutMe   EmployeeReview[]  @relation("ReviewSubject")
+  reviewsIWrote    ReviewResponse[]  @relation("ReviewAuthor")
+  improvementPlans ImprovementPlan[]
+  employeeSkills   EmployeeSkill[]
 
   // --- Projects (10) ---
-  managedProjects   Project[]             @relation("ProjectManager")
-  assignedTasks     Task[]                @relation("TaskAssignee")
+  managedProjects    Project[]            @relation("ProjectManager")
+  assignedTasks      Task[]               @relation("TaskAssignee")
   projectAllocations ResourceAllocation[] @relation("ProjectAllocation")
-  timesheets        Timesheet[]           @relation("EmployeeTimesheet")
+  timesheets         Timesheet[]          @relation("EmployeeTimesheet")
 
   // --- Accounting, expenses, travel (11) ---
-  expenseClaims     ExpenseClaim[]
-  cashAdvances      CashAdvance[]
-  travelRequests    TravelRequest[]
+  expenseClaims  ExpenseClaim[]
+  cashAdvances   CashAdvance[]
+  travelRequests TravelRequest[]
 
   // --- Time operations (12) ---
   timePolicies       EmployeeTimePolicy[]
@@ -199,15 +201,43 @@ model Employee {
   journeys           Journey[]
   helpdeskTickets    HelpdeskTicket[]
 
+  // --- Engagement, learning, careers (14-engage-learn) and probation (15) ---
   surveyParticipations SurveyParticipant[]
-  surveyResponses    SurveyResponse[]
-  courseEnrolments   CourseEnrolment[]
-  careerAspiration   CareerAspiration?
-  compOffRequests    CompOffRequest[]
-  leaveEncashments   LeaveEncashmentRequest[]
+  surveyResponses      SurveyResponse[]
+  courseEnrolments     CourseEnrolment[]
+  careerAspiration     CareerAspiration?
 
-  probation          EmployeeProbation?
-  probationReviews   ProbationEvaluation[] @relation("ProbationEvaluator")
+  probation        EmployeeProbation?
+  probationReviews ProbationEvaluation[] @relation("ProbationEvaluator")
+
+  // --- Keka parity: Home, Wall and profile (15-engage) ---
+  wallPosts      WallPost[]      @relation("WallPostAuthor")
+  wishesReceived WallPost[]      @relation("WallWishFor")
+  wallComments   WallComment[]   @relation("WallCommentAuthor")
+  wallLikes      WallLike[]
+  pollVotes      WallPollVote[]
+  profileAnswers ProfileAnswer[]
+
+  // --- Keka parity: Hire (18-hire-ops) ---
+  requisitionBackfills RequisitionBackfill[] @relation("RequisitionBackfillFor")
+
+  // --- Keka parity: 1:1s and Learn (19-perform-learn) ---
+  talkingPoints       MeetingTalkingPoint[] @relation("TalkingPointAuthor")
+  meetingPrivateNotes MeetingPrivateNote[]  @relation("PrivateNoteAuthor")
+  authoredCourses     TrainingProgram[]     @relation("CourseAuthor")
+
+  // --- Keka parity: PSA (20-psa-ops) ---
+  ownedOpportunities Opportunity[]    @relation("OpportunityOwner")
+  resourceProfile    ResourceProfile? @relation("ResourceProfile")
+
+  // --- Keka parity: Time requests (21-time-requests) ---
+  shiftRequests           ShiftRequest[]
+  overtimeRequests        OvertimeRequest[]
+  compOffRequests         CompOffRequest[]
+  leaveEncashmentRequests LeaveEncashmentRequest[]
+
+  // --- Keka parity: Analytics (22-analytics) ---
+  attritionRiskScores AttritionRiskScore[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
@@ -225,9 +255,9 @@ enum AddressType {
 }
 
 model EmployeeAddress {
-  id          String      @id @default(cuid())
-  employeeId  String
-  employee    Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   type        AddressType @default(CURRENT)
   line1       String
@@ -244,33 +274,33 @@ model EmployeeAddress {
 }
 
 model EmployeeExperience {
-  id           String    @id @default(cuid())
-  employeeId   String
-  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  companyName  String
-  jobTitle     String?
-  fromDate     DateTime?
-  toDate       DateTime?
-  description  String?
+  companyName String
+  jobTitle    String?
+  fromDate    DateTime?
+  toDate      DateTime?
+  description String?
   /// Previous-employment income is imported for TDS continuity.
-  isCurrentFY  Boolean   @default(false)
+  isCurrentFY Boolean   @default(false)
 
   @@index([employeeId])
   @@map("employee_experiences")
 }
 
 model EmployeeEducation {
-  id            String    @id @default(cuid())
-  employeeId    String
-  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  institution   String
-  degree        String?
+  institution    String
+  degree         String?
   specialization String?
-  fromYear      Int?
-  toYear        Int?
-  grade         String?
+  fromYear       Int?
+  toYear         Int?
+  grade          String?
 
   @@index([employeeId])
   @@map("employee_educations")
@@ -288,9 +318,9 @@ enum IdentityDocType {
 
 /// PAN doubles as the payslip password (uppercase).
 model EmployeeIdentity {
-  id         String          @id @default(cuid())
+  id         String   @id @default(cuid())
   employeeId String
-  employee   Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   type       IdentityDocType
   number     String
@@ -349,50 +379,50 @@ enum JobChangeReason {
 /// module — position changes are made here with an effective date and the
 /// full change history is retained.
 model EmployeeJobRecord {
-  id               String          @id @default(cuid())
-  employeeId       String
-  employee         Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  effectiveFrom    DateTime
-  effectiveTo      DateTime?
-  reason           JobChangeReason @default(NEW_HIRE)
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  reason        JobChangeReason @default(NEW_HIRE)
 
-  jobTitleId       String?
-  jobTitle         JobTitle?       @relation(fields: [jobTitleId], references: [id], onDelete: SetNull)
-  departmentId     String?
-  businessUnitId   String?
-  locationId       String?
-  legalEntityId    String?
-  bandId           String?
-  payGradeId       String?
-  workerTypeId     String?
+  jobTitleId         String?
+  jobTitle           JobTitle? @relation(fields: [jobTitleId], references: [id], onDelete: SetNull)
+  departmentId       String?
+  businessUnitId     String?
+  locationId         String?
+  legalEntityId      String?
+  bandId             String?
+  payGradeId         String?
+  workerTypeId       String?
   reportingManagerId String?
 
-  note             String?
-  createdAt        DateTime        @default(now())
-  createdBy        String?
+  note      String?
+  createdAt DateTime @default(now())
+  createdBy String?
 
   @@index([employeeId, effectiveFrom])
   @@map("employee_job_records")
 }
 
 model EmployeeBankAccount {
-  id            String   @id @default(cuid())
-  employeeId    String
-  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   bankName      String
   accountNumber String
   ifsc          String
   branch        String?
   accountHolder String?
-  isPrimary     Boolean  @default(true)
+  isPrimary     Boolean   @default(true)
   /// Bank-account verification result.
-  isVerified    Boolean  @default(false)
+  isVerified    Boolean   @default(false)
   verifiedAt    DateTime?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([employeeId])
   @@map("employee_bank_accounts")

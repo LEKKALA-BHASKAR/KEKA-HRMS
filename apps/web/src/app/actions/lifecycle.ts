@@ -5,8 +5,9 @@ import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import {
   initiateExit, decideExit, withdrawExit, draftSettlement, finalizeSettlement,
   startJourney, setJourneyTask, runAutoChecks,
-  raiseTicket, commentOnTicket, setTicketStatus,
+  updateTicket,
 } from "@keka/services";
+import * as hd from "./helpdesk";
 import { foreignReference } from "@/lib/ownership";
 import { requireAuth, requireViewer, can, type Viewer } from "@/lib/context";
 import {
@@ -267,107 +268,67 @@ export async function deleteTemplateTaskAction(_prev: ActionState, formData: For
 }
 
 // ---------------------------------------------------------------------------
-//  HELPDESK
+//  HELPDESK — the actions live in ./helpdesk; these keep the older entry
+//  points (inbox reply form, scripts) working with Keka's statuses.
 // ---------------------------------------------------------------------------
 
-const ticketSchema = z.object({
-  categoryId: zId(),
-  subject: zName(160),
-  description: zName(5000),
-  priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).default("MEDIUM"),
-});
-
-export async function raiseTicketAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const viewer = await requireViewer();
-  if (!viewer.employee) return { ok: false, message: "No employee record linked to this login." };
-  const parsed = parseForm(ticketSchema, formData);
-  if (parsed.state) return parsed.state;
-  const res = await raiseTicket({ employeeId: viewer.employee.id, ...parsed.data });
-  if (!res.ok) return { ok: false, message: res.message, errors: { categoryId: res.message } };
-  return done(["/helpdesk"], res.message);
+export async function raiseTicketAction(prev: ActionState, formData: FormData): Promise<ActionState> {
+  return hd.raiseTicketAction(prev, formData);
 }
 
-async function ticketAccess(viewer: Viewer, ticketId: string) {
+export async function replyTicketAction(prev: ActionState, formData: FormData): Promise<ActionState> {
+  return hd.replyTicketAction(prev, formData);
+}
+
+export async function rateTicketAction(prev: ActionState, formData: FormData): Promise<ActionState> {
+  return hd.rateTicketAction(prev, formData);
+}
+
+export async function saveCategoryAction(prev: ActionState, formData: FormData): Promise<ActionState> {
+  return hd.saveCategoryAction(prev, formData);
+}
+
+/**
+ * The old status control. Agents move a ticket like the Update panel does
+ * (RESOLVED closes, WAITING_ON_EMPLOYEE holds). The person who raised it
+ * may only close their own open ticket or reopen a closed one.
+ */
+export async function ticketStatusAction(prev: ActionState, formData: FormData): Promise<ActionState> {
+  const viewer = await requireViewer();
+  const ticketId = String(formData.get("ticketId") ?? "");
+  const raw = String(formData.get("status") ?? "");
+  const status = raw === "RESOLVED" ? "CLOSED" : raw === "WAITING_ON_EMPLOYEE" ? "ON_HOLD" : raw;
   const t = await prisma.helpdeskTicket.findFirst({ where: { id: ticketId, tenantId: viewer.tenantId } });
-  if (!t) return null;
+  if (!t) return { ok: false, message: "Ticket not found." };
   const own = t.employeeId === viewer.employee?.id;
-  const agent = can(viewer, P.HELPDESK_MANAGE);
-  return { ticket: t, own, agent };
-}
-
-export async function replyTicketAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const viewer = await requireViewer();
-  const ticketId = String(formData.get("ticketId"));
-  const body = String(formData.get("body") ?? "").trim();
-  if (!body) return { ok: false, message: "Write a reply first.", errors: { body: "Required" } };
-  if (body.length > 5000) return { ok: false, message: "Keep replies under 5,000 characters.", errors: { body: "Too long" } };
-  const a = await ticketAccess(viewer, ticketId);
-  if (!a || (!a.own && !a.agent)) return { ok: false, message: "Ticket not found." };
-  // Agents replying to their own ticket do so as the employee.
-  const asAgent = a.agent && !a.own;
-  const res = await commentOnTicket({
-    ticketId, body, asAgent, isInternal: asAgent && formData.get("isInternal") === "on",
-    authorUserId: viewer.user.id, authorLabel: viewer.employee?.displayName ?? viewer.user.email,
-  });
-  if (!res.ok) return { ok: false, message: res.message };
-  return done([`/helpdesk/${ticketId}`, "/helpdesk"], res.message);
-}
-
-export async function ticketStatusAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const viewer = await requireViewer();
-  const ticketId = String(formData.get("ticketId"));
-  const status = String(formData.get("status")) as "OPEN" | "IN_PROGRESS" | "WAITING_ON_EMPLOYEE" | "RESOLVED" | "CLOSED";
-  const a = await ticketAccess(viewer, ticketId);
-  if (!a || (!a.own && !a.agent)) return { ok: false, message: "Ticket not found." };
-  // The employee can only close a resolved ticket or reopen it.
-  if (!a.agent && !(["CLOSED", "IN_PROGRESS"].includes(status) && a.ticket.status === "RESOLVED")) {
-    return { ok: false, message: "Only the helpdesk team can change this ticket's status." };
-  }
-  const assigneeRaw = formData.get("assigneeUserId");
-  let assignee: string | null | undefined = undefined;
-  if (a.agent && assigneeRaw !== null) {
-    assignee = String(assigneeRaw) || null;
-    if (assignee) {
-      const ok = await prisma.user.count({ where: { id: assignee, tenantId: viewer.tenantId } });
-      if (!ok) return { ok: false, message: "That agent does not exist." };
+  if (!own) {
+    const next = new FormData();
+    next.set("ticketId", ticketId);
+    next.set("status", status);
+    const assignee = formData.get("assigneeUserId");
+    if (assignee !== null) next.set("assigneeUserId", String(assignee));
+    const reason = formData.get("closingReasonId");
+    if (reason) next.set("closingReasonId", String(reason));
+    else if (status === "CLOSED") {
+      const resolved = await prisma.helpdeskClosingReason.findFirst({ where: { tenantId: viewer.tenantId, isActive: true, name: "Resolved" } });
+      if (resolved) next.set("closingReasonId", resolved.id);
     }
+    return hd.updateTicketAction(prev, next);
   }
-  const res = await setTicketStatus({ ticketId, status, assigneeUserId: assignee });
-  if (!res.ok) return { ok: false, message: res.message };
-  return done([`/helpdesk/${ticketId}`, "/helpdesk"], res.message);
-}
-
-export async function rateTicketAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const viewer = await requireViewer();
-  const ticketId = String(formData.get("ticketId"));
-  const rating = Number(formData.get("rating"));
-  if (!(rating >= 1 && rating <= 5)) return { ok: false, message: "Rate from 1 to 5." };
-  const u = await prisma.helpdeskTicket.updateMany({
-    where: { id: ticketId, tenantId: viewer.tenantId, employeeId: viewer.employee?.id ?? "__none__", status: { in: ["RESOLVED", "CLOSED"] } },
-    data: { satisfaction: rating },
-  });
-  return u.count ? done([`/helpdesk/${ticketId}`], "Thanks for the feedback.") : { ok: false, message: "You can rate your own resolved tickets." };
-}
-
-const categorySchema = z.object({
-  id: zOptionalId(), name: zName(80), description: zOptional(200),
-  slaHours: zRequiredNumber({ min: 1, max: 720 }), defaultAssigneeUserId: zOptionalId(), isActive: zBool(),
-});
-
-export async function saveCategoryAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
-  const viewer = await requireAuth(P.HELPDESK_SETTINGS);
-  const parsed = parseForm(categorySchema, formData);
-  if (parsed.state) return parsed.state;
-  const { id, ...d } = parsed.data;
-  const foreign = await foreignReference(viewer.tenantId, { user: d.defaultAssigneeUserId });
-  if (foreign) return { ok: false, message: foreign };
-  try {
-    if (id) await prisma.helpdeskCategory.updateMany({ where: { id, tenantId: viewer.tenantId }, data: d });
-    else await prisma.helpdeskCategory.create({ data: { ...d, tenantId: viewer.tenantId, isActive: true } });
-    return done(["/helpdesk"], `Saved ${d.name}.`);
-  } catch (err) {
-    return toErrorState(err);
+  const closed = t.status === "CLOSED" || t.status === "RESOLVED";
+  if (closed && (status === "OPEN" || status === "IN_PROGRESS")) {
+    const next = new FormData();
+    next.set("ticketId", ticketId);
+    return hd.reopenTicketAction(prev, next);
   }
+  if (!closed && status === "CLOSED") {
+    const res = await updateTicket({ ticketId, status: "CLOSED", byUserId: viewer.user.id, byLabel: viewer.employee?.displayName ?? viewer.user.email });
+    if (!res.ok) return res;
+    await writeAudit(viewer, { module: "HELPDESK", action: "UPDATE", entityType: "HelpdeskTicket", entityId: ticketId, summary: `Closed their own ticket #${t.number}` });
+    return done(["/helpdesk", `/me/helpdesk/${ticketId}`], "Ticket closed.");
+  }
+  if (closed && status === "CLOSED") return { ok: true, message: "The ticket is already closed." };
+  return { ok: false, message: "Only the helpdesk team can change this ticket's status." };
 }
 
 // ---------------------------------------------------------------------------

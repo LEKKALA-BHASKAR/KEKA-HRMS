@@ -90,7 +90,8 @@ export default async function FinancesSummaryPage() {
   const ids = new Map(emp.identityDocs.map((d) => [d.type as string, d]));
   const fileCount = (t: IdType) =>
     (ids.get(t)?.fileUrl ? 1 : 0) + docs.filter((d) => ID_DOC_MATCH[t].test(`${d.name} ${d.documentType?.name ?? ""}`)).length;
-  const parent = [...emp.dependents, ...emp.emergencyContacts].find((p) => /father|mother|parent/i.test(p.relationship))?.name ?? null;
+  const kin = [...emp.dependents, ...emp.emergencyContacts];
+  const parent = kin.find((p) => /father|mother|parent/i.test(p.relationship))?.name ?? kin.find((p) => /spouse|wife|husband/i.test(p.relationship))?.name ?? null;
   const addr = emp.addresses.find((a) => a.type === "PERMANENT") ?? emp.addresses.find((a) => a.type === "CURRENT") ?? null;
   const address = addr ? [addr.line1, addr.line2, addr.city, addr.state, addr.postalCode].filter(Boolean).join(", ") : null;
   const gender = emp.gender ? emp.gender.charAt(0) + emp.gender.slice(1).toLowerCase().replace(/_/g, " ") : null;
@@ -156,18 +157,20 @@ export default async function FinancesSummaryPage() {
         <div className={s.stack}>
           <Panel title="Payment Information" className={s.ruled}>
             {bank ? (
-              <div className={s.fields}>
-                <div className={s.span2}><Field label="Payment Mode">Bank Transfer</Field></div>
-                <Field label="Bank Name">{bank.bankName}</Field>
-                <Field label="Account Number"><Masked value={bank.accountNumber} keep={4} /></Field>
-                <Field label="IFSC Code"><span className="mono">{bank.ifsc}</span></Field>
-                <Field label="Name on the Account">{(bank.accountHolder ?? fullName).toUpperCase()}</Field>
-                <Field label="Branch">{bank.branch ?? "N/A"}</Field>
-                <Field label="Verification">{bank.isVerified ? <Chip kind="verified">Verified</Chip> : <Chip kind="on-duty">Not verified</Chip>}</Field>
-              </div>
+              <>
+                <Field label="Salary Payment Mode">Bank Transfer</Field>
+                <h3 className={s.bankHead}>Bank Information {bank.isVerified ? <Chip kind="verified">Verified</Chip> : <Chip kind="on-duty">Not verified</Chip>}</h3>
+                <div className={s.fields3}>
+                  <Field label="Bank Name">{bank.bankName}</Field>
+                  <Field label="Account Number"><Masked value={bank.accountNumber} keep={4} /></Field>
+                  <Field label="IFSC Code"><span className="mono">{bank.ifsc}</span></Field>
+                  <Field label="Name on the Account">{clip((bank.accountHolder ?? fullName).toUpperCase())}</Field>
+                  <Field label="Branch">{bank.branch ?? "N/A"}</Field>
+                </div>
+              </>
             ) : (
               <>
-                <div className={s.fields}><Field label="Payment Mode">{NA}</Field></div>
+                <div className={s.fields}><Field label="Salary Payment Mode">{NA}</Field></div>
                 <div style={{ marginTop: 18 }}><Notice>No bank account is on record. Ask your HR team to add one so your salary can be paid by bank transfer.</Notice></div>
               </>
             )}
@@ -176,14 +179,14 @@ export default async function FinancesSummaryPage() {
           <Panel title="Statutory Information" className={s.ruled}>
             <div className={s.group}>
               <h3 className={s.subhead}>PF Account Information</h3>
-              <div className={s.fields}>
-                <div className={s.span2}><Field label="PF Status">{pfOn ? "Enabled" : "Not Enabled"}</Field></div>
+              <div className={s.fields3}>
+                <div className={s.spanAll}><Field label="PF Status">{pfOn ? "Enabled" : "Not Enabled"}</Field></div>
                 {pfOn ? (
                   <>
                     <Field label="PF Number">{profile?.pfAccountNumber ? <span className={s.ellipsis} title={profile.pfAccountNumber}>{profile.pfAccountNumber}</span> : NA}</Field>
                     <Field label="Universal Account Number">{profile?.uan ?? NA}</Field>
                     <Field label="PF Join Date">{profile?.pfJoinDate ? formatDate(profile.pfJoinDate) : formatDate(emp.dateOfJoining)}</Field>
-                    <Field label="Name">{fullName.toUpperCase()}</Field>
+                    <div className={s.spanAll}><Field label="Name of the Account">{fullName.toUpperCase()}</Field></div>
                   </>
                 ) : null}
               </div>
@@ -223,7 +226,7 @@ export default async function FinancesSummaryPage() {
                 <Field label="Permanent Account Number (PAN)"><Masked value={ids.get("PAN")!.number.toUpperCase()} keep={4} /></Field>
                 <Field label="Name">{clip((ids.get("PAN")!.nameOnDoc ?? fullName).toUpperCase())}</Field>
                 <Field label="Date of Birth">{emp.dateOfBirth ? formatDate(emp.dateOfBirth) : NA}</Field>
-                <Field label="Parent's Name">{parent ? clip(parent.toUpperCase()) : NA}</Field>
+                <Field label="Parent's/Spouse's Name">{parent ? clip(parent.toUpperCase()) : NA}</Field>
               </div>
             </div>
           ) : (

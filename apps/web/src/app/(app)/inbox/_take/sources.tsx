@@ -11,8 +11,6 @@ import {
   IconCalendar, IconClock, IconTimer, IconReceipt, IconWallet, IconDollarCircle, IconLogout,
   IconUserPlus, IconFile, IconHeadset, IconLedger, IconCheck,
 } from "@/components/icons";
-import { DecisionForm } from "../../_time/leave-forms";
-import { TimeOffDecision } from "../../_time/timeoff-decision";
 import { LoanDecision } from "../../payroll/_forms/loans";
 import { TimesheetDecision } from "../../projects/forms";
 import { ClaimDecision } from "../../expenses/forms";
@@ -22,6 +20,7 @@ import { DetailPane, Facts, Message, PersonStrip, type ActivityEntry, type ListI
 import { formatInstantDate, formatTime, humanise } from "../_ui/format";
 import { resolvePeople, who, type PersonRef } from "../_ui/people";
 import { verifyDocumentFromInbox } from "./actions";
+import type { TakeSource } from "./types";
 import s from "../inbox.module.css";
 
 /**
@@ -36,16 +35,7 @@ import s from "../inbox.module.css";
 const P = PERMISSIONS;
 const DAY = 86_400_000;
 
-export interface TakeSource {
-  key: string;
-  label: string;
-  icon: ReactNode;
-  /** Listed even with nothing waiting, because the viewer holds the right. */
-  always: boolean;
-  count: () => Promise<number>;
-  list: () => Promise<ListItem[]>;
-  detail: (id: string) => Promise<ReactNode | null>;
-}
+export type { TakeSource } from "./types";
 
 const EMP = { id: true, displayName: true, firstName: true, lastName: true, photoUrl: true } as const;
 const EMP_CARD = { ...EMP, employeeNumber: true, jobTitleName: true, department: { select: { name: true } } } as const;
@@ -64,165 +54,12 @@ const initiated = (d: Date) => `Initiated on ${formatInstantDate(d)}`;
 const PENDING = { label: "Pending", tone: "pending" as const };
 const PORTION: Record<string, string> = { FULL_DAY: "Full day", FIRST_HALF: "First half", SECOND_HALF: "Second half", QUARTER: "Quarter day" };
 
-export async function takeActionSources(viewer: Viewer): Promise<TakeSource[]> {
+/** The non-time categories; time comes from ./time. See ./registry for the order. */
+export async function coreSources(viewer: Viewer): Promise<TakeSource[]> {
   const tenantId = viewer.tenantId;
   const me = viewer.employee?.id ?? null;
   const notSelf = me ? { NOT: { employeeId: me } } : {};
   const sources: TakeSource[] = [];
-
-  // ---- Leave ---------------------------------------------------------------
-  if (can(viewer, P.LEAVE_APPROVE)) {
-    const scope = await scopedEmployeeIds(viewer, P.LEAVE_APPROVE);
-    const where = { tenantId, status: "PENDING", ...inScope(scope), ...notSelf } as Prisma.LeaveRequestWhereInput;
-    const employeesOf = async (ids: string[]) => new Map((await prisma.employee.findMany({
-      where: { tenantId, id: { in: ids } }, select: EMP_CARD,
-    })).map((e) => [e.id, e]));
-    sources.push({
-      key: "leave", label: "Leave", icon: <IconCalendar />, always: true,
-      count: () => prisma.leaveRequest.count({ where }),
-      list: async () => {
-        const rows = await prisma.leaveRequest.findMany({ where, include: { leaveType: { select: { name: true } } }, orderBy: { createdAt: "desc" }, take: 200 });
-        const emps = await employeesOf([...new Set(rows.map((r) => r.employeeId))]);
-        return rows.flatMap((r) => {
-          const e = emps.get(r.employeeId);
-          return e ? [{ id: r.id, person: person(e), title: `${r.leaveType.name} · ${days(r.totalDays)} · ${range(r.fromDate, r.toDate)}`, at: r.createdAt }] : [];
-        });
-      },
-      detail: async (id) => {
-        const r = await prisma.leaveRequest.findFirst({ where: { ...where, id }, include: { leaveType: { select: { name: true, isPaid: true } } } });
-        if (!r) return null;
-        const [e, balance] = await Promise.all([
-          prisma.employee.findFirst({ where: { tenantId, id: r.employeeId }, select: EMP_CARD }),
-          prisma.leaveBalance.findFirst({ where: { employeeId: r.employeeId, leaveTypeId: r.leaveTypeId }, orderBy: { yearStart: "desc" }, select: { available: true } }),
-        ]);
-        if (!e) return null;
-        const p = person(e);
-        const single = r.fromDate.getTime() === r.toDate.getTime();
-        return (
-          <DetailPane title={`${r.leaveType.name} request`} sub={initiated(r.createdAt)} status={PENDING}
-            actions={<DecisionForm requestId={r.id} kind="leave" />}
-            activity={[{ who: p, text: `Applied for ${days(r.totalDays)} of ${r.leaveType.name}`, at: r.createdAt }]}>
-            <PersonStrip person={p} meta={cardMeta(e)} />
-            <Facts items={[
-              ["From", `${formatDate(r.fromDate)} · ${PORTION[r.fromPortion]}`],
-              !single && ["To", `${formatDate(r.toDate)} · ${PORTION[r.toPortion]}`],
-              ["Days", Number(r.sandwichDays) > 0 ? `${days(r.totalDays)} (incl. ${days(r.sandwichDays)} sandwich)` : days(r.totalDays)],
-              ["Pay impact", r.leaveType.isPaid ? "Paid" : <span className="neg strong">Creates loss of pay</span>],
-              balance ? ["Balance available", days(balance.available)] : null,
-            ]} />
-            {r.reason ? <Message label="Reason">{r.reason}</Message> : null}
-          </DetailPane>
-        );
-      },
-    });
-  }
-
-  // ---- Comp-off claims -----------------------------------------------------
-  if (can(viewer, P.LEAVE_APPROVE)) {
-    const scope = await scopedEmployeeIds(viewer, P.LEAVE_APPROVE);
-    const where = { tenantId, status: "PENDING", ...inScope(scope), ...notSelf } as Prisma.CompOffRequestWhereInput;
-    sources.push({
-      key: "compoff", label: "Comp-off", icon: <IconCalendar />, always: false,
-      count: () => prisma.compOffRequest.count({ where }),
-      list: async () => (await prisma.compOffRequest.findMany({ where, include: { employee: { select: EMP } }, orderBy: { createdAt: "desc" }, take: 200 }))
-        .map((r) => ({ id: r.id, person: person(r.employee), title: `${days(r.days)} comp-off · worked ${formatDate(r.workedOn)}`, at: r.createdAt })),
-      detail: async (id) => {
-        const r = await prisma.compOffRequest.findFirst({ where: { ...where, id }, include: { employee: { select: EMP_CARD } } });
-        if (!r) return null;
-        const day = await prisma.attendanceRecord.findFirst({ where: { tenantId, employeeId: r.employeeId, date: r.workedOn }, select: { firstIn: true, lastOut: true, effectiveHours: true } });
-        const p = person(r.employee);
-        return (
-          <DetailPane title="Comp-off credit request" sub={initiated(r.createdAt)} status={PENDING}
-            actions={<TimeOffDecision requestId={r.id} kind="compoff" />}
-            activity={[{ who: p, text: `Claimed ${days(r.days)} for working on ${formatDate(r.workedOn)}`, at: r.createdAt }]}>
-            <PersonStrip person={p} meta={cardMeta(r.employee)} />
-            <Facts items={[
-              ["Worked on", `${formatDate(r.workedOn)} · ${r.dayType}`],
-              ["Credit", days(r.days)],
-              day ? ["Hours recorded", `${Number(day.effectiveHours).toFixed(2)} h${day.firstIn ? ` · ${formatTime(day.firstIn)}–${day.lastOut ? formatTime(day.lastOut) : "?"}` : ""}`] : null,
-              r.expiresOn ? ["Use by", formatDate(r.expiresOn)] : null,
-            ]} />
-            <Message label="Reason">{r.reason}</Message>
-          </DetailPane>
-        );
-      },
-    });
-  }
-
-  // ---- Leave encashment ----------------------------------------------------
-  if (can(viewer, P.LEAVE_MANAGE)) {
-    const where = { tenantId, status: "PENDING", ...notSelf, employee: scopedEmployeeWhere(viewer, P.LEAVE_MANAGE) } as Prisma.LeaveEncashmentRequestWhereInput;
-    sources.push({
-      key: "encash", label: "Leave encashment", icon: <IconWallet />, always: false,
-      count: () => prisma.leaveEncashmentRequest.count({ where }),
-      list: async () => {
-        const rows = await prisma.leaveEncashmentRequest.findMany({ where, include: { employee: { select: EMP } }, orderBy: { createdAt: "desc" }, take: 200 });
-        return rows.map((r) => ({ id: r.id, person: person(r.employee), title: `${days(r.days)} · ${formatINR(Number(r.amount))}`, at: r.createdAt }));
-      },
-      detail: async (id) => {
-        const r = await prisma.leaveEncashmentRequest.findFirst({ where: { ...where, id }, include: { employee: { select: EMP_CARD } } });
-        if (!r) return null;
-        const [type, balance] = await Promise.all([
-          prisma.leaveType.findUnique({ where: { id: r.leaveTypeId }, select: { name: true } }),
-          prisma.leaveBalance.findFirst({ where: { employeeId: r.employeeId, leaveTypeId: r.leaveTypeId }, orderBy: { yearStart: "desc" }, select: { available: true } }),
-        ]);
-        const p = person(r.employee);
-        return (
-          <DetailPane title={`${type?.name ?? "Leave"} encashment`} sub={initiated(r.createdAt)} status={PENDING}
-            actions={<TimeOffDecision requestId={r.id} kind="encash" />}
-            activity={[{ who: p, text: `Asked to encash ${days(r.days)}`, at: r.createdAt }]}>
-            <PersonStrip person={p} meta={cardMeta(r.employee)} />
-            <Facts items={[
-              ["Days", days(r.days)],
-              ["Amount", <span key="a" className="strong">{formatINR(Number(r.amount))}</span>],
-              ["Basis", r.basis],
-              balance ? ["Balance available", days(balance.available)] : null,
-              ["On approval", "Days leave the balance and the amount is added to the open payroll run as a taxable payment"],
-            ]} />
-            {r.reason ? <Message label="Reason">{r.reason}</Message> : null}
-          </DetailPane>
-        );
-      },
-    });
-  }
-
-  // ---- Attendance ----------------------------------------------------------
-  if (can(viewer, P.ATTENDANCE_APPROVE)) {
-    const where = {
-      tenantId, status: "PENDING", ...notSelf,
-      employee: scopedEmployeeWhere(viewer, P.ATTENDANCE_APPROVE),
-    } as Prisma.AttendanceRequestWhereInput;
-    sources.push({
-      key: "attendance", label: "Attendance", icon: <IconClock />, always: true,
-      count: () => prisma.attendanceRequest.count({ where }),
-      list: async () => (await prisma.attendanceRequest.findMany({ where, include: { employee: { select: EMP } }, orderBy: { createdAt: "desc" }, take: 200 }))
-        .map((r) => ({ id: r.id, person: person(r.employee), title: `${humanise(r.type)} · ${range(r.fromDate, r.toDate)}`, at: r.createdAt })),
-      detail: async (id) => {
-        const r = await prisma.attendanceRequest.findFirst({ where: { ...where, id }, include: { employee: { select: EMP_CARD } } });
-        if (!r) return null;
-        const day = r.fromDate.getTime() === r.toDate.getTime()
-          ? await prisma.attendanceRecord.findFirst({ where: { tenantId, employeeId: r.employeeId, date: r.fromDate }, select: { status: true, firstIn: true, lastOut: true } })
-          : null;
-        const p = person(r.employee);
-        return (
-          <DetailPane title={`${humanise(r.type)} request`} sub={initiated(r.createdAt)} status={PENDING}
-            actions={<DecisionForm requestId={r.id} kind="attendance" />}
-            activity={[{ who: p, text: `Requested ${humanise(r.type).toLowerCase()} for ${range(r.fromDate, r.toDate)}`, at: r.createdAt }]}>
-            <PersonStrip person={p} meta={cardMeta(r.employee)} />
-            <Facts items={[
-              ["Request", humanise(r.type)],
-              ["Dates", range(r.fromDate, r.toDate)],
-              r.proposedIn ? ["Proposed in", formatTime(r.proposedIn)] : null,
-              r.proposedOut ? ["Proposed out", formatTime(r.proposedOut)] : null,
-              r.partialMinutes ? ["Time away", `${r.partialMinutes} min`] : null,
-              day ? ["Recorded that day", [humanise(day.status), day.firstIn ? `in ${formatTime(day.firstIn)}` : null, day.lastOut ? `out ${formatTime(day.lastOut)}` : null].filter(Boolean).join(" · ")] : null,
-            ]} />
-            <Message label="Reason">{r.reason}</Message>
-          </DetailPane>
-        );
-      },
-    });
-  }
 
   // ---- Timesheets ----------------------------------------------------------
   if (me) {

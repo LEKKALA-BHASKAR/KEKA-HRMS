@@ -488,8 +488,9 @@ table.data tr.subtotal td {
 }
 .step.active .step-num { background: var(--brand-600); color: #fff; border-color: var(--brand-600); }
 .step.done .step-num { background: var(--success); color: #fff; border-color: var(--success); }
-.step-label { font-size: 12.5px; font-weight: 600; line-height: 1.3; }
-.step-meta { font-size: 11px; color: var(--text-subtle); margin-top: 2px; }
+.step > span:last-child { min-width: 0; }
+.step-label { display: block; font-size: 12.5px; font-weight: 600; line-height: 1.3; }
+.step-meta { display: block; font-size: 11px; line-height: 1.35; color: var(--text-subtle); margin-top: 2px; overflow-wrap: anywhere; }
 
 /* --- Sign-in ----------------------------------------------------------- */
 
@@ -696,7 +697,7 @@ table.data tr.subtotal td {
   position: relative; display: inline-grid; place-items: center;
   width: 40px; height: 40px; border-radius: 50%; border: 0; background: transparent; color: #fff; cursor: pointer;
 }
-.k-topbar-btn:hover { background: rgba(255, 255, 255, .12); }
+.k-topbar-btn:hover, .k-topbar-btn.active { background: rgba(255, 255, 255, .12); }
 .k-bell-count {
   position: absolute; top: 2px; right: 0; min-width: 18px; height: 18px; padding: 0 5px;
   border-radius: 9px; background: #ff5a5f; color: #fff; font-size: 10.5px; font-weight: 700; line-height: 18px; text-align: center;
@@ -762,7 +763,6 @@ table.data tr.subtotal td {
   position: absolute; top: -6px; left: 16px; min-width: 17px; height: 17px; padding: 0 4px;
   border-radius: 9px; background: #ff5a5f; color: #fff; font-size: 10px; font-weight: 700; line-height: 17px;
 }
-.k-rail-divider { height: 1px; margin: 8px 14px; background: rgba(255, 255, 255, .14); }
 .k-rail-scrim { display: none; }
 
 .k-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -784,6 +784,7 @@ table.data tr.subtotal td {
   content: ""; position: absolute; left: 50%; bottom: -1px; transform: translateX(-50%);
   border: 7px solid transparent; border-bottom-color: var(--brand-600); border-top: 0;
 }
+.k-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: #ff5a5f; margin-top: -8px; }
 .k-tab-count {
   font-size: 10.5px; font-weight: 700; letter-spacing: 0; text-transform: none;
   background: var(--danger-bg); color: var(--danger); padding: 1px 6px; border-radius: 10px;

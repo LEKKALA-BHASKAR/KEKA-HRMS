@@ -148,6 +148,17 @@ export async function draftInvoice(opts: { projectId: string; periodStart: Date;
     if (entryIds.length) await tx.timeEntry.updateMany({ where: { id: { in: entryIds } }, data: { isInvoiced: true, invoiceId: inv.id } });
     const ms = lines.filter((l) => l.milestoneId).map((l) => l.milestoneId!);
     if (ms.length) await tx.milestone.updateMany({ where: { id: { in: ms } }, data: { status: "INVOICED" } });
+    // Each billed line is also a charge, invoiced, so Finances › Charges shows it.
+    const taken = (await tx.projectCharge.findMany({ where: { tenantId: p.tenantId }, select: { number: true } })).reduce((m, c) => Math.max(m, Number(c.number.replace(/\D/g, "")) || 0), 0);
+    const created = await tx.invoiceLine.findMany({ where: { invoiceId: inv.id }, orderBy: { sequence: "asc" } });
+    await tx.projectCharge.createMany({
+      data: created.map((l, i) => ({
+        tenantId: p.tenantId, projectId: p.id, number: `CHR${taken + i + 1}`, name: l.description,
+        kind: (l.lineType === "MILESTONE" ? "MILESTONE" : l.lineType === "RETAINER" ? "RETAINER" : "TIME") as "TIME",
+        template: (l.lineType === "HOURS" ? "EMPLOYEE" : "NONE") as "NONE", periodStart: opts.periodStart, periodEnd: opts.periodEnd,
+        quantity: l.quantity, amount: l.amount, currency: inv.currency, status: "INVOICED" as const, invoiceId: inv.id, sourceRefs: { key: `LINE:${l.id}` },
+      })),
+    });
     return inv;
   });
   return { ok: true, message: `${invoice.invoiceNumber} drafted: ₹${subtotal.toLocaleString("en-IN")} + GST ₹${tax.total.toLocaleString("en-IN")}.`, invoiceId: invoice.id };
@@ -158,13 +169,14 @@ export async function sendInvoice(invoiceId: string, save: (pdf: Buffer, filenam
   const inv = await prisma.invoice.findUnique({ where: { id: invoiceId }, include: { client: true, lines: { orderBy: { sequence: "asc" } }, project: true } });
   if (!inv) return { ok: false, message: "Invoice not found." };
   if (inv.status !== "DRAFT") return { ok: false, message: "Only a draft invoice can be sent." };
+  const proforma = inv.kind === "PROFORMA";
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: inv.tenantId } });
   const fmt = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
   const money = (n: unknown) => `Rs. ${Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
   const pdf = renderLetter({
     company: { name: tenant.name }, date: fmt(inv.issueDate),
     to: [inv.client.name, ...(inv.client.addressLine1 ? [inv.client.addressLine1] : []), ...(inv.client.gstin ? [`GSTIN ${inv.client.gstin}`] : [])],
-    subject: `Tax invoice ${inv.invoiceNumber}${inv.project ? ` — ${inv.project.name}` : ""}`,
+    subject: `${inv.documentTitle || "Tax invoice"} ${inv.invoiceNumber}${inv.project ? ` — ${inv.project.name}` : ""}`,
     paragraphs: [`For services from ${inv.periodStart ? fmt(inv.periodStart) : "—"} to ${inv.periodEnd ? fmt(inv.periodEnd) : "—"}. Payment is due by ${fmt(inv.dueDate)}.`],
     table: [
       ...inv.lines.map((l) => [l.lineType === "HOURS" ? `${l.description} (${Number(l.quantity)} h @ ${money(l.unitRate)})` : l.description, money(l.amount)] as [string, string]),
@@ -177,9 +189,14 @@ export async function sendInvoice(invoiceId: string, save: (pdf: Buffer, filenam
   await prisma.invoice.update({ where: { id: inv.id }, data: { status: "SENT", sentAt: new Date(), fileUrl: url } });
   // Sending is when the revenue is earned in the books: the same GST split
   // the draft priced it with.
-  const entity = await prisma.legalEntity.findFirst({ where: { tenantId: inv.tenantId }, orderBy: { createdAt: "asc" } });
-  const split = gst(Number(inv.subtotal), stateCode(entity?.state), inv.client.countryCode === "IN" ? stateCode(inv.client.state) : null);
-  await postInvoice(inv.id, split);
+  // A proforma is a quote and never reaches the books.
+  if (!proforma) {
+    const entity = inv.billingEntityId
+      ? await prisma.legalEntity.findFirst({ where: { tenantId: inv.tenantId, id: inv.billingEntityId } })
+      : await prisma.legalEntity.findFirst({ where: { tenantId: inv.tenantId }, orderBy: { createdAt: "asc" } });
+    const split = gst(Number(inv.subtotal), stateCode(entity?.state), inv.client.countryCode === "IN" ? stateCode(inv.client.state) : null);
+    await postInvoice(inv.id, split);
+  }
   if (inv.client.contactEmail) {
     await prisma.emailOutbox.create({ data: { tenantId: inv.tenantId, toAddress: inv.client.contactEmail, subject: `Invoice ${inv.invoiceNumber} from ${tenant.name}`, textBody: `Please find invoice ${inv.invoiceNumber} for ${money(inv.total)}, due ${fmt(inv.dueDate)}.`, relatedType: "Invoice", relatedId: inv.id } });
   }
@@ -189,6 +206,7 @@ export async function sendInvoice(invoiceId: string, save: (pdf: Buffer, filenam
 export async function recordInvoicePayment(opts: { invoiceId: string; amount: number; paidOn: Date; reference?: string | null }): Promise<Result> {
   const inv = await prisma.invoice.findUnique({ where: { id: opts.invoiceId } });
   if (!inv) return { ok: false, message: "Invoice not found." };
+  if (inv.kind === "PROFORMA") return { ok: false, message: "A proforma invoice is not paid; convert it to a tax invoice first." };
   if (!["SENT", "PARTIALLY_PAID", "OVERDUE"].includes(inv.status)) return { ok: false, message: "Payments are recorded against sent invoices." };
   const due = Number(inv.amountDue);
   if (!(opts.amount > 0) || opts.amount > due + 0.005) return { ok: false, message: `Enter an amount up to the ₹${due.toLocaleString("en-IN")} due.` };
@@ -202,7 +220,8 @@ export async function recordInvoicePayment(opts: { invoiceId: string; amount: nu
 }
 
 export async function markOverdueInvoices(tenantId?: string): Promise<number> {
-  const r = await prisma.invoice.updateMany({ where: { ...(tenantId ? { tenantId } : {}), status: { in: ["SENT", "PARTIALLY_PAID"] }, dueDate: { lt: new Date() } }, data: { status: "OVERDUE" } });
+  // A proforma is a quote: nothing on it falls due.
+  const r = await prisma.invoice.updateMany({ where: { ...(tenantId ? { tenantId } : {}), kind: "TAX", status: { in: ["SENT", "PARTIALLY_PAID"] }, dueDate: { lt: new Date() } }, data: { status: "OVERDUE" } });
   return r.count;
 }
 
