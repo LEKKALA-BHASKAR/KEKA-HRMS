@@ -20,6 +20,7 @@ export default async function ExitDetailPage({ params }: { params: Promise<{ id:
   const exit = await prisma.exitRecord.findFirst({
     where: { id, employee: { tenantId: viewer.tenantId } },
     include: {
+      exitReason: { select: { name: true, kind: true } },
       employee: {
         include: {
           department: { select: { name: true } },
@@ -133,6 +134,7 @@ export default async function ExitDetailPage({ params }: { params: Promise<{ id:
               ["Notice given", formatDate(exit.noticeDate)],
               ["Last working day", formatDate(exit.lastWorkingDay)],
               ["Served", `${served} of ${notice.days} days${served < notice.days ? ` — ${notice.days - served} short` : ""}`],
+              ["Reason", exit.exitReason ? `${exit.exitReason.name} · ${exit.exitReason.kind.toLowerCase()}` : "—"],
               ["Rehire eligible", exit.isRehireEligible === null ? "—" : exit.isRehireEligible ? "Yes" : "No"],
             ]} />
             {exit.reason ? <div className="text-sm muted" style={{ marginTop: 12 }}>“{exit.reason}”</div> : null}

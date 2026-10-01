@@ -151,6 +151,9 @@ model Employee {
   arrears           Arrear[]
   fnfSettlement     FnfSettlement?
   exitRecord        ExitRecord?
+  /// Notice rules for this person; null follows the tenant's default policy.
+  noticePeriodPolicyId String?
+  noticePeriodPolicy   NoticePeriodPolicy? @relation(fields: [noticePeriodPolicyId], references: [id], onDelete: SetNull)
 
   // --- Workplace (07) ---
   announcementReads  AnnouncementRead[]

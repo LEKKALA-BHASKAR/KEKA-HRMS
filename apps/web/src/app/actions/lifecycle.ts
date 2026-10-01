@@ -38,6 +38,7 @@ const exitSchema = z.object({
   type: z.enum(EXIT_TYPES),
   noticeDate: zRequiredDate(),
   lastWorkingDay: zDate(),
+  reasonId: zOptionalId(),
   reason: zOptional(1000),
 });
 
@@ -68,8 +69,9 @@ export async function initiateExitAction(_prev: ActionState, formData: FormData)
 
 const resignSchema = z.object({
   lastWorkingDay: zDate(),
-  reason: zName(1000),
-});
+  reasonId: zOptionalId(),
+  reason: zOptional(1000),
+}).refine((d) => !!d.reasonId || !!d.reason, { message: "Tell us why you are leaving", path: ["reason"] });
 
 export async function resignAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const viewer = await requireViewer();
@@ -80,7 +82,7 @@ export async function resignAction(_prev: ActionState, formData: FormData): Prom
   const res = await initiateExit({
     employeeId: viewer.employee.id, type: "RESIGNATION",
     noticeDate: new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())),
-    lastWorkingDay: parsed.data.lastWorkingDay, reason: parsed.data.reason, initiatedByUserId: viewer.user.id,
+    lastWorkingDay: parsed.data.lastWorkingDay, reason: parsed.data.reason, reasonId: parsed.data.reasonId, initiatedByUserId: viewer.user.id,
   });
   if (!res.ok) return { ok: false, message: res.message };
   await writeAudit(viewer, { module: "LIFECYCLE", action: "CREATE", entityType: "ExitRecord", entityId: res.exitId, summary: "Submitted a resignation" });

@@ -321,6 +321,8 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     can(viewer, P.EMPLOYEE_CREATE) && { label: "Add an employee", href: "/employees/new", keywords: "hire onboard new joinee" },
     canAny(viewer, [P.EMPLOYEE_CREATE, P.LEAVE_MANAGE, P.SALARY_REVISE, P.EMPLOYEE_MANAGE_FINANCIALS]) && { label: "Bulk import", href: "/admin/import", keywords: "import csv upload spreadsheet migrate employees balances salary bank" },
     can(viewer, P.ORG_SETTINGS_MANAGE) && { label: "Custom fields", href: "/admin/settings?tab=fields", keywords: "custom field profile extra attribute dropdown" },
+    can(viewer, P.DOCUMENT_MANAGE) && { label: "Document types", href: "/admin/settings?tab=documents", keywords: "document folder type mandatory request upload settings" },
+    can(viewer, P.EXIT_MANAGE) && { label: "Notice periods and exit reasons", href: "/admin/settings?tab=exits", keywords: "notice period policy exit reason resignation settings" },
     can(viewer, P.LEDGER_VIEW) && { label: "Accounting", href: "/accounting", keywords: "ledger books journal trial balance" },
     can(viewer, P.REPORT_VIEW) && { label: "Reports", href: "/reports", keywords: "employee reports export" },
     can(viewer, P.ANALYTICS_VIEW) && { label: "Org analytics", href: "/analytics", keywords: "analytics headcount attrition dashboard" },

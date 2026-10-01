@@ -1,24 +1,33 @@
 import Link from "next/link";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
-import { requireAuth, can } from "@/lib/context";
+import { requireViewer, can } from "@/lib/context";
+import { forbidden } from "next/navigation";
 import { securityPolicy } from "@/lib/auth-policy";
 import { MAIL_DIR } from "@/lib/mail";
 import { PageHead, Card, Badge, Empty, Stat } from "@/components/ui";
 import { ProfileForm, VisibilityForm, SecurityForm, UserSecurityForm, DeliverMailButton } from "./forms";
 import { CustomFieldForm, CustomFieldRow } from "./custom-fields";
+import { NoticePolicyForm, NoticePolicyRow, ExitReasonForm, ExitReasonRow, FolderForm, FolderHeader, DocTypeForm, DocTypeRow } from "./workplace";
 
 const P = PERMISSIONS;
-const TABS = { org: "Organisation", fields: "Custom fields", security: "Security", log: "Sign-in log", mail: "Email", jobs: "Scheduled jobs" } as const;
+const TABS = { org: "Organisation", fields: "Custom fields", documents: "Documents", exits: "Notice & exits", security: "Security", log: "Sign-in log", mail: "Email", jobs: "Scheduled jobs" } as const;
 type Tab = keyof typeof TABS;
 const when = (d: Date) => d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
-  const viewer = await requireAuth(P.ORG_SETTINGS_MANAGE);
+  const viewer = await requireViewer();
   const sp = await searchParams;
-  const security = can(viewer, P.AUTH_SETTINGS_MANAGE);
-  const tabs = (Object.keys(TABS) as Tab[]).filter((t) => security || (t !== "security" && t !== "log"));
-  const tab: Tab = tabs.includes(sp.tab as Tab) ? (sp.tab as Tab) : "org";
+  // Each tab needs its own permission, so document and exit administrators can reach theirs.
+  const allowed: Record<Tab, boolean> = {
+    org: can(viewer, P.ORG_SETTINGS_MANAGE), fields: can(viewer, P.ORG_SETTINGS_MANAGE),
+    documents: can(viewer, P.DOCUMENT_MANAGE), exits: can(viewer, P.EXIT_MANAGE),
+    security: can(viewer, P.AUTH_SETTINGS_MANAGE), log: can(viewer, P.AUTH_SETTINGS_MANAGE),
+    mail: can(viewer, P.ORG_SETTINGS_MANAGE), jobs: can(viewer, P.ORG_SETTINGS_MANAGE),
+  };
+  const tabs = (Object.keys(TABS) as Tab[]).filter((t) => allowed[t]);
+  if (!tabs.length) forbidden();
+  const tab: Tab = tabs.includes(sp.tab as Tab) ? (sp.tab as Tab) : tabs[0];
 
   return (
     <>
@@ -28,6 +37,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       </div>
       {tab === "org" ? <Org tenantId={viewer.tenantId} /> : null}
       {tab === "fields" ? <Fields tenantId={viewer.tenantId} /> : null}
+      {tab === "documents" ? <Documents tenantId={viewer.tenantId} /> : null}
+      {tab === "exits" ? <Exits tenantId={viewer.tenantId} /> : null}
       {tab === "security" ? <Security tenantId={viewer.tenantId} /> : null}
       {tab === "log" ? <Log tenantId={viewer.tenantId} /> : null}
       {tab === "mail" ? <Mail tenantId={viewer.tenantId} /> : null}
@@ -79,6 +90,91 @@ async function Fields({ tenantId }: { tenantId: string }) {
         )}
       </Card>
       <Card title="Add a field"><CustomFieldForm /></Card>
+    </div>
+  );
+}
+
+async function Documents({ tenantId }: { tenantId: string }) {
+  const folders = await prisma.documentFolder.findMany({
+    where: { tenantId }, orderBy: [{ scope: "asc" }, { name: "asc" }],
+    include: { types: { orderBy: { name: "asc" } } },
+  });
+  const counts = await prisma.employeeDocument.groupBy({
+    by: ["documentTypeId", "status"], where: { tenantId, documentTypeId: { not: null }, employee: { status: { not: "EXITED" } } }, _count: { _all: true },
+  });
+  const tally = (typeId: string, pending: boolean) => counts.filter((c) => c.documentTypeId === typeId && (c.status === "PENDING_ON_EMPLOYEE") === pending).reduce((a, c) => a + c._count._all, 0);
+  const folderData = folders.map((f) => ({ id: f.id, name: f.name, description: f.description, scope: f.scope, isConfidential: f.isConfidential }));
+  return (
+    <div className="stack gap-4">
+      {folders.length === 0 ? <Card><Empty title="No document folders yet">Add a folder, then the documents you collect in it.</Empty></Card> : null}
+      {folders.map((f) => (
+        <Card key={f.id} tight title={<>{f.name}{f.isConfidential ? <> <Badge tone="danger">confidential</Badge></> : null}</>}
+          description={`${f.scope === "EMPLOYEE" ? "Each employee's documents" : "Organisation policies"}${f.description ? ` · ${f.description}` : ""}`}
+          action={<FolderHeader f={folderData.find((x) => x.id === f.id)!} />}>
+          {f.types.length === 0 ? <Empty title="No document types in this folder" /> : (
+            <div className="table-wrap">
+              <table className="data">
+                <thead><tr><th>Document</th><th>Rules</th><th>Employees</th><th /></tr></thead>
+                <tbody>
+                  {f.types.map((t) => (
+                    <DocTypeRow key={t.id} folders={folderData} employeeFolder={f.scope === "EMPLOYEE"} t={{
+                      id: t.id, folderId: t.folderId, name: t.name, allowMultiple: t.allowMultiple, isMandatory: t.isMandatory,
+                      requireVerification: t.requireVerification, trackExpiry: t.trackExpiry, allowNotApplicable: t.allowNotApplicable,
+                      requested: tally(t.id, true), provided: tally(t.id, false),
+                    }} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      ))}
+      <div className="grid grid-2" style={{ alignItems: "start" }}>
+        {folders.length ? <Card title="Add a document type"><DocTypeForm folders={folderData} /></Card> : null}
+        <Card title="Add a folder"><FolderForm /></Card>
+      </div>
+    </div>
+  );
+}
+
+async function Exits({ tenantId }: { tenantId: string }) {
+  const [policies, reasons] = await Promise.all([
+    prisma.noticePeriodPolicy.findMany({ where: { tenantId }, orderBy: [{ isDefault: "desc" }, { isActive: "desc" }, { name: "asc" }], include: { _count: { select: { employees: true } } } }),
+    prisma.exitReason.findMany({ where: { tenantId }, orderBy: [{ isActive: "desc" }, { displayOrder: "asc" }, { name: "asc" }], include: { _count: { select: { exits: true } } } }),
+  ]);
+  return (
+    <div className="stack gap-4">
+      <Card tight title="Notice periods" description="How much notice each side gives. Employees follow the default unless their job details name another policy.">
+        {policies.length === 0 ? <Empty title="No notice policy yet">Until one exists, resignations need 60 days, terminations 30 and probation 15.</Empty> : (
+          <div className="table-wrap">
+            <table className="data">
+              <thead><tr><th>Policy</th><th>Resignation</th><th>Termination</th><th>In probation</th><th>Buyout</th><th /></tr></thead>
+              <tbody>
+                {policies.map((p) => (
+                  <NoticePolicyRow key={p.id} p={{
+                    id: p.id, name: p.name, resignationDays: p.resignationDays, terminationDays: p.terminationDays, probationDays: p.probationDays,
+                    allowBuyout: p.allowBuyout, buyoutBasis: p.buyoutBasis, isDefault: p.isDefault, isActive: p.isActive, employees: p._count.employees,
+                  }} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ padding: 14, borderTop: "1px solid var(--border)" }}><NoticePolicyForm /></div>
+      </Card>
+      <Card tight title="Exit reasons" description="Offered when someone resigns or HR records an exit, and used in attrition reports. Involuntary reasons are hidden from employees resigning.">
+        {reasons.length === 0 ? <Empty title="No exit reasons yet" /> : (
+          <div className="table-wrap">
+            <table className="data">
+              <thead><tr><th>Reason</th><th>Kind</th><th className="num">Exits</th><th /></tr></thead>
+              <tbody>
+                {reasons.map((r) => <ExitReasonRow key={r.id} r={{ id: r.id, name: r.name, kind: r.kind, displayOrder: r.displayOrder, isActive: r.isActive, exits: r._count.exits }} />)}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ padding: 14, borderTop: "1px solid var(--border)" }}><ExitReasonForm /></div>
+      </Card>
     </div>
   );
 }

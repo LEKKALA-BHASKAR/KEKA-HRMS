@@ -21,6 +21,8 @@ export default async function MyExitPage() {
   ]);
   const live = exit && !["CANCELLED", "RETAINED", "REJECTED"].includes(exit.status);
   const notice = await noticeDaysFor(employeeId, "RESIGNATION");
+  // An employee resigning picks from the voluntary reasons the organisation configured.
+  const reasons = live ? [] : await prisma.exitReason.findMany({ where: { tenantId: viewer.tenantId, isActive: true, kind: { not: "INVOLUNTARY" } }, orderBy: [{ displayOrder: "asc" }, { name: "asc" }] });
   const today = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
   const policyLwd = new Date(today.getTime() + notice.days * DAY).toISOString().slice(0, 10);
 
@@ -30,7 +32,7 @@ export default async function MyExitPage() {
       {!live ? (
         <div className="grid grid-2" style={{ alignItems: "start" }}>
           <Card title="Resign" description="Your manager and HR are notified. Nothing changes until your resignation is accepted, and you can withdraw it until then.">
-            <ResignForm policyLwd={policyLwd} noticeDays={notice.days} />
+            <ResignForm policyLwd={policyLwd} noticeDays={notice.days} reasons={reasons.map((r) => ({ value: r.id, label: r.name }))} />
           </Card>
           <Card title="Before you decide">
             <div className="text-sm muted stack gap-2">

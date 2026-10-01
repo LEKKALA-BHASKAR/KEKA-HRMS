@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { selectStructureForCtc } from "@keka/payroll";
-import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation } from "@keka/services";
+import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments } from "@keka/services";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
 import {
@@ -328,13 +328,16 @@ export async function createEmployee(_prev: ActionState, formData: FormData): Pr
     await enrolInMandatoryCourses(viewer.tenantId, employeeId, viewer.employee?.id ?? null);
     // ...and a joiner on probation starts the default probation policy's clock.
     const probation = d.status === "PROBATION" ? await startProbation({ employeeId }) : null;
+    // ...and ask them for the documents everyone must provide.
+    const docs = await requestMandatoryDocuments(employeeId);
 
     return done(
       ["/employees", "/org", "/", "/onboarding"],
       `Created ${created.displayName} as ${created.employeeNumber}.` +
         (d.inviteToPortal ? " A login was created — send them a password reset to activate it." : "") +
         (journey.created ? ` Onboarding started with ${journey.tasks} task(s).` : "") +
-        (probation?.created ? ` ${probation.message}` : ""),
+        (probation?.created ? ` ${probation.message}` : "") +
+        (docs ? ` Requested ${docs} mandatory document(s).` : ""),
     );
   } catch (err) {
     return toErrorState(err);

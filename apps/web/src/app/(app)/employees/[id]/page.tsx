@@ -16,6 +16,7 @@ import {
   DependentForm, EmergencyForm, RemoveSubRecord, AccessControls,
 } from "./forms";
 import { CustomFieldsForm } from "./custom-fields";
+import { NoticePolicyPicker } from "./notice";
 import { displayCustomValue, type CustomFieldKind } from "@keka/services";
 
 const P = PERMISSIONS;
@@ -106,6 +107,14 @@ export default async function EmployeePage({
     options: (d.options as string[] | null) ?? [], isMandatory: d.isMandatory, value: d.values[0]?.value ?? null,
   }));
   const customSections = [...new Set(customFields.map((f) => f.section))];
+
+  const noticePolicies = tab === "job"
+    ? await prisma.noticePeriodPolicy.findMany({ where: { tenantId: viewer.tenantId, isActive: true }, orderBy: [{ isDefault: "desc" }, { name: "asc" }] })
+    : [];
+  const noticeOwn = noticePolicies.find((p) => p.id === employee.noticePeriodPolicyId) ?? null;
+  // The same fallback noticeDaysFor uses: the default, else the oldest active policy.
+  const noticeDefault = noticePolicies.find((p) => p.isDefault) ?? [...noticePolicies].sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime())[0] ?? null;
+  const noticeLabel = (p: { name: string; resignationDays: number; probationDays: number }) => `${p.name}: ${p.resignationDays} days, ${p.probationDays} in probation`;
 
   // Option lists for the edit forms. Only loaded when an edit form will render.
   const needsJobOptions = canEdit && tab === "job";
@@ -435,6 +444,14 @@ export default async function EmployeePage({
             </EditToggle>
           </Card>
         ) : null}
+        <Card title="Notice period" description="What this person must serve on resignation. Used when an exit is raised.">
+          {canEdit && noticePolicies.length ? (
+            <NoticePolicyPicker employeeId={employee.id} current={noticeOwn?.id ?? null} defaultName={noticeDefault ? noticeLabel(noticeDefault) : "none set"}
+              options={noticePolicies.map((p) => ({ value: p.id, label: noticeLabel(p) }))} />
+          ) : (
+            <div className="text-sm">{noticeOwn ? noticeLabel(noticeOwn) : noticeDefault ? `Organisation default — ${noticeLabel(noticeDefault)}` : "No notice policy set up: 60 days on resignation."}</div>
+          )}
+        </Card>
         <Card
           title="Job history"
           description="Effective-dated. There is no separate transfer or promotion module — position changes are made here with an effective date and the full history is retained."

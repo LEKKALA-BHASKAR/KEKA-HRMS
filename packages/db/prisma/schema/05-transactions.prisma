@@ -562,6 +562,8 @@ model NoticePeriodPolicy {
 
   createdAt DateTime @default(now())
 
+  employees Employee[]
+
   @@unique([tenantId, name])
   @@index([tenantId])
   @@map("notice_period_policies")

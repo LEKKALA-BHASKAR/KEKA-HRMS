@@ -315,8 +315,11 @@ export function journeyProgress(tasks: Array<{ status: string; isRequired: boole
 // ---------------------------------------------------------------------------
 
 export async function noticeDaysFor(employeeId: string, type: string): Promise<{ days: number; policy: string; allowBuyout: boolean; basis: string }> {
-  const emp = await prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { tenantId: true, status: true } });
-  const policy = await prisma.noticePeriodPolicy.findFirst({ where: { tenantId: emp.tenantId, isActive: true }, orderBy: { isDefault: "desc" } });
+  const emp = await prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { tenantId: true, status: true, noticePeriodPolicy: true } });
+  // The person's own policy when one is assigned and still active, else the tenant default.
+  const policy = emp.noticePeriodPolicy?.isActive
+    ? emp.noticePeriodPolicy
+    : await prisma.noticePeriodPolicy.findFirst({ where: { tenantId: emp.tenantId, isActive: true }, orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }] });
   const base = { policy: policy?.name ?? "Default", allowBuyout: policy?.allowBuyout ?? true, basis: policy?.buyoutBasis ?? "GROSS" };
   if (["DEATH", "ABSCONDING", "END_OF_CONTRACT", "RETIREMENT"].includes(type)) return { days: 0, ...base };
   if (emp.status === "PROBATION") return { days: policy?.probationDays ?? 15, ...base };
@@ -331,6 +334,8 @@ export interface InitiateExitInput {
   /** Defaults to the notice date plus the policy's notice period. */
   lastWorkingDay?: Date | null;
   reason?: string | null;
+  /** A configured ExitReason of the same tenant, for attrition reporting. */
+  reasonId?: string | null;
   initiatedByUserId?: string | null;
 }
 
@@ -347,6 +352,9 @@ export async function initiateExit(input: InitiateExitInput): Promise<{ ok: bool
   if (noticeDate.getTime() < utcMidnight(emp.dateOfJoining).getTime()) {
     return { ok: false, message: "The notice date is before the joining date." };
   }
+  if (input.reasonId && !(await prisma.exitReason.count({ where: { id: input.reasonId, tenantId: emp.tenantId, isActive: true } }))) {
+    return { ok: false, message: "Choose a reason from the list." };
+  }
   const notice = await noticeDaysFor(input.employeeId, input.type);
   const policyLwd = new Date(noticeDate.getTime() + notice.days * DAY);
   const lwd = input.lastWorkingDay ? utcMidnight(input.lastWorkingDay) : policyLwd;
@@ -356,7 +364,7 @@ export async function initiateExit(input: InitiateExitInput): Promise<{ ok: bool
   // A resignation waits for approval; HR-initiated exits are decided already.
   const selfInitiated = input.type === "RESIGNATION";
   const data = {
-    type: input.type, reason: input.reason ?? null,
+    type: input.type, reason: input.reason ?? null, reasonId: input.reasonId ?? null,
     status: (selfInitiated ? "PENDING_APPROVAL" : "APPROVED") as "PENDING_APPROVAL" | "APPROVED",
     noticeDate, lastWorkingDay: lwd, noticeBuyoutDays: shortfall || null,
     initiatedBy: input.initiatedByUserId ?? null,
