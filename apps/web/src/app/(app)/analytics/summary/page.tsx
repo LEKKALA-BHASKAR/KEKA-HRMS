@@ -10,6 +10,7 @@ import { requireAuth, canAny } from "@/lib/context";
 import { scopedEmployeeWhere } from "@/lib/scope";
 import { PageHead, Stat, Progress, Badge } from "@/components/ui";
 import { Panel, Bars, Donut, SectionTitle, EmptyState } from "@/components/keka";
+import { DashboardTabs } from "../_components/dashboard";
 
 const P = PERMISSIONS;
 const PALETTE = ["#3b6fe0", "#36b8c9", "#9b7ede", "#f5b83d", "#ef6f6f", "#8bc34a", "#c9b48a", "#5f6b7a"];
@@ -176,6 +177,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
 
   return (
     <>
+      <DashboardTabs viewer={viewer} active="summary" />
       <PageHead
         title="Workforce Insights"
         subtitle={`${dept ? dept.name : "Everyone in your scope"} · as of ${today.toISOString().slice(0, 10)}`}

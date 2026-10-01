@@ -54,3 +54,4 @@ export * from "./review-to-pay";
 export * from "./webhooks";
 export * from "./public-api";
 export * from "./report-engine";
+export * from "./dashboards";

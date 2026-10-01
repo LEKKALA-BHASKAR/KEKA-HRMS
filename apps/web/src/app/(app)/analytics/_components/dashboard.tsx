@@ -8,13 +8,16 @@ import s from "./analytics.module.css";
 
 const P = PERMISSIONS;
 
-export type DashboardTab = "summary" | "analytics" | "reports" | "audit";
+export type DashboardTab = "summary" | "analytics" | "attendance" | "hiring" | "expenses" | "reports" | "audit";
 
 /** Org › Dashboard's third row: Summary · Analytics · Employee Reports · Audit Logs. */
 export function DashboardTabs({ viewer, active }: { viewer: Viewer; active: DashboardTab }) {
   const items = [
     can(viewer, P.ANALYTICS_VIEW) && { key: "summary", label: "Summary", href: "/analytics/summary" },
     can(viewer, P.ANALYTICS_VIEW) && { key: "analytics", label: "Analytics", href: "/analytics/headcount" },
+    can(viewer, P.ANALYTICS_VIEW) && can(viewer, P.ATTENDANCE_VIEW) && { key: "attendance", label: "Attendance", href: "/analytics/attendance" },
+    can(viewer, P.ANALYTICS_VIEW) && (can(viewer, P.JOB_MANAGE) || can(viewer, P.CANDIDATE_MANAGE)) && { key: "hiring", label: "Hiring", href: "/analytics/hiring" },
+    can(viewer, P.ANALYTICS_VIEW) && can(viewer, P.EXPENSE_VIEW) && { key: "expenses", label: "Expenses", href: "/analytics/expenses" },
     can(viewer, P.REPORT_VIEW) && { key: "reports", label: "Employee Reports", href: "/reports" },
     can(viewer, P.AUDIT_LOG_VIEW) && { key: "audit", label: "Audit Logs", href: "/admin/audit" },
   ].filter((x): x is { key: string; label: string; href: string } => !!x);
