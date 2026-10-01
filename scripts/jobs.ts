@@ -5,6 +5,7 @@
  *   tsx scripts/jobs.ts deliver-mail          every few minutes
  *   tsx scripts/jobs.ts process-attendance    nightly; re-evaluates the last 3 days
  *   tsx scripts/jobs.ts journeys              nightly; closes tasks the system can verify
+ *   tsx scripts/jobs.ts probation             nightly; opens probation reviews, auto-confirms ended probations
  *   tsx scripts/jobs.ts accrue [YYYY-MM]      monthly; credits leave for the month
  *   tsx scripts/jobs.ts invoices              nightly; marks unpaid invoices past due as overdue
  *   tsx scripts/jobs.ts ledger-check          nightly; fails if any tenant's books do not balance
@@ -53,6 +54,11 @@ async function main() {
       for (const j of active) closed += await svc.runAutoChecks(j.id);
       return { journeys: active.length, tasksClosed: closed };
     },
+    probation: async () => {
+      let started = 0, reviewsOpened = 0, autoConfirmed = 0;
+      for (const t of tenants) { const s = await svc.runProbationJob(t.id); started += s.started; reviewsOpened += s.reviewsOpened; autoConfirmed += s.autoConfirmed; }
+      return { tenants: tenants.length, started, reviewsOpened, autoConfirmed };
+    },
     invoices: async () => ({ markedOverdue: await svc.markOverdueInvoices() }),
     // Debits must equal credits, and every cached balance must equal its
     // lines. A failure here is a bug to investigate, so it fails the job
@@ -85,7 +91,7 @@ async function main() {
 
   let ok = true;
   if (cmd === "nightly") {
-    for (const name of ["process-attendance", "journeys", "invoices", "ledger-check", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
+    for (const name of ["process-attendance", "journeys", "probation", "invoices", "ledger-check", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
     if (new Date().getUTCDate() === 1) ok = (await record("accrue", jobs.accrue)) && ok;
   } else if (cmd && jobs[cmd]) {
     ok = await record(cmd, jobs[cmd]);

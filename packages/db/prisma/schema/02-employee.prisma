@@ -206,6 +206,9 @@ model Employee {
   compOffRequests    CompOffRequest[]
   leaveEncashments   LeaveEncashmentRequest[]
 
+  probation          EmployeeProbation?
+  probationReviews   ProbationEvaluation[] @relation("ProbationEvaluator")
+
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
   @@index([tenantId, departmentId])

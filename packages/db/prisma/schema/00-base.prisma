@@ -157,6 +157,8 @@ model Tenant {
   careerPaths CareerPath[]
   compOffRequests CompOffRequest[]
   leaveEncashmentRequests LeaveEncashmentRequest[]
+  probationPolicies ProbationPolicy[]
+  probations EmployeeProbation[]
 
   @@index([subdomain])
   @@map("tenants")

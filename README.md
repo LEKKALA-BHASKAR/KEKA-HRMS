@@ -8,10 +8,10 @@ research in `02-corehr-payroll.md` and `Keka-Platform-Teardown.pdf`.
 ```bash
 createdb keka_dev          # Postgres 14+ on localhost:5432
 npm install
-npm run db:migrate         # creates 207 tables
+npm run db:migrate         # creates 210 tables
 npm run db:seed            # one tenant, 30 employees, Apr–Aug payroll finalised, Sep open
 npm run dev                # http://localhost:3100
-npm run test:all           # 301 unit tests + 18 integration suites (625 checks) against the seeded DB
+npm run test:all           # 333 unit tests + 19 integration suites (667 checks) against the seeded DB
 ```
 
 After any migration, restart `npm run dev`: the generated Prisma client is a cached
@@ -34,7 +34,7 @@ Sign in at `/signin` (email first, then password). Every seeded account uses the
 
 ```
 packages/shared      Decimal money, Indian FY dates — no float arithmetic anywhere
-packages/db          Prisma multi-file schema (207 tables, every tenant table cascades) + seed
+packages/db          Prisma multi-file schema (210 tables, every tenant table cascades) + seed
 packages/rbac        124 permissions, 11 built-in roles, 3 implicit roles, scope resolution
 packages/payroll     Pure engine: formulas, structures, PF/ESI/PT/LWF/TDS/gratuity, loan schedules
 packages/time        Pure engine: calendars, leave counting and sandwich rule, accrual, attendance
@@ -80,14 +80,14 @@ payslip release, and rollback that un-consumes every input and archives journal 
 | **Gratuity** | 5-year eligibility, Act-covered (15 days ÷ 26) vs not-covered (÷ 30), part-year over six months rounds up, ₹20L exemption ceiling |
 
 ### Verification
-- **301 unit tests**, all passing — `npm test` (payroll, time, RBAC, documents and the pure
+- **333 unit tests**, all passing — `npm test` (payroll, time, RBAC, documents and the pure
   parts of services, no database)
-- **18 integration suites, 625 checks** — `npm run test:smoke` — drive the real server actions
+- **19 integration suites, 667 checks** — `npm run test:smoke` — drive the real server actions
   through the genuine session → viewer → permission chain, clean up after themselves, and pass
   when run twice in a row: seams, master data, employee lifecycle, payroll config, leave &
   attendance (engine and actions), exits/journeys/helpdesk, loans, authentication, statutory
   filings, performance, hiring, expenses, projects, accounting, self-service, engagement and
-  learning, and tenant isolation
+  learning, probation, and tenant isolation
 - **Production build passes** with full TypeScript checking, no `ignoreBuildErrors`
 - **479 page/persona combinations** (every page, and every detail page with a real record, for
   up to seven personas) return only 200, 403, 404 or a deliberate redirect — never a 500
@@ -237,6 +237,26 @@ Two bugs fixed along the way: invoicing picked the tenant's legal entity with an
 physical order; it now takes the first-created entity. And comp-off and encashment were
 first written to skip any run with a rollback stamp, but a rollback reopens the run, so the
 stamp is history, not state.
+
+## Phase 7 — probation and confirmation
+
+Section A4.4 of the research, which the platform tracked only as an employee status with
+no end date, review or decision behind it.
+
+| Area | What works end to end |
+|---|---|
+| **Policies** | Duration, how many extensions and how long each, whether probation ends in a review or confirms itself, how many days before the end the review opens, and whether the employee writes a self review. One policy is the default |
+| **Probation periods** | Every employee whose status is Probation gets one from their date of joining: when they are created, from the nightly job, or by HR from the list. Moving to another policy recomputes the end date and keeps any extension already granted |
+| **Reviews** | The nightly job opens the review on the right day. The reporting manager rates and recommends confirm, extend or do not confirm (and must explain anything short of confirmation); the employee writes their own view. Both arrive in the Inbox, and only the person asked can submit |
+| **Decisions** | HR confirms, extends (within the policy's limit, which starts a fresh review round) or records that the employee is not confirmed. Confirmation writes a CONFIRMATION job record, sets the status and date, and starts the confirmation journey, exactly as a manual confirmation does. It takes effect the day after probation ends, or on the day of an early decision. A late one is backdated to that day after |
+| **Auto-confirmation** | Under an auto-confirm policy the nightly job confirms the day after probation ends, with no review |
+| **People › Probation** | Who is on probation, how far through, the review state, the manager's recommendation, and what is overdue; a detail page with the decision and every review round |
+
+HR and its scoped variants see only the probations inside their scope, never their own.
+A reporting manager reviews but cannot decide.
+
+`scripts/smoke-probation.ts` drives all of it through the real actions and the job, then
+restores the seeded probations exactly. **42 checks**, rerunnable.
 
 ## Known limitations
 

@@ -4,7 +4,7 @@ import { prisma } from "@keka/db";
 import { requireViewer } from "@/lib/context";
 import {
   IconBell, IconTimer, IconWallet, IconHeadset, IconBriefcase, IconUserPlus, IconLogout, IconReceipt,
-  IconTarget, IconCalendar, IconClock, IconDollarCircle, IconFile, IconEngage, IconTrophy,
+  IconTarget, IconCalendar, IconClock, IconDollarCircle, IconFile, IconEngage, IconTrophy, IconCheck,
 } from "@/components/icons";
 import { MarkReadButton } from "../../_lifecycle/forms";
 import { CategoryPane, DetailEmpty, DetailPane, Facts, InboxFrame, ListPane, hrefFor, readNav, sortByDate, type ListItem } from "../_ui/panes";
@@ -27,6 +27,7 @@ const KINDS: Record<string, { label: string; icon: ReactNode }> = {
   PAYROLL: { label: "Payroll", icon: <IconDollarCircle /> },
   JOURNEY: { label: "Onboarding & journeys", icon: <IconUserPlus /> },
   EXIT: { label: "Exits", icon: <IconLogout /> },
+  PROBATION: { label: "Probation", icon: <IconCheck /> },
   DOCUMENT: { label: "Documents", icon: <IconFile /> },
   HELPDESK: { label: "Helpdesk", icon: <IconHeadset /> },
   PERFORMANCE: { label: "Performance", icon: <IconTarget /> },

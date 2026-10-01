@@ -47,6 +47,8 @@ export interface NavCounts {
   notifications: number;
   surveys: number;
   learning: number;
+  /** Probations past their end or in review, waiting on HR. */
+  probation: number;
 }
 
 const path = (href: string) => href.split("?")[0];
@@ -134,6 +136,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: { hasExit: boo
     canAny(viewer, [P.EMPLOYEE_VIEW_ALL, P.EMPLOYEE_CREATE, P.EMPLOYEE_UPDATE]) && { label: "Employees", href: "/employees" },
     can(viewer, P.ORG_MANAGE) && { label: "Organisation", href: "/org" },
     can(viewer, P.ONBOARDING_VIEW) && { label: "Journeys", href: "/onboarding" },
+    can(viewer, P.PROBATION_MANAGE) && { label: "Probation", href: "/probation", count: counts.probation },
     canAny(viewer, [P.EXIT_MANAGE, P.EXIT_APPROVE, P.FNF_MANAGE]) && { label: "Exits", href: "/exits", count: counts.exits },
     hrLeave && { label: "Leave", href: "/leave", count: counts.leave },
     hrAttendance && { label: "Attendance", href: "/attendance", count: counts.attendance },
