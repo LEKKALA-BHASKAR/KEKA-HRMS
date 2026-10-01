@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: keka
+          POSTGRES_PASSWORD: keka
+          POSTGRES_DB: keka
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U keka"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # Set here so they win over the committed .env (dotenv never overrides).
+    env:
+      DATABASE_URL: postgresql://keka:keka@localhost:5432/keka?schema=public
+      AUTH_SECRET: ci-only-secret-not-used-anywhere-else-0000
+      AUTH_URL: http://localhost:3100
+      APP_BASE_DOMAIN: keka.local
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run db:generate
+      - name: Migrate
+        run: npm run deploy --workspace=@keka/db
+      - run: npm run db:seed
+      - run: npm run typecheck
+      - name: Unit and smoke tests
+        run: npm run test:all
