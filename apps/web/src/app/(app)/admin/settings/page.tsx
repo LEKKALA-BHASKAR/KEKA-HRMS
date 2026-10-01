@@ -8,10 +8,12 @@ import { MAIL_DIR } from "@/lib/mail";
 import { PageHead, Card, Badge, Empty, Stat } from "@/components/ui";
 import { ProfileForm, VisibilityForm, SecurityForm, UserSecurityForm, DeliverMailButton } from "./forms";
 import { CustomFieldForm, CustomFieldRow } from "./custom-fields";
+import { SsoForm, TestSso } from "./sso";
+import { headers } from "next/headers";
 import { NoticePolicyForm, NoticePolicyRow, ExitReasonForm, ExitReasonRow, FolderForm, FolderHeader, DocTypeForm, DocTypeRow } from "./workplace";
 
 const P = PERMISSIONS;
-const TABS = { org: "Organisation", fields: "Custom fields", documents: "Documents", exits: "Notice & exits", security: "Security", log: "Sign-in log", mail: "Email", jobs: "Scheduled jobs" } as const;
+const TABS = { org: "Organisation", fields: "Custom fields", documents: "Documents", exits: "Notice & exits", security: "Security", sso: "Single sign-on", log: "Sign-in log", mail: "Email", jobs: "Scheduled jobs" } as const;
 type Tab = keyof typeof TABS;
 const when = (d: Date) => d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
@@ -22,7 +24,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const allowed: Record<Tab, boolean> = {
     org: can(viewer, P.ORG_SETTINGS_MANAGE), fields: can(viewer, P.ORG_SETTINGS_MANAGE),
     documents: can(viewer, P.DOCUMENT_MANAGE), exits: can(viewer, P.EXIT_MANAGE),
-    security: can(viewer, P.AUTH_SETTINGS_MANAGE), log: can(viewer, P.AUTH_SETTINGS_MANAGE),
+    security: can(viewer, P.AUTH_SETTINGS_MANAGE), sso: can(viewer, P.AUTH_SETTINGS_MANAGE), log: can(viewer, P.AUTH_SETTINGS_MANAGE),
     mail: can(viewer, P.ORG_SETTINGS_MANAGE), jobs: can(viewer, P.ORG_SETTINGS_MANAGE),
   };
   const tabs = (Object.keys(TABS) as Tab[]).filter((t) => allowed[t]);
@@ -41,6 +43,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       {tab === "documents" ? <Documents tenantId={viewer.tenantId} /> : null}
       {tab === "exits" ? <Exits tenantId={viewer.tenantId} /> : null}
       {tab === "security" ? <Security tenantId={viewer.tenantId} /> : null}
+      {tab === "sso" ? <Sso tenantId={viewer.tenantId} /> : null}
       {tab === "log" ? <Log tenantId={viewer.tenantId} /> : null}
       {tab === "mail" ? <Mail tenantId={viewer.tenantId} /> : null}
       {tab === "jobs" ? <Jobs /> : null}
@@ -198,6 +201,33 @@ async function Security({ tenantId }: { tenantId: string }) {
       <Card title="Act on a user" description="Unlock an account, end its sessions, or require a new password. Every action is audited.">
         <UserSecurityForm />
       </Card>
+    </div>
+  );
+}
+
+async function Sso({ tenantId }: { tenantId: string }) {
+  const c = await prisma.ssoConnection.findUnique({ where: { tenantId } });
+  const h = await headers();
+  const callback = `${h.get("x-forwarded-proto") ?? "http"}://${h.get("x-forwarded-host") ?? h.get("host")}/auth/sso/callback`;
+  const since = new Date(Date.now() - 30 * 86_400_000);
+  const [ok, failed] = await Promise.all([
+    prisma.loginEvent.count({ where: { tenantId, outcome: "SSO_OK", createdAt: { gte: since } } }),
+    prisma.loginEvent.count({ where: { tenantId, outcome: { startsWith: "SSO_", not: "SSO_OK" }, createdAt: { gte: since } } }),
+  ]);
+  return (
+    <div className="stack gap-4">
+      <div className="grid grid-3">
+        <Stat label="Status" value={c?.enabled ? (c.enforced ? "Required" : "On") : "Off"} meta={c ? c.providerName : "Not set up"} />
+        <Stat label="SSO sign-ins, 30 days" value={String(ok)} meta={c?.lastLoginAt ? `last ${when(c.lastLoginAt)}` : "none yet"} />
+        <Stat label="Refused, 30 days" value={String(failed)} meta="see the sign-in log" />
+      </div>
+      <Card title="Your identity provider" description="OpenID Connect with the authorization code flow and PKCE. People are matched to existing logins by verified email; SSO never creates accounts.">
+        <div className="stack gap-3">
+          <div className="text-sm">Register this redirect URI with your provider: <code>{callback}</code></div>
+          <SsoForm c={c ? { providerName: c.providerName, issuer: c.issuer, clientId: c.clientId, scopes: c.scopes, allowedDomains: c.allowedDomains, enabled: c.enabled, enforced: c.enforced, hasSecret: !!c.clientSecretEnc } : null} />
+        </div>
+      </Card>
+      {c ? <Card title="Check" description={c.lastTestedAt ? `Last tested ${when(c.lastTestedAt)}: ${c.lastTestResult}` : "Not tested yet"}><TestSso /></Card> : null}
     </div>
   );
 }

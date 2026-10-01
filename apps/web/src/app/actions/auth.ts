@@ -13,6 +13,7 @@ import {
   passwordIssues, isRecentlyUsed, newPasswordFields, passwordExpired, findResetChallenge,
 } from "@/lib/auth-policy";
 import { requireViewer } from "@/lib/context";
+import { passwordAllowed } from "@keka/services";
 
 /**
  * Sign-in, second factor, password change and reset.
@@ -99,6 +100,12 @@ export async function signIn(_prev: SignInState, formData: FormData): Promise<Si
   if (user.loginDisabled || user.isDeactivated) {
     await logLogin({ tenantId: tenant.id, userId: user.id, email, ip, userAgent, success: false, outcome: "DISABLED" });
     return { error: user.loginDisabled ? "Login for this account has been disabled. Contact your administrator." : "This account is deactivated. Contact your administrator." };
+  }
+
+  // With SSO required, a correct password is not enough unless they manage authentication (the way back in if the IdP breaks).
+  if (!(await passwordAllowed(tenant.id, user.id))) {
+    await logLogin({ tenantId: tenant.id, userId: user.id, email, ip, userAgent, success: false, outcome: "SSO_REQUIRED" });
+    return { error: "Your company signs in with single sign-on. Use the sign-in button above." };
   }
 
   if (await needsSecondFactor(user.id, policy)) {

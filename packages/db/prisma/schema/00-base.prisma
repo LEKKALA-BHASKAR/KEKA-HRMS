@@ -142,6 +142,7 @@ model Tenant {
   apiKeys               ApiKey[]
   webhookEndpoints      WebhookEndpoint[]
   savedReports          SavedReport[]
+  ssoConnection         SsoConnection?
   attendanceDevices     AttendanceDevice[]
   skills                Skill[]
   statutoryFilings      StatutoryFiling[]
