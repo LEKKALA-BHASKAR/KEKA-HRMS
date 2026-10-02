@@ -17,6 +17,8 @@ export interface PopEmployee extends PopMember {
   gender: string | null;
   dateOfBirth: Date | null;
   reportingManagerId: string | null;
+  /** The reporting manager's name, "No manager" when there is none. */
+  manager: string;
   departmentId: string | null; department: string;
   locationId: string | null; location: string;
   businessUnitId: string | null; businessUnit: string;
@@ -44,6 +46,7 @@ export async function loadPopulation(where: Prisma.EmployeeWhereInput): Promise<
     select: {
       id: true, employeeNumber: true, displayName: true, firstName: true, lastName: true, jobTitleName: true,
       gender: true, dateOfBirth: true, dateOfJoining: true, status: true, lastWorkingDay: true, reportingManagerId: true,
+      reportingManager: { select: { displayName: true, firstName: true, lastName: true } },
       departmentId: true, department: { select: { name: true } },
       locationId: true, location: { select: { name: true } },
       businessUnitId: true, businessUnit: { select: { name: true } },
@@ -64,6 +67,7 @@ export async function loadPopulation(where: Prisma.EmployeeWhereInput): Promise<
       gender: e.gender, dateOfBirth: e.dateOfBirth, dateOfJoining: e.dateOfJoining, status: e.status,
       leftOn: leavingDate({ status: e.status, lastWorkingDay: e.lastWorkingDay, exitRecord: e.exitRecord }),
       reportingManagerId: e.reportingManagerId,
+      manager: e.reportingManager ? e.reportingManager.displayName ?? `${e.reportingManager.firstName} ${e.reportingManager.lastName}` : "No manager",
       departmentId: e.departmentId, department: e.department?.name ?? UNASSIGNED,
       locationId: e.locationId, location: e.location?.name ?? UNASSIGNED,
       businessUnitId: e.businessUnitId, businessUnit: e.businessUnit?.name ?? UNASSIGNED,

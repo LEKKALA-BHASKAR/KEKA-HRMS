@@ -3,7 +3,9 @@ import {
   loadPopulation, ratingAt, monthsSinceRaiseAt, onBooks, headcountAt, leaversIn, joinersIn, monthsIn, averageHeadcount,
   growthKpis, previousWindow, windowMonths, attritionTenureBand, attritionAgeBand, sinceRaiseBand, perfBin, countBy, yearsBetween, monthsBetween,
   suppressSmall, ATTRITION_TENURE_BANDS, ATTRITION_AGE_BANDS, SINCE_RAISE_BANDS, PERF_BINS, utcDay,
-  type PopEmployee, type Window,
+  monthlyFlow, annualisedRate, exitKind, isRegretted, attritionByGroup, newHireRetention, newHireRetentionByMonth, probeDay,
+  EXIT_KINDS, REGRET_RATING, NEW_HIRE_DAYS,
+  type PopEmployee, type Window, type GroupAttrition,
 } from "@keka/services";
 import type { Prisma } from "@keka/db";
 import { EXIT_TYPE_LABEL, GENDER_LABEL, TEN_TOKEN, type AnalyticsFilters } from "./filters";
@@ -38,12 +40,13 @@ export interface ChartData {
   rawLabel: string;
 }
 
-export const DIMENSIONS = ["department", "location", "businessUnit", "worker", "band", "gender", "age", "tenure", "sinceRaise", "exitType", "exitReason", "performance"] as const;
+export const DIMENSIONS = ["department", "location", "businessUnit", "worker", "band", "gender", "age", "tenure", "sinceRaise", "exitType", "exitReason", "performance", "manager", "exitKind"] as const;
 export type Dimension = (typeof DIMENSIONS)[number];
 
 export const DIM_LABEL: Record<Dimension, string> = {
   department: "Department", location: "Location", businessUnit: "Business unit", worker: "Worker type", band: "Band",
   gender: "Gender", age: "Age", tenure: "Tenure", sinceRaise: "Months since raise", exitType: "Exit type", exitReason: "Exit reason", performance: "Performance rating",
+  manager: "Reporting manager", exitKind: "Voluntary or involuntary",
 };
 
 const TENURE_LABEL: Record<string, string> = { "<1": "<1 yr", "1-2": "1-2 yrs", "2-3": "2-3 yrs", "3-5": "3-5 yrs", "5-10": "5-10 yrs", "10+": "10+ yrs" };
@@ -67,12 +70,14 @@ export function dimValue(dim: Dimension, e: PopEmployee, d: Date): string {
     case "exitType": return e.exitType ? EXIT_TYPE_LABEL[e.exitType] ?? e.exitType : "—";
     case "exitReason": return e.exitReason ?? "Not recorded";
     case "performance": return perfBin(ratingAt(e, d));
+    case "manager": return e.manager;
+    case "exitKind": return exitKind(e);
   }
 }
 
 const ORDER: Partial<Record<Dimension, readonly string[]>> = {
   tenure: ATTRITION_TENURE_BANDS.map((b) => TENURE_LABEL[b]), age: ATTRITION_AGE_BANDS, sinceRaise: SINCE_RAISE_BANDS, performance: PERF_BINS,
-  gender: ["Female", "Male", "Non-binary", "Prefer not to respond", "Not specified"],
+  gender: ["Female", "Male", "Non-binary", "Prefer not to respond", "Not specified"], exitKind: EXIT_KINDS,
 };
 
 /** The day a person's attributes are read: their last day if they left in the window, else the window's end. */
@@ -194,22 +199,88 @@ export function growthData(pop: PopEmployee[], w: Window) {
   };
 }
 
+/** A KPI card on the Growth & Retention and Attrition Analysis pages. */
+export interface PageKpi { key: string; label: string; value: string; meta: string; info: string; color: string; rawKey?: string; rawText?: string }
+
+const ymdOf = (d: Date) => d.toISOString().slice(0, 10);
+
+/** Everything on Growth & Retention: KPI cards and five charts, from one population. */
+export function growthPage(pop: PopEmployee[], w: Window, asOf: Date): { kpis: PageKpi[]; charts: ChartData[] } {
+  const g = growthData(pop, w);
+  const k = g.kpis;
+  const flow = monthlyFlow(pop, w);
+  const nh = newHireRetention(pop, w, asOf);
+  const byMonth = newHireRetentionByMonth(pop, w, asOf);
+  const lowest = [...flow].sort((a, b) => a.retentionPct - b.retentionPct)[0];
+  const retention: ChartData = {
+    key: "gr-retention", title: "Retention Rate", kind: "bar", pct: true, yLabel: "Retained (%)", legend: "Retention Rate",
+    info: "Of the people on the books on the first day of each month, the share still on the books on its last day.",
+    rows: flow.map((m) => ({ label: m.label, value: m.retentionPct })),
+    insights: [
+      { label: "Retained over the range", value: `${Math.round(k.retentionRate * 1000) / 10}%` },
+      { label: "Lowest month", value: lowest ? `${lowest.label} · ${lowest.retentionPct}%` : "—" },
+      { label: "Opening headcount", value: String(k.opening) },
+    ],
+    raw: g.retained, rawLabel: "Department",
+  };
+  const newHire: ChartData = {
+    key: "gr-newhire", title: `New-hire ${NEW_HIRE_DAYS}-day Retention`, kind: "grouped", yLabel: "Hires (Count)", xLabel: "Joining month",
+    info: `People who joined in each month: still here ${NEW_HIRE_DAYS} days after joining, or gone before. Hires from the last ${NEW_HIRE_DAYS} days are not judged yet.`,
+    rows: byMonth.map((m) => ({ label: m.label, value: m.matured })),
+    series: [{ label: "Retained", values: byMonth.map((m) => m.retained) }, { label: `Left within ${NEW_HIRE_DAYS} days`, values: byMonth.map((m) => m.left) }],
+    insights: [
+      { label: `${NEW_HIRE_DAYS}-day retention`, value: nh.ratePct === null ? "—" : `${nh.ratePct}%` },
+      { label: "Hires judged", value: `${nh.matured} of ${nh.hires}` },
+      { label: `Left within ${NEW_HIRE_DAYS} days`, value: String(nh.left) },
+    ],
+    raw: raw(joinersIn(pop, w), (e) => {
+      const probe = probeDay(e.dateOfJoining);
+      if (probe.getTime() > asOf.getTime()) return `Joined ${ymdOf(e.dateOfJoining)} · too recent`;
+      return onBooks(e, probe) ? `Joined ${ymdOf(e.dateOfJoining)} · retained` : `Joined ${ymdOf(e.dateOfJoining)} · left ${ymdOf(e.leftOn!)}`;
+    }),
+    rawLabel: "Outcome",
+  };
+  const tenure = dimChart("gr-tenure", "Tenure Distribution", "People on the books on the last day of the range, by years in the organisation.", "tenure",
+    pop.filter((e) => onBooks(e, w.to)), { from: w.to, to: w.to }, { xLabel: "Years in Organisation" });
+  const r1 = (x: number) => Math.round(x * 10) / 10;
+  const net = k.closing - k.opening;
+  const kpis: PageKpi[] = [
+    { key: "headcount", label: "Headcount", value: String(k.closing), meta: `${k.opening} at the start · ${net >= 0 ? "+" : ""}${net}`, info: "People on the books on the last day of the range.", color: "#5bc0d0" },
+    { key: "growth", label: "Net Growth", value: `${r1(k.growthRate * 100)}%`, meta: `${k.joiners} joined · ${k.leavers} left`, info: "(Closing − opening) ÷ opening headcount.", color: "#9b87c4", rawKey: "gr-leavers", rawText: "View leavers" },
+    { key: "retention", label: "Retention Rate", value: `${r1(k.retentionRate * 100)}%`, meta: `${k.retained} of ${k.opening} still here`, info: "Share of the people on the books at the start of the range who are still on the books at its end.", color: "#7cc47f", rawKey: "gr-retained", rawText: "View employees" },
+    { key: "newhire", label: `New-hire ${NEW_HIRE_DAYS}-day Retention`, value: nh.ratePct === null ? "—" : `${nh.ratePct}%`, meta: nh.matured ? `${nh.retained} of ${nh.matured} hires · ${nh.pending} too recent` : `${nh.pending} hire${nh.pending === 1 ? "" : "s"} too recent to judge`, info: `Hires in the range still on the books ${NEW_HIRE_DAYS} days after joining.`, color: "#f2c744", rawKey: "gr-newhire", rawText: "View hires" },
+  ];
+  return { kpis, charts: [g.growthChart, g.flowChart, retention, newHire, tenure] };
+}
+
 // ---------------------------------------------------------------------------
 //  Attrition Analysis
 // ---------------------------------------------------------------------------
 
 export const ATTRITION_VIEWS: Array<{ view: string; label: string; group: "time" | "demo"; dim?: Dimension; kind: ChartKind; title: string; xLabel?: string }> = [
   { view: "overall", label: "Overall Attrition", group: "time", kind: "area", title: "Overall Attrition" },
+  { view: "rate", label: "Monthly & Annualised Rate", group: "time", kind: "combo", title: "Attrition Rate" },
   { view: "tenure", label: "Years in Organisation", group: "time", dim: "tenure", kind: "bar", title: "Attrition by Years in Organisation", xLabel: "Years in Organisation" },
   { view: "since-raise", label: "Months since Salary Revision", group: "time", dim: "sinceRaise", kind: "bar", title: "Attrition by Months since Salary Revision", xLabel: "Months since last revision" },
   { view: "age", label: "Age", group: "demo", dim: "age", kind: "bar", title: "Attrition by Age", xLabel: "Age in Years" },
   { view: "gender", label: "Gender", group: "demo", dim: "gender", kind: "donut", title: "Attrition by Gender" },
   { view: "exit-type", label: "Exit Type", group: "demo", dim: "exitType", kind: "donut", title: "Exit Type" },
+  { view: "kind", label: "Voluntary vs Involuntary", group: "demo", dim: "exitKind", kind: "donut", title: "Voluntary vs Involuntary" },
   { view: "exit-reason", label: "Exit Reason", group: "demo", dim: "exitReason", kind: "bar", title: "Exit Reason", xLabel: "Exit Reason" },
+  { view: "regretted", label: "Regretted Exits", group: "demo", dim: "department", kind: "bar", title: "Regretted Exits", xLabel: "Department" },
   { view: "performance", label: "Performance Rating", group: "demo", dim: "performance", kind: "bar", title: "Performance Rating", xLabel: "Performance Rating" },
   { view: "department", label: "Department", group: "demo", dim: "department", kind: "bar", title: "Attrition by Department", xLabel: "Department" },
   { view: "location", label: "Location", group: "demo", dim: "location", kind: "bar", title: "Attrition by Location", xLabel: "Location" },
+  { view: "manager", label: "Manager", group: "demo", dim: "manager", kind: "bar", title: "Attrition by Manager", xLabel: "Reporting manager" },
 ];
+
+/** Views whose groups have a headcount, so a rate per group means something. */
+export const RATE_TABLE_VIEWS = new Set(["tenure", "department", "location", "manager"]);
+
+/** Voluntary exits by people rated at or above REGRET_RATING on their last day. */
+export function regrettedLeavers(leavers: PopEmployee[]): PopEmployee[] {
+  return leavers.filter((e) => isRegretted(e, ratingAt(e, e.leftOn!)));
+}
 
 const pct1 = (n: number) => `${Math.round(n * 10) / 10}%`;
 
@@ -239,11 +310,53 @@ export function attritionChart(view: string, pop: PopEmployee[], w: Window, f: A
       raw: raw(leavers, (e) => e.leftOn!.toISOString().slice(0, 10)), rawLabel: "Last working day",
     };
   }
+  if (def.view === "rate") {
+    // Bars: leavers ÷ average headcount in the month. Line: the same over the
+    // twelve months ending that month, which is the annualised figure.
+    const months = monthsIn(w);
+    const monthly = months.map((m) => {
+      const mw = { from: m.start, to: m.end };
+      const avg = (headcountAt(pop, m.start) + headcountAt(pop, m.end)) / 2;
+      return avg ? Math.round((leaversFor(pop, mw, f).length / avg) * 1000) / 10 : 0;
+    });
+    const trailing = months.map((m) => {
+      const tw = { from: new Date(Date.UTC(m.year, m.month - 12, 1)), to: m.end };
+      return annualisedRate(leaversFor(pop, tw, f).length, averageHeadcount(pop, tw), 12);
+    });
+    const ann = annualisedRate(leavers.length, averageHeadcount(pop, w), windowMonths(w));
+    return {
+      key: "at-rate", title: def.title, kind: "combo", pct: true, yLabel: "Monthly attrition (%)", legend: "Monthly rate",
+      info: "Bars: leavers in the month ÷ average headcount that month. Line: leavers in the twelve months to that month ÷ their average headcount.",
+      rows: months.map((m, i) => ({ label: m.label, value: monthly[i] })),
+      line: { label: "Annualised (trailing 12 months)", values: trailing, axisLabel: "Annualised (%)" },
+      insights: [
+        { label: "Annualised over the range", value: `${ann}%` },
+        { label: "Average monthly rate", value: pct1(ann / 12) },
+        { label: "Latest trailing 12 months", value: trailing.length ? `${trailing[trailing.length - 1]}%` : "—" },
+      ],
+      raw: raw(leavers, (e) => e.leftOn!.toISOString().slice(0, 10)), rawLabel: "Last working day",
+    };
+  }
+  if (def.view === "regretted") {
+    const voluntary = leavers.filter((e) => exitKind(e) === "Voluntary");
+    const regretted = regrettedLeavers(leavers);
+    const unrated = voluntary.filter((e) => ratingAt(e, e.leftOn!) === null).length;
+    const c = dimChart("at-regretted", def.title, `Voluntary exits by people whose last final rating was ${REGRET_RATING} or higher, by department. There is no separate "regretted" flag on an exit, so the rating decides.`,
+      "department", regretted, w, { xLabel: def.xLabel, legend: "Regretted exits", dropEmpty: true });
+    c.raw = raw(regretted, (e) => `${e.department} · rated ${ratingAt(e, e.leftOn!)}`);
+    c.rawLabel = "Department and rating";
+    c.insights = [
+      { label: "Regretted exits", value: String(regretted.length) },
+      { label: "Share of voluntary exits", value: voluntary.length ? pct1((regretted.length / voluntary.length) * 100) : "—" },
+      { label: "Voluntary exits with no rating", value: String(unrated) },
+    ];
+    return c;
+  }
   const c = dimChart(`at-${def.view}`, def.title, `People who left in the range, by ${DIM_LABEL[def.dim!].toLowerCase()} on their last day.`, def.dim!, leavers, w,
     { kind: def.kind, xLabel: def.xLabel, legend: "Attrition Count", dropEmpty: def.dim === "age" || def.dim === "exitReason" });
   const total = leavers.length;
   c.insights = def.kind === "donut"
-    ? c.rows.filter((r) => r.value > 0).map((r) => ({ label: `${def.dim === "exitType" ? "Attrition by" : "Attrition by"} ${r.label} ${def.dim === "exitType" ? "%age" : "count"}`, value: def.dim === "exitType" ? pct1(total ? (r.value / total) * 100 : 0) : String(r.value) }))
+    ? c.rows.filter((r) => r.value > 0).map((r) => ({ label: `Attrition by ${r.label} ${def.dim === "exitType" || def.dim === "exitKind" ? "%age" : "count"}`, value: def.dim === "exitType" || def.dim === "exitKind" ? pct1(total ? (r.value / total) * 100 : 0) : String(r.value) }))
     : (() => {
         const top = [...c.rows].sort((a, b) => b.value - a.value)[0];
         return [
@@ -253,6 +366,30 @@ export function attritionChart(view: string, pop: PopEmployee[], w: Window, f: A
         ];
       })();
   return c;
+}
+
+/** KPI cards over Attrition Analysis, from the same leavers as the charts. */
+export function attritionPageKpis(pop: PopEmployee[], w: Window, f: AnalyticsFilters): PageKpi[] {
+  const leavers = leaversFor(pop, w, f);
+  const avg = averageHeadcount(pop, w);
+  const n = windowMonths(w);
+  const by = (k: string) => leavers.filter((e) => exitKind(e) === k).length;
+  const vol = by("Voluntary"), invol = by("Involuntary");
+  const regretted = regrettedLeavers(leavers).length;
+  return [
+    { key: "rate", label: "Annualised Attrition", value: `${annualisedRate(leavers.length, avg, n)}%`, meta: `${leavers.length} left · average headcount ${Math.round(avg)}`, info: `Leavers ÷ average headcount, scaled to a year (× 12 ÷ ${n}).`, color: "#e8735a", rawKey: "at-overall", rawText: "View leavers" },
+    { key: "voluntary", label: "Voluntary Attrition", value: `${annualisedRate(vol, avg, n)}%`, meta: `${vol} voluntary · ${invol} involuntary · ${leavers.length - vol - invol} other`, info: "Exits the person chose (by exit reason, else resignations), annualised.", color: "#9b87c4", rawKey: "at-kind", rawText: "View exits" },
+    { key: "monthly", label: "Average Monthly Rate", value: `${Math.round((annualisedRate(leavers.length, avg, n) / 12) * 10) / 10}%`, meta: `${Math.round((leavers.length / n) * 10) / 10} leavers a month`, info: "Leavers ÷ average headcount, per month of the range.", color: "#5bc0d0" },
+    { key: "regretted", label: "Regretted Exits", value: String(regretted), meta: vol ? `${Math.round((regretted / vol) * 100)}% of voluntary exits` : "No voluntary exits", info: `Voluntary exits by people whose last final rating was ${REGRET_RATING} or higher.`, color: "#f2c744", rawKey: "at-regretted", rawText: "View exits" },
+  ];
+}
+
+/** Headcount, leavers and annualised rate per group, for the views that have one. */
+export function attritionRateTable(view: string, pop: PopEmployee[], w: Window, f: AnalyticsFilters): GroupAttrition[] | null {
+  const def = ATTRITION_VIEWS.find((v) => v.view === view);
+  if (!def?.dim || !RATE_TABLE_VIEWS.has(view)) return null;
+  const dim = def.dim;
+  return attritionByGroup(pop, leaversFor(pop, w, f), w, (e, at) => dimValue(dim, e, at), ORDER[dim]);
 }
 
 // ---------------------------------------------------------------------------
@@ -420,7 +557,7 @@ export function computedSummary(d: Digest): string[] {
 export function dayString(d: Date): string { return utcDay(d).toISOString().slice(0, 10); }
 
 /** Any chart by its key, for the raw-data drawer and the export route. */
-export function chartByKey(key: string, pop: PopEmployee[], w: Window, f: AnalyticsFilters, opts: { measure?: "count" | "pct"; groupBy?: Dimension | null; asOf?: Date } = {}): ChartData | null {
+export function chartByKey(key: string, pop: PopEmployee[], w: Window, f: AnalyticsFilters, opts: { measure?: "count" | "pct"; groupBy?: Dimension | null; asOf?: Date; today?: Date } = {}): ChartData | null {
   if (key.startsWith("hc-")) return headcountChart(key, pop, opts.asOf ? { from: opts.asOf, to: opts.asOf } : w);
   if (key === "gr-growth" || key === "gr-flow" || key === "gr-retained" || key === "gr-leavers") {
     const g = growthData(pop, w);
@@ -431,6 +568,7 @@ export function chartByKey(key: string, pop: PopEmployee[], w: Window, f: Analyt
       ? { ...base, key, title: "Retained employees", raw: g.retained, rawLabel: "Department" }
       : { ...base, key, title: "Employees who left", raw: g.leaversRaw, rawLabel: "Last working day" };
   }
+  if (key === "gr-retention" || key === "gr-newhire" || key === "gr-tenure") return growthPage(pop, w, opts.today ?? utcDay(new Date())).charts.find((c) => c.key === key) ?? null;
   if (key.startsWith("at-")) return attritionChart(key.slice(3), pop, w, f, opts.measure ?? "count");
   if (key.startsWith("sb-")) return attritionWidget(key.slice(3), pop, w, f, opts.groupBy ?? null);
   if (key.startsWith("hb-")) return headcountWidget(key.slice(3), pop, w, f, opts.groupBy ?? null);
