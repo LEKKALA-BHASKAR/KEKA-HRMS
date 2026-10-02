@@ -4,6 +4,7 @@ import { PERMISSIONS } from "@keka/rbac";
 import { requireAuth } from "@/lib/context";
 import { PageHead, Card, Badge, Empty, Callout } from "@/components/ui";
 import { AUDIT_MODULES, AUDIT_ACTIONS, auditWhere, auditQuery, type AuditFilters } from "./filters";
+import { DashboardTabs } from "../../analytics/_components/dashboard";
 
 const P = PERMISSIONS;
 const PAGE_SIZE = 50;
