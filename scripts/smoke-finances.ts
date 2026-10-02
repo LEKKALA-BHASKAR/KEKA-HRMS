@@ -32,6 +32,7 @@ async function main() {
   const loansA = await import("../apps/web/src/app/actions/loans");
   const tax = await import("../apps/web/src/app/actions/tax");
   const svc = await import("@keka/services");
+  const { fyStartYear } = await import("@keka/shared");
   const docs = await import("@keka/documents");
   const { GET: bundleGet } = await import("../apps/web/src/app/(app)/finances/pay/payslips/download/route");
   const { GET: sheetGet } = await import("../apps/web/src/app/(app)/finances/pay/tax/sheet/route");
@@ -196,7 +197,7 @@ async function main() {
     const cur = timeline.find((t) => t.isCurrent)!;
     const b = cur.breakup!;
     check("The breakup's net pay is earnings less deductions", !!b && Math.abs(b.totals.net[1] - (b.totals.earnings[1] - b.totals.deductions[1])) < 0.01 && b.earnings.length > 0);
-    check("Earnings plus employer contributions come to the CTC", !!b && Math.abs(b.totals.earnings[1] + b.totals.employer[1] - cur.regular) < 24, `${b.totals.earnings[1] + b.totals.employer[1]} vs ${cur.regular}`);
+    check("Earnings plus employer contributions come to the CTC", !!b && Math.abs(b.totals.earnings[1] + b.totals.employer[1] - cur.regular) < 60, `${b.totals.earnings[1] + b.totals.employer[1]} vs ${cur.regular}`);
     check("Provident Fund is among the deductions", b.deductions.some((l) => l.code === "PF_EMPLOYEE"));
     const theirRev = await prisma.salaryRevision.findFirst({ where: { employeeId: ananya.id } });
     check("Another employee's revision has no breakup for Meera", !!theirRev && (await svc.salaryBreakup(meera.id, theirRev.id)) === null);

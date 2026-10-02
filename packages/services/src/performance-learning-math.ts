@@ -129,13 +129,13 @@ export type QuestionOption = { id: string; text: string };
 export interface QuestionInput { type: QuestionKind; prompt: string; options: QuestionOption[]; correctOptionIds: string[] }
 
 /** "2h 49m", "0h 00m" — Keka's course-structure duration. */
-export function formatMinutes(total: number): string {
+export function formatCourseDuration(total: number): string {
   const m = Math.max(0, Math.round(total));
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
 }
 
 /** Whole-number percent of modules completed. */
-export function courseProgress(totalModules: number, completedModules: number): number {
+export function courseCompletionPct(totalModules: number, completedModules: number): number {
   if (totalModules <= 0) return 0;
   return Math.min(100, Math.round((Math.min(completedModules, totalModules) / totalModules) * 100));
 }

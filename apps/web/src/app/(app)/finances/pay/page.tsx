@@ -72,7 +72,7 @@ export default async function MySalaryPage() {
             <EmptyState title="No salary on record">Your compensation has not been set up yet. It will appear here once your payroll team adds it.</EmptyState>
           ) : (
             <ol className={s.timeline}>
-              {timeline.map((t, i) => {
+              {timeline.map((t) => {
                 const terms: Array<[string, number]> = [["Regular Salary", t.regular]];
                 if (t.other > 0) terms.push(["Other", t.other]);
                 if (t.bonuses.length) terms.push(["Bonus", t.bonus]);
@@ -87,7 +87,7 @@ export default async function MySalaryPage() {
                       </div>
                       <div className={s.tlBody}>
                         <details className={s.salaryBox}>
-                          <summary aria-label={`${t.isJoining ? "Joining salary" : "Salary revision"} effective ${formatDate(t.effectiveFrom)}`}>
+                          <summary>
                             <IconChevron className={s.chev} width={20} height={20} />
                             {terms.map(([label, value], k) => (
                               <span key={label} className={s.term}>

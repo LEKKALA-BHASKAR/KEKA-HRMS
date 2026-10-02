@@ -81,9 +81,21 @@ async function collectAllReports(rootId: string, tenantId: string): Promise<Set<
 export const getViewer = cache(async (): Promise<Viewer | null> => {
   const session = await readSession();
   if (!session) return null;
+  return loadViewer(session.userId, session.tenantId, session.sv ?? 0);
+});
 
+/**
+ * Another user's authorisation context, in the same tenant — only so that
+ * something they shared (a storyboard) can be computed at their scope. It is
+ * never used to act as them.
+ */
+export async function viewerForUser(userId: string, tenantId: string): Promise<Viewer | null> {
+  return loadViewer(userId, tenantId);
+}
+
+async function loadViewer(userId: string, tenantId: string, sessionVersion?: number): Promise<Viewer | null> {
   const user = await prisma.user.findUnique({
-    where: { id: session.userId },
+    where: { id: userId },
     include: {
       tenant: { include: { visibilitySetting: true } },
       employee: {
@@ -100,12 +112,12 @@ export const getViewer = cache(async (): Promise<Viewer | null> => {
     },
   });
 
-  if (!user || user.tenantId !== session.tenantId) return null;
+  if (!user || user.tenantId !== tenantId) return null;
   // A disabled login takes effect immediately, with no grace period.
   if (user.loginDisabled || user.isDeactivated) return null;
   // "Sign out everywhere" and password changes bump the version; older
   // sessions stop working on their next request.
-  if ((session.sv ?? 0) !== user.sessionVersion) return null;
+  if (sessionVersion !== undefined && sessionVersion !== user.sessionVersion) return null;
 
   const grants: RoleGrant[] = user.roleAssignments.map((a) => ({
     roleId: a.roleId,
@@ -198,7 +210,7 @@ export const getViewer = cache(async (): Promise<Viewer | null> => {
     roleNames: [...grants.map((g) => g.roleName), ...implicitNames],
     permissions: effectivePermissions(base),
   };
-});
+}
 
 /** Redirects to sign-in when there is no valid session. */
 export async function requireViewer(): Promise<Viewer> {

@@ -3,6 +3,7 @@ import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { requireAuth } from "@/lib/context";
 import { PageHead, Card, Badge, Empty, Callout } from "@/components/ui";
+import { DashboardTabs } from "../../analytics/_components/dashboard";
 
 const P = PERMISSIONS;
 const PAGE_SIZE = 50;
@@ -39,6 +40,7 @@ export default async function AuditPage({
 
   return (
     <>
+      <DashboardTabs viewer={viewer} active="audit" />
       <PageHead
         title="Audit logs"
         subtitle={`${total} entries · who, when, what, and the old and new values`}
@@ -56,13 +58,13 @@ export default async function AuditPage({
         <form className="row gap-2 wrap" style={{ padding: 14, borderBottom: "1px solid var(--border)" }}>
           <select className="select" name="module" defaultValue={sp.module ?? ""} style={{ maxWidth: 180 }}>
             <option value="">All modules</option>
-            {["EMPLOYEE", "PAYROLL", "LEAVE", "ATTENDANCE", "ROLE", "AUTH", "FINANCE"].map((m) => (
+            {["EMPLOYEE", "PAYROLL", "LEAVE", "ATTENDANCE", "ROLE", "AUTH", "FINANCE", "REPORT", "LIFECYCLE", "HELPDESK", "ANALYTICS", "ASSET", "PROJECTS", "SYSTEM"].map((m) => (
               <option key={m} value={m}>{m.toLowerCase()}</option>
             ))}
           </select>
           <select className="select" name="action" defaultValue={sp.action ?? ""} style={{ maxWidth: 180 }}>
             <option value="">All actions</option>
-            {["CREATE", "UPDATE", "DELETE", "APPROVE", "REJECT", "LOCK", "UNLOCK", "EXPORT", "LOGIN", "LOGOUT"].map((a) => (
+            {["CREATE", "UPDATE", "DELETE", "APPROVE", "REJECT", "LOCK", "UNLOCK", "EXPORT", "VIEW", "LOGIN", "LOGOUT"].map((a) => (
               <option key={a} value={a}>{a.toLowerCase()}</option>
             ))}
           </select>

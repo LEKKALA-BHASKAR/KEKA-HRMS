@@ -1,6 +1,6 @@
 "use server";
 
-import { prisma, Prisma } from "@keka/db";
+import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { safeLinkUrl } from "@keka/services";
 import { requireViewer, can, type Viewer } from "@/lib/context";

@@ -1,6 +1,6 @@
 import { prisma } from "@keka/db";
 import { notify } from "./lifecycle";
-import { courseProgress, gradeAttempt, validateQuestion, type QuestionInput } from "./performance-learning-math";
+import { courseCompletionPct, gradeAttempt, validateQuestion, type QuestionInput } from "./performance-learning-math";
 
 export * from "./performance-learning-math";
 
@@ -172,7 +172,7 @@ export async function recomputeEnrolment(enrolmentId: string): Promise<{ progres
   if (!e) return { progress: 0, completed: false };
   const ids = new Set(e.program.modules.map((m) => m.id));
   const done = e.moduleProgress.filter((p) => ids.has(p.moduleId)).length;
-  const progress = courseProgress(ids.size, done);
+  const progress = courseCompletionPct(ids.size, done);
   const completed = ids.size > 0 && progress >= 100;
   const best = e.attempts.reduce<number | null>((b, a) => (b === null || Number(a.scorePercent) > b ? Number(a.scorePercent) : b), null);
   await prisma.trainingEnrolment.update({
