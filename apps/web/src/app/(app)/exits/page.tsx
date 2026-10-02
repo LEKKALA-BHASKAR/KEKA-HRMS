@@ -78,6 +78,7 @@ export default async function ExitsPage({ searchParams }: { searchParams: Promis
       <div className="tabs" style={{ marginTop: 16 }}>
         <Link href="/exits" className={`tab${active ? " active" : ""}`}>In progress</Link>
         <Link href="/exits?view=closed" className={`tab${!active ? " active" : ""}`}>Closed</Link>
+        {canAny(viewer, [P.FNF_MANAGE, P.FNF_APPROVE]) ? <Link href="/exits/settlements" className="tab">Settlements report</Link> : null}
       </div>
       <Card tight>
         {exits.length === 0 ? <Empty title={active ? "No exits in progress" : "No closed exits"} /> : (
