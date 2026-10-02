@@ -29,6 +29,7 @@ export * from "./finances";
 export * from "./analytics";
 export * from "./assets";
 export * from "./helpdesk";
+export * from "./helpdesk-stats";
 export * from "./home-wall";
 export * from "./import-math";
 export * from "./custom-fields-math";

@@ -155,7 +155,7 @@ function TimeToday({ today, punches, payDay, openRequests }: {
         <Link href="/me/leave" className={s.fact}>
           Your open requests <strong>{openRequests}</strong>
         </Link>
-        <Link href="/helpdesk?view=mine" className={s.fact}><strong>Ask HR</strong></Link>
+        <Link href="/me/helpdesk?new=1" className={s.fact}><strong>Ask HR</strong></Link>
       </div>
     </section>
   );
