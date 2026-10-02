@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
+import { helpdeskScope, hasHelpdeskScope, helpdeskScopeWhere, TICKET_ACTIVE_STATUSES } from "@keka/services";
 import { requireViewer, can } from "@/lib/context";
 import { AppShell } from "@/components/shell";
 import { buildNav, quickActions, settingsLink } from "@/lib/nav";
@@ -134,6 +135,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         })
       : Promise.resolve(0),
   ]);
+  // Category heads and agents work tickets without HELPDESK_MANAGE; the badge counts their queue.
+  const hdScope = await helpdeskScope(viewer.tenantId, viewer.user.id, can(viewer, P.HELPDESK_MANAGE));
+  const openTickets = hasHelpdeskScope(hdScope)
+    ? await prisma.helpdeskTicket.count({ where: { tenantId: viewer.tenantId, ...helpdeskScopeWhere(hdScope), status: { in: TICKET_ACTIVE_STATUSES } } })
+    : 0;
   const pendingApprovals = pendingLeave + pendingAttendance + pendingPayroll + pendingExits + myTasks + pendingSheets + pendingCompOff + pendingEncash + myProbationReviews;
 
   // The navigation is assembled from permissions, so a viewer never sees a
@@ -142,8 +148,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     approvals: pendingApprovals, leave: pendingLeave + pendingCompOff + pendingEncash, attendance: pendingAttendance,
     surveys: pendingSurveys, learning: myCourses, exits: pendingExits, runs: openRunCount,
     documents: pendingDocuments, acks: pendingAcks, sheets: pendingSheets, notifications: unreadNotifications,
-    probation: probationsToDecide,
+    probation: probationsToDecide, tickets: openTickets,
   }, {
+    isHelpdeskAgent: hasHelpdeskScope(hdScope),
     hasExit: !!myExit, managesProject: managedProjects > 0,
     welcomeDot: !!myProfile && myProfile.profileCompletion < 100,
   });
