@@ -535,7 +535,7 @@ export async function remindAcknowledgementAction(_prev: ActionState, fd: FormDa
     await prisma.$transaction(async (tx) => {
       await tx.assetAssignment.update({ where: { id: r.id }, data: { ackRemindedAt: new Date(), ackRemindCount: { increment: 1 } } });
       await recordAssetEvent(tx, { tenantId: viewer.tenantId, assetId: r.assetId, kind: "ACK_REMINDED", employeeId: r.employeeId, actorId: viewer.user.id, actorLabel: actorLabel(viewer) });
-      await notify({ tenantId: viewer.tenantId, userIds: [r.employee.userId], kind: "ASSET", title: `Please acknowledge ${r.asset.name ?? r.asset.assetType.name} (${r.asset.assetTag})`, body: "Confirm that you have received the asset assigned to you.", link: "/me/assets", email: true, relatedType: "AssetAssignment", relatedId: r.id }, tx);
+      await notify({ tenantId: viewer.tenantId, userIds: [r.employee.userId], kind: "ASSET", title: `Please acknowledge ${r.asset.name ?? r.asset.assetType.name} (${r.asset.assetTag})`, body: "Confirm that you have received the asset assigned to you.", link: "/me/assets", email: true, relatedType: "AssetAssignment", relatedId: r.id, event: "ASSET_ACK_REMINDER", employeeIds: [r.employeeId] }, tx);
     });
     sent++;
   }

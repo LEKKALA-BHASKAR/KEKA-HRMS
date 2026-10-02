@@ -900,7 +900,7 @@ export async function removeStructureLine(_prev: ActionState, formData: FormData
 const ruleSchema = z.object({
   payGroupId: zId(),
   name: zName(120),
-  action: z.enum(["LOCK_PAYROLL", "COMPENSATION_CHANGE"]),
+  action: z.enum(["LOCK_PAYROLL", "COMPENSATION_CHANGE", "JOB_CHANGE"]),
 });
 
 export async function saveApprovalRule(_prev: ActionState, formData: FormData): Promise<ActionState> {

@@ -14,8 +14,8 @@ import { notify } from "./lifecycle";
  * run, apply the revision) when a request comes back APPROVED or REJECTED.
  */
 
-export type ApprovalKind = "LOCK_PAYROLL" | "COMPENSATION_CHANGE";
-type Payload = { chain: string[]; ruleId: string; ruleName: string; revisionId?: string; employeeId?: string; summary?: string };
+export type ApprovalKind = "LOCK_PAYROLL" | "COMPENSATION_CHANGE" | "JOB_CHANGE";
+type Payload = { chain: string[]; ruleId: string; ruleName: string; revisionId?: string; jobChangeId?: string; employeeId?: string; summary?: string };
 interface Comment { level: number; userId: string; decision: "APPROVE" | "REJECT" | "SKIP" | "WITHDRAW"; comment?: string | null; at: string }
 
 async function rolesOf(userId: string): Promise<Set<string>> {
@@ -58,7 +58,7 @@ async function notifyLevel(tenantId: string, roleId: string, title: string, link
  */
 export async function openApproval(input: {
   tenantId: string; payGroupId: string; action: ApprovalKind; requestedBy: string; runId?: string | null;
-  revisionId?: string; employeeId?: string; summary: string; link: string;
+  revisionId?: string; jobChangeId?: string; employeeId?: string; summary: string; link: string;
 }): Promise<{ required: false } | { required: true; requestId: string; status: "PENDING" | "APPROVED" }> {
   const found = await approvalRuleFor(input.payGroupId, input.action);
   if (!found) return { required: false };
@@ -67,7 +67,7 @@ export async function openApproval(input: {
   const level = nextLevel(chain, 0, maker);
   const now = new Date().toISOString();
   const comments: Comment[] = chain.slice(0, level === -1 ? chain.length : level).map((_, i) => ({ level: i, userId: input.requestedBy, decision: "SKIP", comment: "Requester holds this role", at: now }));
-  const payload: Payload = { chain, ruleId: rule.id, ruleName: rule.name, revisionId: input.revisionId, employeeId: input.employeeId, summary: input.summary };
+  const payload: Payload = { chain, ruleId: rule.id, ruleName: rule.name, revisionId: input.revisionId, jobChangeId: input.jobChangeId, employeeId: input.employeeId, summary: input.summary };
   const req = await prisma.payrollApprovalRequest.create({
     data: {
       runId: input.runId ?? null, action: input.action, status: level === -1 ? "APPROVED" : "PENDING", currentLevel: level === -1 ? chain.length - 1 : level,
@@ -93,7 +93,7 @@ async function loadRequest(tenantId: string, requestId: string) {
 }
 
 export async function decideApproval(input: { tenantId: string; requestId: string; userId: string; approve: boolean; comment?: string | null; link: string }):
-  Promise<{ ok: false; message: string } | { ok: true; message: string; outcome: "ADVANCED" | "APPROVED" | "REJECTED"; action: ApprovalKind; runId: string | null; revisionId?: string }> {
+  Promise<{ ok: false; message: string } | { ok: true; message: string; outcome: "ADVANCED" | "APPROVED" | "REJECTED"; action: ApprovalKind; runId: string | null; revisionId?: string; jobChangeId?: string }> {
   const loaded = await loadRequest(input.tenantId, input.requestId);
   if (!loaded) return { ok: false, message: "That request was not found." };
   const { req, payload, comments } = loaded;
@@ -108,7 +108,7 @@ export async function decideApproval(input: { tenantId: string; requestId: strin
   if (!input.approve && !input.comment?.trim()) return { ok: false, message: "Give a reason for rejecting." };
   const now = new Date();
   const log: Comment[] = [...comments, { level: req.currentLevel, userId: input.userId, decision: input.approve ? "APPROVE" : "REJECT", comment: input.comment?.trim() || null, at: now.toISOString() }];
-  const base = { action: req.action as ApprovalKind, runId: req.runId, revisionId: payload.revisionId };
+  const base = { action: req.action as ApprovalKind, runId: req.runId, revisionId: payload.revisionId, jobChangeId: payload.jobChangeId };
   if (!input.approve) {
     await prisma.payrollApprovalRequest.update({ where: { id: req.id }, data: { status: "REJECTED", resolvedAt: now, comments: log as unknown as Prisma.InputJsonValue } });
     await notify({ tenantId: input.tenantId, userIds: [req.requestedBy], kind: "PAYROLL", title: `Rejected: ${payload.summary ?? payload.ruleName}`, body: input.comment, link: input.link });
@@ -126,7 +126,7 @@ export async function decideApproval(input: { tenantId: string; requestId: strin
   return { ok: true, outcome: "APPROVED", message: "Approved by every level.", ...base };
 }
 
-export async function withdrawApprovalRequest(tenantId: string, requestId: string, userId: string): Promise<{ ok: boolean; message: string; action?: ApprovalKind; runId?: string | null; revisionId?: string }> {
+export async function withdrawApprovalRequest(tenantId: string, requestId: string, userId: string): Promise<{ ok: boolean; message: string; action?: ApprovalKind; runId?: string | null; revisionId?: string; jobChangeId?: string }> {
   const loaded = await loadRequest(tenantId, requestId);
   if (!loaded) return { ok: false, message: "That request was not found." };
   const { req, payload, comments } = loaded;
@@ -134,7 +134,7 @@ export async function withdrawApprovalRequest(tenantId: string, requestId: strin
   if (req.requestedBy !== userId) return { ok: false, message: "Only the person who raised it can withdraw it." };
   const log = [...comments, { level: req.currentLevel, userId, decision: "WITHDRAW", at: new Date().toISOString() }];
   await prisma.payrollApprovalRequest.update({ where: { id: req.id }, data: { status: "WITHDRAWN", resolvedAt: new Date(), comments: log as unknown as Prisma.InputJsonValue } });
-  return { ok: true, message: "Withdrawn.", action: req.action as ApprovalKind, runId: req.runId, revisionId: payload.revisionId };
+  return { ok: true, message: "Withdrawn.", action: req.action as ApprovalKind, runId: req.runId, revisionId: payload.revisionId, jobChangeId: payload.jobChangeId };
 }
 
 /** Requests waiting on a role this user holds, newest first. */

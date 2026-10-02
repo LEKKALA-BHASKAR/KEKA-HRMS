@@ -27,7 +27,7 @@ export default async function SurveysPage({ searchParams }: { searchParams: Prom
     me
       ? prisma.survey.findMany({
           where: {
-            tenantId: viewer.tenantId, status: "ACTIVE",
+            tenantId: viewer.tenantId, status: "ACTIVE", kind: { not: "EXIT" },
             participants: { none: { employeeId: me.id } },
             OR: [{ departmentIds: { isEmpty: true } }, { departmentIds: { has: me.departmentId ?? "-" } }],
           },
@@ -37,14 +37,14 @@ export default async function SurveysPage({ searchParams }: { searchParams: Prom
       : Promise.resolve([]),
     me
       ? prisma.surveyParticipant.findMany({
-          where: { employeeId: me.id, survey: { tenantId: viewer.tenantId } },
+          where: { employeeId: me.id, survey: { tenantId: viewer.tenantId, kind: { not: "EXIT" } } },
           orderBy: { submittedAt: "desc" }, take: 12,
           include: { survey: { select: { id: true, title: true, kind: true, status: true } } },
         })
       : Promise.resolve([]),
     canResults
       ? prisma.survey.findMany({
-          where: { tenantId: viewer.tenantId, ...(canManage ? {} : { status: { not: "DRAFT" } }) },
+          where: { tenantId: viewer.tenantId, kind: { not: "EXIT" }, ...(canManage ? {} : { status: { not: "DRAFT" } }) },
           orderBy: [{ status: "asc" }, { createdAt: "desc" }],
           include: { _count: { select: { participants: true, questions: true } } },
         })

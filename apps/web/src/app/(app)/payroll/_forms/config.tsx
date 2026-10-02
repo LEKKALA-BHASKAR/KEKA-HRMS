@@ -341,6 +341,7 @@ export function ApprovalRuleForm({ payGroupId, roles }: { payGroupId: string; ro
               <SelectInput name="action" state={state} options={[
                 { value: "LOCK_PAYROLL", label: "Locking payroll" },
                 { value: "COMPENSATION_CHANGE", label: "Compensation changes" },
+                { value: "JOB_CHANGE", label: "Promotions and transfers" },
               ]} />
             </Field>
           </div>

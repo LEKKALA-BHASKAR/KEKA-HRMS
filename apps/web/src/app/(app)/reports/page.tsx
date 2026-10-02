@@ -4,6 +4,7 @@ import { formatINR, formatDate, fyLabel } from "@keka/shared";
 import { requireAuth } from "@/lib/context";
 import { reportsFor, defaultParams, type Column, type ReportResult } from "@/lib/reports";
 import { PageHead, Card, Empty } from "@/components/ui";
+import { ReportSchedules } from "./schedules";
 
 function Cell({ v, c }: { v: unknown; c: Column }) {
   if (v === null || v === undefined || v === "") return <span className="subtle">—</span>;
@@ -49,6 +50,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           </div>
         </Card>
         {report && result ? (
+          <div className="stack gap-4">
           <Card tight title={report.title} description={report.description}
             action={
               <div className="row gap-2">
@@ -92,6 +94,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
             )}
             {result.notes?.length && result.rows.length ? <div className="text-xs subtle" style={{ padding: "10px 18px" }}>{result.notes.join(" ")}</div> : null}
           </Card>
+          <ReportSchedules viewer={viewer} reportKey={report.key} title={report.title} />
+          </div>
         ) : <Card><Empty title="No reports available for your role" /></Card>}
       </div>
     </>

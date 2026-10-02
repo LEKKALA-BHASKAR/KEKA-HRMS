@@ -11,6 +11,8 @@
  *   tsx scripts/jobs.ts leave-year-end        nightly; closes ended leave years (carry forward, pay out, lapse)
  *   tsx scripts/jobs.ts invoices              nightly; marks unpaid invoices past due as overdue
  *   tsx scripts/jobs.ts ledger-check          nightly; fails if any tenant's books do not balance
+ *   tsx scripts/jobs.ts job-changes           nightly; applies approved promotions/transfers whose effective date has come
+ *   tsx scripts/jobs.ts scheduled-reports     hourly (or nightly); emails the CSV of every scheduled report that is due
  *   tsx scripts/jobs.ts nightly               all of the nightly jobs (+ accrual on the 1st)
  *
  * Each run is recorded in job_runs and logged as one JSON line.
@@ -68,6 +70,11 @@ async function main() {
       return { tenants: tenants.length, closed, payments: paid, expiredCarryForwards: expired };
     },
     invoices: async () => ({ markedOverdue: await svc.markOverdueInvoices() }),
+    "job-changes": async () => svc.applyDueJobChanges(),
+    "scheduled-reports": async () => {
+      const { runScheduledReports } = await import("../apps/web/src/lib/scheduled-reports");
+      return runScheduledReports();
+    },
     // Debits must equal credits, and every cached balance must equal its
     // lines. A failure here is a bug to investigate, so it fails the job
     // rather than quietly repairing the numbers.
@@ -99,7 +106,7 @@ async function main() {
 
   let ok = true;
   if (cmd === "nightly") {
-    for (const name of ["process-attendance", "journeys", "probation", "leave-year-end", "invoices", "ledger-check", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
+    for (const name of ["process-attendance", "job-changes", "journeys", "probation", "leave-year-end", "invoices", "ledger-check", "scheduled-reports", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
     if (new Date().getUTCDate() === 1) ok = (await record("accrue", jobs.accrue)) && ok;
   } else if (cmd && jobs[cmd]) {
     ok = await record(cmd, jobs[cmd]);

@@ -510,6 +510,8 @@ model ExitRecord {
   discussionNote   String?
   isRehireEligible Boolean?
   attachmentUrl    String?
+  /// The EXIT survey sent to this person; null means the tenant's default.
+  exitSurveyId     String?
 
   initiatedBy String?
   approvedBy  String?

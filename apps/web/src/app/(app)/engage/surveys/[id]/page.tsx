@@ -23,8 +23,9 @@ export default async function SurveyPage({ params }: { params: Promise<{ id: str
   const canManage = can(viewer, P.SURVEY_MANAGE);
   const canResults = canManage || can(viewer, P.SURVEY_RESULTS);
 
+  // Exit surveys live on the exit pages, not here.
   const survey = await prisma.survey.findFirst({
-    where: { id, tenantId: viewer.tenantId },
+    where: { id, tenantId: viewer.tenantId, kind: { not: "EXIT" } },
     include: { questions: { orderBy: { sequence: "asc" } } },
   });
   if (!survey) notFound();

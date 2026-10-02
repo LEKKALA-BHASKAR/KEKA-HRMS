@@ -6,6 +6,7 @@ import { datasetsFor, savedReportFor, resolveSpec, runCustomReport } from "@/lib
 import { PageHead, Card, Empty, Callout } from "@/components/ui";
 import { SpecEditor, SaveReport, DeleteReport } from "../forms";
 import { ResultTable } from "../table";
+import { ReportSchedules } from "../../schedules";
 
 export default async function CustomReportPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ spec?: string; dataset?: string }> }) {
   const viewer = await requireAuth(P.REPORT_VIEW);
@@ -45,6 +46,7 @@ export default async function CustomReportPage({ params, searchParams }: { param
             {mine ? <div style={{ marginTop: 12 }}><DeleteReport id={saved!.id} /></div> : null}
           </Card>
         ) : null}
+        {saved && result.ok && !unsaved ? <ReportSchedules viewer={viewer} reportKey={`saved:${saved.id}`} title={saved.name} /> : null}
       </div>
     </>
   );

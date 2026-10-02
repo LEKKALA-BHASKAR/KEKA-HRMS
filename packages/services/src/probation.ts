@@ -115,7 +115,7 @@ export async function openProbationReview(probationId: string, today = new Date(
     await notify({
       tenantId: p.tenantId, userIds: [p.employee.reportingManager?.userId], kind: "PROBATION", email: true,
       title: `Probation review for ${name}`, body: `${name}'s probation ends ${p.endDate.toISOString().slice(0, 10)}. Share your feedback and recommendation.`,
-      link: "/inbox", relatedType: "EmployeeProbation", relatedId: p.id,
+      link: "/inbox", relatedType: "EmployeeProbation", relatedId: p.id, event: "PROBATION_REVIEW_DUE", employeeIds: [p.employeeId],
     });
     if (p.policy.selfReview) {
       await notify({
@@ -217,6 +217,7 @@ export async function decideProbation(input: DecideProbationInput): Promise<{ ok
     await notify({
       tenantId: p.tenantId, userIds: [p.employee.userId, p.employee.reportingManager?.userId], kind: "PROBATION", email: true,
       title: `Probation extended for ${name}`, body: `Probation now ends ${end.toISOString().slice(0, 10)}.${input.note ? ` ${input.note}` : ""}`, link: "/",
+      event: "PROBATION_EXTENDED", employeeIds: [p.employeeId],
     });
     return { ok: true, message: `Extended by ${days} days to ${end.toISOString().slice(0, 10)}. A new review opens before then.` };
   }
@@ -276,6 +277,7 @@ export async function decideProbation(input: DecideProbationInput): Promise<{ ok
   await notify({
     tenantId: p.tenantId, userIds: [p.employee.userId, p.employee.reportingManager?.userId], kind: "PROBATION", email: true,
     title: `${name} is confirmed`, body: `Confirmed with effect from ${effective.toISOString().slice(0, 10)}.`, link: "/",
+    event: "PROBATION_CONFIRMED", employeeIds: [p.employeeId],
   });
   return {
     ok: true,

@@ -155,7 +155,7 @@ export async function scheduleInterview(opts: {
   await notify({
     tenantId: app.tenantId, userIds: panelUsers.map((p) => p.userId), kind: "HIRING",
     title: `Interview: ${app.candidate.firstName} ${app.candidate.lastName} for ${app.job.title}`,
-    body: `${opts.scheduledAt.toISOString().slice(0, 16).replace("T", " ")} UTC, ${opts.durationMinutes} min, ${opts.mode.toLowerCase()}`, link: `/hiring/applications/${app.id}`, email: true,
+    body: `${opts.scheduledAt.toISOString().slice(0, 16).replace("T", " ")} UTC, ${opts.durationMinutes} min, ${opts.mode.toLowerCase()}`, link: `/hiring/applications/${app.id}`, email: true, event: "INTERVIEW_SCHEDULED",
   });
   return { ok: true, message: `Scheduled round ${interview.round}; the panel has been invited.`, interviewId: interview.id };
 }

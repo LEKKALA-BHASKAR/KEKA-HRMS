@@ -327,7 +327,7 @@ export async function remindPanelistAction(_prev: ActionState, formData: FormDat
   const link = `/hiring/applications/${iv.applicationId}?tab=feedback&feedback=${iv.id}`;
   const recent = await prisma.notification.count({ where: { tenantId: viewer.tenantId, userId: seat.employee.userId, link, createdAt: { gte: new Date(Date.now() - 86_400_000) } } });
   if (recent) return { ok: false, message: `${seat.employee.displayName} was reminded in the last 24 hours.` };
-  await notify({ tenantId: viewer.tenantId, userIds: [seat.employee.userId], kind: "HIRING", title: `Feedback due: ${iv.application.candidate.firstName} ${iv.application.candidate.lastName}`, body: `${iv.title} for ${iv.application.job.title}`, link, email: true });
+  await notify({ tenantId: viewer.tenantId, userIds: [seat.employee.userId], kind: "HIRING", title: `Feedback due: ${iv.application.candidate.firstName} ${iv.application.candidate.lastName}`, body: `${iv.title} for ${iv.application.job.title}`, link, email: true, event: "INTERVIEW_FEEDBACK_DUE" });
   await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "Interview", entityId: iv.id, summary: `Reminded ${seat.employee.displayName} to give feedback` });
   return done([`/hiring/applications/${iv.applicationId}`], `Reminder sent to ${seat.employee.displayName}.`);
 }

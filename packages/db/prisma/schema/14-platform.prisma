@@ -57,6 +57,8 @@ model ScheduledReport {
   dayOfMonth Int?
   nextRunAt  DateTime
   lastRunAt  DateTime?
+  /// Outcome of the last run: rows sent, or why it could not run.
+  lastStatus String?
   isActive   Boolean         @default(true)
   createdBy  String?
   createdAt  DateTime        @default(now())
