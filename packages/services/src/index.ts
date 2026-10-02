@@ -56,3 +56,6 @@ export * from "./public-api";
 export * from "./report-engine";
 export * from "./dashboards";
 export * from "./sso";
+export * from "./payroll-pilot-math";
+export * from "./payroll-payout";
+export * from "./tds-24q";

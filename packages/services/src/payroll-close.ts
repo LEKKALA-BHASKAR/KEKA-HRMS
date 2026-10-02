@@ -2,6 +2,7 @@ import { prisma } from "@keka/db";
 import { syncLoansForRun } from "./loans";
 import { settlePayrollSources } from "./expenses";
 import { postPayrollRun, reversePayrollPostings } from "./accounting";
+import { recordPayoutHolds } from "./payroll-payout";
 
 /**
  * Closing a payroll month: finalise (payslips plus consuming the month's
@@ -67,6 +68,8 @@ export async function finalizePayrollRun(runId: string, actorUserId: string): Pr
   }, { timeout: 60_000 });
 
   await syncLoansForRun(runId, run.year, run.month, run.payGroupId);
+  // Payout holds set during the run become hold records, released later.
+  await recordPayoutHolds(runId, actorUserId);
   // Reimbursements and advance recoveries ride on ad-hoc items; settle them too.
   await settlePayrollSources(runId, true);
   // The month reaches the books as one accrual. A ledger problem (a closed
@@ -98,9 +101,16 @@ export async function rollbackPayrollRun(runId: string, reason: string): Promise
   if (later) return { ok: false, message: `Roll back ${later.month}/${later.year} first — it was finalised on top of this month.` };
   const offCycle = await prisma.payrollRun.findFirst({ where: { baseRunId: runId, status: "FINALIZED", rolledBackAt: null } });
   if (offCycle) return { ok: false, message: "An off-cycle payroll was finalised on top of this month. Roll that back first." };
+  // Money that has reached the bank cannot be un-paid by a rollback.
+  const settled = await prisma.paymentBatchItem.count({ where: { status: "PAID", OR: [{ batch: { runId } }, { salaryHold: { runId } }] } });
+  if (settled) return { ok: false, message: `${settled} transfer(s) from this run are marked paid. A paid salary is corrected in a later run, not by rolling back.` };
 
   await prisma.$transaction(async (tx) => {
     await tx.payslip.deleteMany({ where: { runId } });
+    // Unpaid batches and this run's holds go; holds from earlier runs that
+    // were released into this one stay released and are paid when it is re-finalised.
+    await tx.paymentBatch.deleteMany({ where: { runId } });
+    await tx.salaryHold.deleteMany({ where: { runId } });
     await tx.arrear.updateMany({ where: { paidInRunId: runId }, data: { isProcessed: false, paidInRunId: null } });
     await tx.adhocTransaction.updateMany({ where: { runId }, data: { isProcessed: false } });
     await tx.employeeBonus.updateMany({ where: { runId }, data: { isProcessed: false, runId: null } });

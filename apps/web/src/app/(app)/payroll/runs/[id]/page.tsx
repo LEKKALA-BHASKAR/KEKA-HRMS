@@ -102,6 +102,9 @@ export default async function PayrollRunPage({
             {run.payGroup.attendanceCutoffDay
               ? ` · attendance cut-off day ${run.payGroup.attendanceCutoffDay}`
               : ""}
+            {run.attendanceFrom && run.attendanceTo
+              ? ` · attendance counted ${formatDate(run.attendanceFrom)} to ${formatDate(run.attendanceTo)}`
+              : ""}
           </>
         }
         actions={
@@ -191,6 +194,7 @@ export default async function PayrollRunPage({
               </p>
             ) : null}
             <div className="row gap-2" style={{ marginTop: 10 }}>
+              <Link className="btn sm" href={`/payroll/runs/${run.id}/payouts`}>Payouts, holds &amp; payslips</Link>
               {releasedPayslips < totalPayslips && can(viewer, P.PAYSLIP_RELEASE) ? (
                 <form action={releasePayslips}>
                   <input type="hidden" name="runId" value={run.id} />
