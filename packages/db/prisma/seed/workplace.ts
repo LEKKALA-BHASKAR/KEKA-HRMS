@@ -465,14 +465,15 @@ export async function seedWorkplace(
       body: `<p>Dear {{candidate_name}},</p>
 <p>We are pleased to offer you the position of <strong>{{job_title}}</strong> at {{legal_entity_name}},
 based at {{location}}, reporting to {{reporting_manager}}.</p>
-<p>Your annual cost to company will be <strong>{{annual_ctc}}</strong>, broken down in Annexure A.
-Your expected date of joining is {{joining_date}}.</p>
+<p>Your annual cost to company will be <strong>{{annual_ctc}}</strong>, made up as follows:</p>
+{{salary_breakup}}
+<p>Your expected date of joining is {{joining_date}}. This offer is valid until {{offer_expiry}}.</p>
 <p>This offer is subject to satisfactory background verification and receipt of your
 relieving letter from your current employer.</p>
 <p>Yours sincerely,<br/>{{signatory_name}}<br/>{{signatory_designation}}</p>`,
       placeholders: [
         "candidate_name", "job_title", "legal_entity_name", "location",
-        "reporting_manager", "annual_ctc", "joining_date",
+        "reporting_manager", "annual_ctc", "salary_breakup", "joining_date", "offer_expiry",
         "signatory_name", "signatory_designation",
       ],
       workflow: "SIGN",

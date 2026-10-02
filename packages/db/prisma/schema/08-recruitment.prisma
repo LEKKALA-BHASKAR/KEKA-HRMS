@@ -453,11 +453,52 @@ model Offer {
   respondedAt   DateTime?
   declineReason String?
 
+  /// Salary breakup shown in the letter: [{ name, monthly, annual }]. Entered
+  /// by the recruiter (MANUAL) or resolved from the pay structure (STRUCTURE)
+  /// and frozen when the offer is extended.
+  salaryBreakup Json?
+  breakupSource String?
+  /// The letter's HTML as extended, and its SHA-256, checked again on signing.
+  renderedBody  String?
+  contentHash   String?
+
+  /// The candidate's e-signature from the offer portal.
+  signerName      String?
+  signatureFileId String?
+  signedAt        DateTime?
+  signedIp        String?
+  signedUserAgent String?
+  signedLetterUrl String?
+
+  links OfferLink[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status])
   @@map("offers")
+}
+
+/// A link that opens the candidate offer portal without signing in. Only the
+/// SHA-256 of the token is stored; the token itself goes out in the email.
+model OfferLink {
+  id      String @id @default(cuid())
+  offerId String
+  offer   Offer  @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  revokeReason  String?
+  createdBy     String?
+  firstViewedAt DateTime?
+  lastViewedAt  DateTime?
+  viewCount     Int       @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([offerId])
+  @@map("offer_links")
 }
 
 /// Background verification, runnable against candidates and employees alike.

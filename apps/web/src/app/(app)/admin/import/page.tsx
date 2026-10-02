@@ -1,17 +1,20 @@
 import Link from "next/link";
+import { prisma } from "@keka/db";
 import { forbidden } from "next/navigation";
 import { requireViewer, can } from "@/lib/context";
 import { IMPORTS, IMPORT_KINDS, type ImportKind } from "@/lib/imports";
 import { PageHead, Card, Badge } from "@/components/ui";
 import { ImportUpload } from "./upload";
 
-export default async function ImportPage({ searchParams }: { searchParams: Promise<{ kind?: string }> }) {
+export default async function ImportPage({ searchParams }: { searchParams: Promise<{ kind?: string; job?: string }> }) {
   const viewer = await requireViewer();
   const allowed = IMPORT_KINDS.filter((k) => can(viewer, IMPORTS[k].permission));
   if (allowed.length === 0) forbidden();
   const sp = await searchParams;
   const kind: ImportKind = allowed.includes(sp.kind as ImportKind) ? (sp.kind as ImportKind) : allowed[0];
   const spec = IMPORTS[kind];
+  // Opened from a job's page: candidates go to that job unless a row names another.
+  const job = kind === "candidates" && sp.job ? await prisma.job.findFirst({ where: { id: sp.job, tenantId: viewer.tenantId }, select: { id: true, title: true, code: true } }) : null;
 
   return (
     <>
@@ -23,12 +26,12 @@ export default async function ImportPage({ searchParams }: { searchParams: Promi
       </div>
       <div className="stack gap-4">
         <Card
-          title={spec.label}
-          description={spec.description}
+          title={job ? `${spec.label} for ${job.title}${job.code ? ` (${job.code})` : ""}` : spec.label}
+          description={job ? `${spec.description} Rows without a Job column go to ${job.code ?? job.title}.` : spec.description}
           action={<a className="btn sm" href={`/admin/import/template?kind=${kind}`}>Download template</a>}
           tight
         >
-          <ImportUpload kind={kind} />
+          <ImportUpload kind={kind} jobId={job?.id} />
         </Card>
         <Card title="Columns" description="Headers are matched ignoring case, spaces and punctuation. Columns not listed here are ignored." tight>
           <div className="table-wrap">

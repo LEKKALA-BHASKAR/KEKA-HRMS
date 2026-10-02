@@ -9,7 +9,7 @@ import type { ImportColumn } from "@keka/services";
 
 const P = PERMISSIONS;
 
-export type ImportKind = "employees" | "leave-balances" | "salaries" | "bank-accounts" | "bonuses";
+export type ImportKind = "employees" | "leave-balances" | "salaries" | "bank-accounts" | "bonuses" | "candidates";
 
 export const IMPORTS: Record<ImportKind, { label: string; description: string; permission: Permission; columns: ImportColumn[] }> = {
   employees: {
@@ -84,6 +84,25 @@ export const IMPORTS: Record<ImportKind, { label: string; description: string; p
       { key: "amount", label: "Amount", required: true, example: "50000" },
       { key: "payout_month", label: "Payout month", required: true, hint: "yyyy-mm, or any date in that month", example: "2026-11" },
       { key: "note", label: "Note", example: "FY26 appraisal" },
+    ],
+  },
+  candidates: {
+    label: "Candidates",
+    description: "Candidates sourced elsewhere (a job board export, an agency list) applied to an open job at its first stage. Someone already in the pipeline for that job is reported, not duplicated.",
+    permission: P.CANDIDATE_MANAGE,
+    columns: [
+      { key: "job", label: "Job", hint: "The job code, like JOB-1004. Optional when importing from a job's page", example: "JOB-1004" },
+      { key: "first_name", label: "First name", required: true, example: "Rohan" },
+      { key: "last_name", label: "Last name", required: true, example: "Kapoor" },
+      { key: "email", label: "Email", required: true, example: "rohan.kapoor@mail.test" },
+      { key: "phone", label: "Phone", example: "+91 98450 12345" },
+      { key: "current_employer", label: "Current employer", example: "Infosys" },
+      { key: "current_title", label: "Current title", example: "Senior Engineer" },
+      { key: "experience_years", label: "Experience (years)", example: "6" },
+      { key: "current_ctc", label: "Current CTC", hint: "Annual, in rupees", example: "1800000" },
+      { key: "expected_ctc", label: "Expected CTC", hint: "Annual, in rupees", example: "2400000" },
+      { key: "notice_days", label: "Notice period (days)", example: "60" },
+      { key: "source", label: "Source", hint: "JOB_BOARD, AGENCY, DIRECT_SOURCING, REFERRAL, WALK_IN, CAREER_PORTAL or INTERNAL", example: "JOB_BOARD" },
     ],
   },
 };

@@ -60,7 +60,7 @@ function Pipeline({ job }: { job: JobFull }) {
   const closed = job.applications.filter((a) => !active.includes(a));
   return (
     <>
-      {job.status === "OPEN" ? <div className={s.cardAlone} style={{ padding: 16, marginBottom: 16 }}><Disclosure label="Add candidate"><CandidateForm jobId={job.id} /></Disclosure></div> : null}
+      {job.status === "OPEN" ? <div className={s.cardAlone} style={{ padding: 16, marginBottom: 16 }}><Disclosure label="Add candidate"><CandidateForm jobId={job.id} /></Disclosure>{job.code ? <div style={{ marginTop: 8 }}><Link className="btn sm ghost" href={`/admin/import?kind=candidates&job=${job.id}`}>Import candidates from CSV</Link></div> : null}</div> : null}
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.max(1, stages.length)}, minmax(210px, 1fr))`, gap: 12, overflowX: "auto", paddingBottom: 6 }}>
         {stages.map((st) => {
           const here = active.filter((a) => a.currentStageId === st.id);

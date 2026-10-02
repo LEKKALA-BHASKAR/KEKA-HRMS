@@ -6,11 +6,12 @@ import { runImportAction, type ImportResult } from "@/app/actions/import";
 const EMPTY: ImportResult = {};
 
 /** Upload a CSV, check it, then import it. Every row problem is listed by spreadsheet line. */
-export function ImportUpload({ kind }: { kind: string }) {
+export function ImportUpload({ kind, jobId }: { kind: string; jobId?: string }) {
   const [state, action, pending] = useActionState(runImportAction, EMPTY);
   return (
     <form action={action} style={{ padding: 14 }}>
       <input type="hidden" name="kind" value={kind} />
+      {jobId ? <input type="hidden" name="jobId" value={jobId} /> : null}
       <div className="row gap-2 wrap" style={{ alignItems: "center" }}>
         <input type="file" name="file" accept=".csv,text/csv" required className="input" style={{ maxWidth: 360 }} />
         <button className="btn" type="submit" name="mode" value="check" disabled={pending}>{pending ? "Working…" : "Check file"}</button>
