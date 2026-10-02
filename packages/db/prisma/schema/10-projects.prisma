@@ -377,6 +377,14 @@ enum TimesheetStatus {
   LOCKED
 }
 
+/// Whose approval a submitted timesheet is waiting for.
+enum TimesheetApprover {
+  /// The line manager or the manager of every project on the sheet.
+  EITHER
+  LINE_MANAGER
+  PROJECT_MANAGER
+}
+
 /// One weekly timesheet per employee. Monday to Sunday is the standard period.
 model Timesheet {
   id         String   @id @default(cuid())
@@ -399,6 +407,16 @@ model Timesheet {
   /// User who sent it back, and when.
   rejectedBy   String?
   rejectedAt   DateTime?
+
+  // --- Timesheet policy (PsaSetting) ---
+  /// Who the sheet is waiting on while SUBMITTED, set from the approval chain.
+  awaiting        TimesheetApprover @default(EITHER)
+  /// Levels approved so far (a two-level chain approves twice).
+  approvalStep    Int               @default(0)
+  /// User who approved the first level, who cannot also approve the second.
+  firstApprovedBy String?
+  /// Approved on submission by the policy, not by a person.
+  autoApproved    Boolean           @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

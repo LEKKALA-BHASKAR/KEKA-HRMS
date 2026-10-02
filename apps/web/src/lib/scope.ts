@@ -53,8 +53,13 @@ export function shiftMonth(year: number, month: number, delta: number): { year: 
 export function timesheetsToApproveWhere(viewer: Viewer): Record<string, unknown> {
   const me = viewer.employee?.id ?? "__none__";
   const inLine = can(viewer, PERMISSIONS.TIMESHEET_APPROVE) ? scopedEmployeeWhere(viewer, PERMISSIONS.TIMESHEET_APPROVE) : { id: "__no_access__" };
+  // The approval chain decides whose turn it is (awaiting); whoever approved
+  // the first level of a two-level chain does not see it again.
   return {
     tenantId: viewer.tenantId, status: "SUBMITTED", NOT: { employeeId: me },
-    OR: [{ employee: inLine }, { entries: { some: {}, every: { project: { projectManagerId: me } } } }],
+    AND: [
+      { OR: [{ awaiting: { in: ["EITHER", "LINE_MANAGER"] }, employee: inLine }, { awaiting: { in: ["EITHER", "PROJECT_MANAGER"] }, entries: { some: {}, every: { project: { projectManagerId: me } } } }] },
+      { OR: [{ firstApprovedBy: null }, { firstApprovedBy: { not: viewer.user.id } }] },
+    ],
   };
 }

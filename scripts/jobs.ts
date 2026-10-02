@@ -12,6 +12,7 @@
  *   tsx scripts/jobs.ts leave-auto-approve    nightly; approves chained leave left past its auto-approve window
  *   tsx scripts/jobs.ts shift-allowance [YYYY-MM]  nightly; rebuilds the month's unpaid shift allowance from attendance
  *   tsx scripts/jobs.ts invoices              nightly; marks unpaid invoices past due as overdue
+ *   tsx scripts/jobs.ts timesheet-reminders   nightly; reminds and escalates unsubmitted timesheets (per the timesheet policy)
  *   tsx scripts/jobs.ts ledger-check          nightly; fails if any tenant's books do not balance
  *   tsx scripts/jobs.ts job-changes           nightly; applies approved promotions/transfers whose effective date has come
  *   tsx scripts/jobs.ts scheduled-reports     hourly (or nightly); emails the CSV of every scheduled report that is due
@@ -90,6 +91,13 @@ async function main() {
       const { runScheduledReports } = await import("../apps/web/src/lib/scheduled-reports");
       return runScheduledReports();
     },
+    // Off unless a tenant's timesheet policy turns reminders or escalation on;
+    // each person and week is chased once, so reruns send nothing new.
+    "timesheet-reminders": async () => {
+      let reminded = 0, escalated = 0;
+      for (const t of tenants) { const s = await svc.runTimesheetReminders(t.id); reminded += s.reminded; escalated += s.escalated; }
+      return { tenants: tenants.length, reminded, escalated };
+    },
     // Debits must equal credits, and every cached balance must equal its
     // lines. A failure here is a bug to investigate, so it fails the job
     // rather than quietly repairing the numbers.
@@ -121,7 +129,7 @@ async function main() {
 
   let ok = true;
   if (cmd === "nightly") {
-    for (const name of ["process-attendance", "leave-auto-approve", "shift-allowance", "job-changes", "journeys", "probation", "leave-year-end", "invoices", "ledger-check", "scheduled-reports", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
+    for (const name of ["process-attendance", "leave-auto-approve", "shift-allowance", "job-changes", "journeys", "probation", "leave-year-end", "invoices", "timesheet-reminders", "ledger-check", "scheduled-reports", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
     if (new Date().getUTCDate() === 1) ok = (await record("accrue", jobs.accrue)) && ok;
   } else if (cmd && jobs[cmd]) {
     ok = await record(cmd, jobs[cmd]);

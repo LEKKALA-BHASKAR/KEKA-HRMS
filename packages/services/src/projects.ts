@@ -3,6 +3,8 @@ import { renderLetter } from "@keka/documents";
 import { weekStart, checkTimesheet, gst, projectHealth } from "./projects-math";
 import { notify } from "./lifecycle";
 import { postInvoice, postInvoicePayment } from "./accounting";
+import { getTimesheetPolicy } from "./timesheet-policy";
+import { roundHours, firstApprover, nextApprover, autoApproves, type TimesheetApprover } from "./timesheet-policy-math";
 
 /**
  * Projects, timesheets and billing. Time can be logged only against projects
@@ -32,7 +34,10 @@ export async function saveTimesheet(input: { employeeId: string; week: Date; ent
   const emp = await prisma.employee.findUniqueOrThrow({ where: { id: input.employeeId }, select: { tenantId: true, displayName: true, reportingManagerId: true } });
   const existing = await prisma.timesheet.findUnique({ where: { employeeId_periodStart: { employeeId: input.employeeId, periodStart: week } } });
   if (existing && !["DRAFT", "REJECTED"].includes(existing.status)) return { ok: false, message: `This week is ${existing.status.toLowerCase()} and can no longer be edited.` };
-  const issues = checkTimesheet(input.entries, week);
+  // The tenant's policy: time rounded to its increment (if it rounds), then checked against its limits.
+  const policy = await getTimesheetPolicy(emp.tenantId);
+  input = { ...input, entries: input.entries.map((e) => ({ ...e, hours: roundHours(e.hours, policy) })) };
+  const issues = checkTimesheet(input.entries, week, new Date(), policy, { submit: input.submit });
   if (issues.length) return { ok: false, message: issues.join(" ") };
 
   // Only allocated projects, and the rate the allocation carried on that day.
@@ -49,11 +54,21 @@ export async function saveTimesheet(input: { employeeId: string; week: Date; ent
   const rateOf = (e: SheetEntry) => allocations.find((x) => x.projectId === e.projectId && x.startDate <= e.date && (!x.endDate || x.endDate >= e.date))!;
   const total = r2(input.entries.reduce((s, e) => s + e.hours, 0));
   const billable = r2(input.entries.filter((e) => rateOf(e).isBillable).reduce((s, e) => s + e.hours, 0));
+  const projectIds = [...new Set(input.entries.map((e) => e.projectId))];
+  const needApproval = (await prisma.project.findMany({ where: { id: { in: projectIds } }, select: { requireTimesheetApproval: true } })).map((p) => p.requireTimesheetApproval);
+  const auto = input.submit && autoApproves(policy, total, needApproval);
+  const now = new Date();
+  const awaiting = firstApprover(policy.approvalChain);
+  const flow = !input.submit
+    ? { status: "DRAFT" as const, submittedAt: null }
+    : auto
+      ? { status: "APPROVED" as const, submittedAt: now, approvedAt: now, approvedBy: null, autoApproved: true, awaiting: "EITHER" as const, approvalStep: 0, firstApprovedBy: null }
+      : { status: "SUBMITTED" as const, submittedAt: now, autoApproved: false, awaiting, approvalStep: 0, firstApprovedBy: null };
 
   const sheet = await prisma.$transaction(async (tx) => {
     const s = existing
-      ? await tx.timesheet.update({ where: { id: existing.id }, data: { status: input.submit ? "SUBMITTED" : "DRAFT", submittedAt: input.submit ? new Date() : null, totalHours: total, billableHours: billable, rejectReason: null } })
-      : await tx.timesheet.create({ data: { tenantId: emp.tenantId, employeeId: input.employeeId, periodStart: week, periodEnd: new Date(week.getTime() + 6 * DAY), status: input.submit ? "SUBMITTED" : "DRAFT", submittedAt: input.submit ? new Date() : null, totalHours: total, billableHours: billable } });
+      ? await tx.timesheet.update({ where: { id: existing.id }, data: { ...flow, totalHours: total, billableHours: billable, rejectReason: null } })
+      : await tx.timesheet.create({ data: { tenantId: emp.tenantId, employeeId: input.employeeId, periodStart: week, periodEnd: new Date(week.getTime() + 6 * DAY), ...flow, totalHours: total, billableHours: billable } });
     await tx.timeEntry.deleteMany({ where: { timesheetId: s.id } });
     for (const e of input.entries) {
       const a = rateOf(e);
@@ -62,13 +77,19 @@ export async function saveTimesheet(input: { employeeId: string; week: Date; ent
     return s;
   });
   await recomputeTaskHours(input.entries.map((e) => e.taskId).filter((t): t is string => !!t));
-  if (input.submit) {
-    // Whoever can approve it: the line manager and each project's manager.
-    const mgr = emp.reportingManagerId ? await prisma.employee.findUnique({ where: { id: emp.reportingManagerId }, select: { userId: true } }) : null;
-    const pms = await prisma.project.findMany({ where: { id: { in: [...new Set(input.entries.map((e) => e.projectId))] } }, select: { projectManager: { select: { userId: true } } } });
-    await notify({ tenantId: emp.tenantId, userIds: [...new Set([mgr?.userId, ...pms.map((p) => p.projectManager?.userId)])], kind: "TIMESHEET", title: `${emp.displayName} submitted ${total} h for the week of ${week.toISOString().slice(0, 10)}`, link: "/projects?tab=approvals" });
+  if (input.submit && !auto) {
+    // Whoever the chain says can approve it first: the line manager, each project's manager, or both.
+    await notify({ tenantId: emp.tenantId, userIds: await approverUserIds(sheet.id, awaiting), kind: "TIMESHEET", title: `${emp.displayName} submitted ${total} h for the week of ${week.toISOString().slice(0, 10)}`, link: "/projects?tab=approvals" });
   }
-  return { ok: true, message: `${total} h ${input.submit ? "submitted for approval" : "saved"} (${billable} billable).`, timesheetId: sheet.id };
+  return { ok: true, message: `${total} h ${auto ? "submitted and approved automatically" : input.submit ? "submitted for approval" : "saved"} (${billable} billable).`, timesheetId: sheet.id };
+}
+
+/** Who can act on a sheet waiting at `awaiting`: the line manager, each project's manager, or both. */
+async function approverUserIds(timesheetId: string, awaiting: TimesheetApprover): Promise<string[]> {
+  const s = await prisma.timesheet.findUniqueOrThrow({ where: { id: timesheetId }, select: { employee: { select: { reportingManager: { select: { userId: true } } } }, entries: { select: { project: { select: { projectManager: { select: { userId: true } } } } } } } });
+  const line = awaiting === "PROJECT_MANAGER" ? [] : [s.employee.reportingManager?.userId];
+  const pms = awaiting === "LINE_MANAGER" ? [] : s.entries.map((e) => e.project.projectManager?.userId);
+  return [...new Set([...line, ...pms].filter((u): u is string => !!u))];
 }
 
 async function recomputeTaskHours(taskIds: string[]) {
@@ -78,12 +99,34 @@ async function recomputeTaskHours(taskIds: string[]) {
   }
 }
 
+/**
+ * Approve or send back a submitted sheet. Under a two-level chain the first
+ * approval passes it to the project manager(s), and whoever approved the
+ * first level cannot approve the second.
+ */
 export async function decideTimesheet(opts: { timesheetId: string; approve: boolean; byUserId: string; reason?: string | null }): Promise<Result> {
-  const s = await prisma.timesheet.findUnique({ where: { id: opts.timesheetId }, include: { employee: { select: { userId: true } } } });
+  const s = await prisma.timesheet.findUnique({ where: { id: opts.timesheetId }, include: { employee: { select: { userId: true, displayName: true } } } });
   if (!s) return { ok: false, message: "Timesheet not found." };
   if (s.status !== "SUBMITTED") return { ok: false, message: `This timesheet is ${s.status.toLowerCase()}.` };
   if (!opts.approve && !opts.reason) return { ok: false, message: "Say what needs fixing." };
-  await prisma.timesheet.update({ where: { id: s.id }, data: opts.approve ? { status: "APPROVED", approvedBy: opts.byUserId, approvedAt: new Date() } : { status: "REJECTED", rejectReason: opts.reason, rejectedBy: opts.byUserId, rejectedAt: new Date() } });
+  if (opts.approve && s.firstApprovedBy && s.firstApprovedBy === opts.byUserId) return { ok: false, message: "You approved the first level; the project manager approves the second." };
+  if (opts.approve) {
+    const policy = await getTimesheetPolicy(s.tenantId);
+    const next = nextApprover(policy.approvalChain, s.awaiting, s.approvalStep);
+    if (next) {
+      // Guarded on the step so two approvers clicking at once cannot both advance it.
+      const moved = await prisma.timesheet.updateMany({ where: { id: s.id, status: "SUBMITTED", approvalStep: s.approvalStep }, data: { awaiting: next, approvalStep: s.approvalStep + 1, firstApprovedBy: opts.byUserId } });
+      if (!moved.count) return { ok: false, message: "Someone else just decided this timesheet." };
+      await notify({ tenantId: s.tenantId, userIds: (await approverUserIds(s.id, next)).filter((u) => u !== opts.byUserId), kind: "TIMESHEET", title: `${s.employee.displayName}'s week of ${s.periodStart.toISOString().slice(0, 10)} is ready for your approval`, link: "/projects?tab=approvals" });
+      return { ok: true, message: "Approved at the first level; now with the project manager." };
+    }
+  }
+  await prisma.timesheet.update({
+    where: { id: s.id },
+    data: opts.approve
+      ? { status: "APPROVED", approvedBy: opts.byUserId, approvedAt: new Date(), approvalStep: s.approvalStep + 1 }
+      : { status: "REJECTED", rejectReason: opts.reason, rejectedBy: opts.byUserId, rejectedAt: new Date(), approvalStep: 0, firstApprovedBy: null },
+  });
   await notify({ tenantId: s.tenantId, userIds: [s.employee.userId], kind: "TIMESHEET", title: opts.approve ? "Your timesheet was approved" : "Your timesheet needs changes", body: opts.reason ?? undefined, link: "/projects" });
   return { ok: true, message: opts.approve ? "Approved." : "Sent back for changes." };
 }
@@ -210,7 +253,8 @@ export async function recordInvoicePayment(opts: { invoiceId: string; amount: nu
   if (!["SENT", "PARTIALLY_PAID", "OVERDUE"].includes(inv.status)) return { ok: false, message: "Payments are recorded against sent invoices." };
   const due = Number(inv.amountDue);
   if (!(opts.amount > 0) || opts.amount > due + 0.005) return { ok: false, message: `Enter an amount up to the ₹${due.toLocaleString("en-IN")} due.` };
-  const paid = r2(Number(inv.amountPaid) + opts.amount), left = r2(Number(inv.total) - paid);
+  // What is left comes off what was due, so an applied credit note stays counted.
+  const paid = r2(Number(inv.amountPaid) + opts.amount), left = r2(due - opts.amount);
   const [payment] = await prisma.$transaction([
     prisma.invoicePayment.create({ data: { invoiceId: inv.id, amount: opts.amount, paidOn: opts.paidOn, reference: opts.reference ?? null } }),
     prisma.invoice.update({ where: { id: inv.id }, data: { amountPaid: paid, amountDue: left, status: left <= 0 ? "PAID" : "PARTIALLY_PAID" } }),

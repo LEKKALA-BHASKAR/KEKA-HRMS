@@ -60,10 +60,11 @@ export async function decideTimesheetAction(_prev: ActionState, formData: FormDa
   });
   if (!sheet) return { ok: false, message: "Timesheet not found." };
   if (sheet.employeeId === viewer.employee?.id) return { ok: false, message: "You cannot approve your own time." };
-  // The person's manager line, or the manager of every project on the sheet.
-  const viaLine = can(viewer, P.TIMESHEET_APPROVE) && canAccessEmployee(viewer, sheet.employee, P.TIMESHEET_APPROVE);
+  // The person's manager line, or the manager of every project on the sheet —
+  // whichever the approval chain has it waiting on.
+  const viaLine = sheet.awaiting !== "PROJECT_MANAGER" && can(viewer, P.TIMESHEET_APPROVE) && canAccessEmployee(viewer, sheet.employee, P.TIMESHEET_APPROVE);
   const projects = [...new Set(sheet.entries.map((e) => e.projectId))];
-  const viaPm = projects.length > 0 && (await Promise.all(projects.map((p) => isPm(viewer, p)))).every(Boolean);
+  const viaPm = sheet.awaiting !== "LINE_MANAGER" && projects.length > 0 && (await Promise.all(projects.map((p) => isPm(viewer, p)))).every(Boolean);
   if (!viaLine && !viaPm) return { ok: false, message: "This timesheet is not yours to approve." };
   const res = await decideTimesheet({ timesheetId: id, approve: formData.get("decision") === "approve", byUserId: viewer.user.id, reason: String(formData.get("reason") ?? "") || null });
   return res.ok ? done(["/projects", "/inbox"], res.message) : { ok: false, message: res.message };
@@ -208,7 +209,7 @@ export async function invoiceAction(_prev: ActionState, formData: FormData): Pro
         ? await recordInvoicePayment({ invoiceId, amount: Number(formData.get("amount")), paidOn: new Date(), reference: String(formData.get("reference") ?? "") || null })
         : { ok: false, message: "Unknown action." };
     if (res.ok) await writeAudit(viewer, { module: "FINANCE", action: "UPDATE", entityType: "Invoice", entityId: invoiceId, summary: `${inv.invoiceNumber} ${op}: ${res.message}` });
-    return res.ok ? done(["/projects", `/projects/${inv.projectId}`], res.message) : { ok: false, message: res.message };
+    return res.ok ? done(["/projects", `/projects/${inv.projectId}`, "/projects/billing", "/projects/billing/payments", `/projects/billing/${invoiceId}`], res.message) : { ok: false, message: res.message };
   } catch (err) {
     return toErrorState(err);
   }
