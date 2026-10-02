@@ -72,7 +72,7 @@ export function AcknowledgeLetter({ id }: { id: string }) {
   );
 }
 
-function SignaturePad({ onChange }: { onChange: (dataUrl: string) => void }) {
+export function SignaturePad({ onChange }: { onChange: (dataUrl: string) => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
   const inked = useRef(false);

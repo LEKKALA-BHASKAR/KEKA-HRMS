@@ -3,11 +3,12 @@ import { notFound } from "next/navigation";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatDate, formatINR } from "@keka/shared";
-import { kitOf, parseRatings, normaliseDecision, decisionLabel, decisionTally, type KitSection } from "@keka/services";
+import { kitOf, parseRatings, normaliseDecision, decisionLabel, decisionTally, previewOfferLetter, type KitSection } from "@keka/services";
 import { requireViewer, can } from "@/lib/context";
 import { aiEnabled, AI_UNAVAILABLE } from "@/lib/ai";
 import { KeyValue } from "@/components/ui";
 import { OfferForm, OfferOps, HireButton } from "../../forms";
+import { LetterFrame } from "../../../documents/letters/forms";
 import { StageSelect, ArchiveButton, ScheduleButton, RemindButton, NoteForm } from "../../_parts/candidate";
 import { FeedbackDrawer } from "../../_parts/feedback-drawer";
 import { SummarizeButton, CandidateFeedbackButton } from "../../_parts/summary";
@@ -44,7 +45,7 @@ export default async function ApplicationPage({ params, searchParams }: { params
       job: { include: { flow: { include: { stages: { orderBy: { sequence: "asc" } } } }, questionSets: { orderBy: [{ section: "asc" }, { attempt: "asc" }] } } },
       stageHistory: { include: { stage: true }, orderBy: { enteredAt: "asc" } },
       interviews: { include: { panel: { include: { employee: { select: { id: true, displayName: true } } }, orderBy: { isLead: "desc" } }, scorecards: true }, orderBy: { scheduledAt: "asc" } },
-      offer: true,
+      offer: { include: { links: { orderBy: { createdAt: "desc" }, take: 1 } } },
       notes: { orderBy: { createdAt: "desc" } },
     },
   });
@@ -87,6 +88,15 @@ export default async function ApplicationPage({ params, searchParams }: { params
     ? await prisma.employee.findMany({ where: { tenantId: viewer.tenantId, status: { notIn: ["EXITED", "PREBOARDING"] } }, select: { id: true, displayName: true }, orderBy: { displayName: "asc" } })
     : [];
   const opt = employees.map((e) => ({ value: e.id, label: e.displayName ?? "" }));
+  // Offer letter templates and pay structures for drafting; the letter preview once drafted.
+  const offerManager = can(viewer, P.OFFER_MANAGE);
+  const [offerTemplates, structures, letter] = offerManager
+    ? await Promise.all([
+      prisma.documentTemplate.findMany({ where: { tenantId: viewer.tenantId, category: "OFFER", isArchived: false }, select: { id: true, name: true }, orderBy: { createdAt: "asc" } }),
+      prisma.salaryStructure.findMany({ where: { payGroup: { tenantId: viewer.tenantId }, isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+      app.offer && !["DECLINED", "WITHDRAWN", "EXPIRED"].includes(app.offer.status) ? previewOfferLetter(viewer.tenantId, app.id) : null,
+    ])
+    : [[], [], null];
 
   return (
     <>
@@ -181,9 +191,16 @@ export default async function ApplicationPage({ params, searchParams }: { params
     );
   }
 
+  function linkLabel(l: { expiresAt: Date; revokedAt: Date | null; viewCount: number; lastViewedAt: Date | null }) {
+    if (l.revokedAt) return <span className="neg">Revoked {kDate(l.revokedAt)}</span>;
+    if (l.expiresAt <= new Date()) return <span className="neg">Expired {kDate(l.expiresAt)}</span>;
+    return `Works until ${kDate(l.expiresAt)} · ${l.viewCount ? `opened ${l.viewCount}×, last ${kDateTime(l.lastViewedAt!)}` : "not opened yet"}`;
+  }
+
   function OfferCard() {
     if (!can(viewer, P.OFFER_MANAGE) && !app!.offer) return null;
     const offer = app!.offer;
+    const link = offer?.links[0];
     return (
       <div className={s.box} style={{ padding: 20 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -197,13 +214,24 @@ export default async function ApplicationPage({ params, searchParams }: { params
               ["Joining", offer.proposedJoiningDate ? formatDate(offer.proposedJoiningDate) : "—"],
               ["Expires", offer.expiresOn ? formatDate(offer.expiresOn) : "—"],
               ...(offer.letterUrl ? [["Letter", <a key="l" href={offer.letterUrl}>Download PDF</a>] as [string, React.ReactNode]] : []),
+              ...(offer.signedLetterUrl ? [["Signed letter", <a key="s" href={offer.signedLetterUrl}>Download signed PDF</a>] as [string, React.ReactNode]] : []),
+              ...(offer.signedAt ? [["E-signed", `${offer.signerName ?? ""} · ${kDateTime(offer.signedAt)}${offer.signedIp ? ` · ${offer.signedIp}` : ""}`] as [string, React.ReactNode]] : []),
+              ...(offer.status === "EXTENDED" && link ? [["Candidate link", linkLabel(link)] as [string, React.ReactNode]] : []),
             ]} />
-            {can(viewer, P.OFFER_MANAGE) ? <OfferOps applicationId={app!.id} status={offer.status} canApprove={can(viewer, P.OFFER_APPROVE)} /> : null}
+            {letter?.ok && letter.missing?.length ? <div className="text-xs neg">Not available for the letter: {letter.missing.join(", ")}. They will show as gaps.</div> : null}
+            {letter?.ok && letter.html ? (
+              <details>
+                <summary className="text-sm" style={{ cursor: "pointer" }}>{offer.renderedBody ? "Letter as sent" : `Preview the letter (${letter.templateName})`}</summary>
+                <div style={{ marginTop: 8 }}><LetterFrame html={letter.html} height={420} /></div>
+              </details>
+            ) : null}
+            {can(viewer, P.OFFER_MANAGE) ? <OfferOps applicationId={app!.id} status={offer.status} canApprove={can(viewer, P.OFFER_APPROVE)} linkLive={!!link && !link.revokedAt && link.expiresAt > new Date()} /> : null}
             {app!.status === "OFFER_ACCEPTED" && can(viewer, P.EMPLOYEE_CREATE)
               ? <HireButton applicationId={app!.id} suggestedEmail={`${c.firstName}.${c.lastName}`.toLowerCase().replace(/[^a-z.]/g, "") + "@" + viewer.user.email.split("@")[1]} /> : null}
           </div>
         ) : app!.status === "ACTIVE" && can(viewer, P.OFFER_MANAGE) ? (
-          <OfferForm applicationId={app!.id} managers={opt} max={app!.job.maxAnnualCtc ? Number(app!.job.maxAnnualCtc) : null} />
+          <OfferForm applicationId={app!.id} managers={opt} max={app!.job.maxAnnualCtc ? Number(app!.job.maxAnnualCtc) : null}
+            templates={offerTemplates.map((t) => ({ value: t.id, label: t.name }))} structures={structures.map((x) => ({ value: x.id, label: x.name }))} />
         ) : <p className="muted text-sm">{app!.status === "HIRED" ? "Hired." : "No offer."}</p>}
         {offer?.declineReason ? <div className="text-xs neg" style={{ marginTop: 6 }}>Declined: {offer.declineReason}</div> : null}
       </div>

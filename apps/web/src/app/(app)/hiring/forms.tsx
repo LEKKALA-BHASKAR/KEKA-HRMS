@@ -119,32 +119,69 @@ export function InterviewForm({ applicationId, employees, round }: { application
   );
 }
 
-export function OfferForm({ applicationId, managers, max }: { applicationId: string; managers: Option[]; max: number | null }) {
+export function OfferForm({ applicationId, managers, max, templates, structures }: { applicationId: string; managers: Option[]; max: number | null; templates: Option[]; structures: Option[] }) {
+  const [mode, setMode] = useState<"STRUCTURE" | "MANUAL">("STRUCTURE");
   return (
-    <ActionForm action={draftOfferAction} submitLabel="Draft offer" hidden={{ applicationId }} compact>
+    <ActionForm action={draftOfferAction} submitLabel="Draft offer" hidden={{ applicationId, breakupMode: mode }} compact>
       {(state) => (
-        <div className="grid grid-3">
-          <Field label="Annual CTC" name="annualCtc" state={state} required hint={max ? `Budget ceiling ₹${max.toLocaleString("en-IN")}` : undefined}><TextInput name="annualCtc" type="number" state={state} required /></Field>
-          <Field label="Joining bonus" name="joiningBonus" state={state}><TextInput name="joiningBonus" type="number" state={state} /></Field>
-          <Field label="Reports to" name="reportingManagerId" state={state}><SelectInput name="reportingManagerId" state={state} options={managers} placeholder="Hiring manager" /></Field>
-          <Field label="Offer expires" name="expiresOn" state={state} required><TextInput name="expiresOn" type="date" state={state} defaultValue={plus(7)} required /></Field>
-          <Field label="Joining date" name="proposedJoiningDate" state={state} required><TextInput name="proposedJoiningDate" type="date" state={state} defaultValue={plus(45)} required /></Field>
+        <div className="stack gap-3">
+          <div className="grid grid-3">
+            <Field label="Annual CTC" name="annualCtc" state={state} required hint={max ? `Budget ceiling ₹${max.toLocaleString("en-IN")}` : undefined}><TextInput name="annualCtc" type="number" state={state} required /></Field>
+            <Field label="Joining bonus" name="joiningBonus" state={state}><TextInput name="joiningBonus" type="number" state={state} /></Field>
+            <Field label="Reports to" name="reportingManagerId" state={state}><SelectInput name="reportingManagerId" state={state} options={managers} placeholder="Hiring manager" /></Field>
+            <Field label="Offer expires" name="expiresOn" state={state} required><TextInput name="expiresOn" type="date" state={state} defaultValue={plus(7)} required /></Field>
+            <Field label="Joining date" name="proposedJoiningDate" state={state} required><TextInput name="proposedJoiningDate" type="date" state={state} defaultValue={plus(45)} required /></Field>
+            <Field label="Letter template" name="templateId" state={state} hint={templates.length ? "Offer templates under Documents" : "No offer template yet; the standard letter is used"}>
+              <SelectInput name="templateId" state={state} options={templates} placeholder={templates.length ? "First offer template" : "Standard offer letter"} />
+            </Field>
+          </div>
+          <div className="stack gap-2">
+            <div className="row gap-3 text-sm" role="radiogroup" aria-label="Salary breakup">
+              <span className="label" style={{ margin: 0 }}>Salary breakup</span>
+              <label className="row gap-1"><input type="radio" name="_mode" checked={mode === "STRUCTURE"} onChange={() => setMode("STRUCTURE")} /> From a pay structure</label>
+              <label className="row gap-1"><input type="radio" name="_mode" checked={mode === "MANUAL"} onChange={() => setMode("MANUAL")} /> Enter components</label>
+            </div>
+            {mode === "STRUCTURE" ? (
+              <Field label="Salary structure" name="salaryStructureId" state={state} hint="Blank picks the structure whose CTC range fits">
+                <SelectInput name="salaryStructureId" state={state} options={structures} placeholder="Structure for this CTC" />
+              </Field>
+            ) : (
+              <Field label="Components (annual, one per line)" name="breakup" state={state} required hint="Like “Basic: 600000”. They must add up to the annual CTC.">
+                <TextArea name="breakup" state={state} rows={5} placeholder={"Basic: 600000\nHRA: 240000\nSpecial allowance: 360000"} required />
+              </Field>
+            )}
+          </div>
         </div>
       )}
     </ActionForm>
   );
 }
 
-export function OfferOps({ applicationId, status, canApprove }: { applicationId: string; status: string; canApprove: boolean }) {
+export function OfferOps({ applicationId, status, canApprove, linkLive }: { applicationId: string; status: string; canApprove: boolean; linkLive?: boolean }) {
   const [state, action, pending] = useForm(offerOpAction);
   return (
     <form action={action} className="stack gap-2">
       <input type="hidden" name="applicationId" value={applicationId} />
       <div className="row gap-2 wrap">
         {status === "PENDING_APPROVAL" && canApprove ? <button className="btn sm primary" name="op" value="approve" disabled={pending}>Approve above budget</button> : null}
-        {status === "APPROVED" ? <button className="btn sm primary" name="op" value="extend" disabled={pending}>Extend offer (sends letter)</button> : null}
-        {status === "EXTENDED" ? <><button className="btn sm primary" name="op" value="accepted" disabled={pending}>Candidate accepted</button><input className="input" name="reason" placeholder="Decline reason" style={{ width: 160 }} /><button className="btn sm" name="op" value="declined" disabled={pending}>Declined</button></> : null}
+        {status === "APPROVED" ? <button className="btn sm primary" name="op" value="extend" disabled={pending}>Extend offer (emails the candidate a link)</button> : null}
+        {status === "EXTENDED" ? (
+          <>
+            <button className="btn sm" name="op" value="resend" disabled={pending}>{linkLive ? "Resend link" : "Send a new link"}</button>
+            {linkLive ? <button className="btn sm ghost" name="op" value="revoke" disabled={pending}>Revoke link</button> : null}
+          </>
+        ) : null}
       </div>
+      {status === "EXTENDED" ? (
+        <details>
+          <summary className="text-xs subtle" style={{ cursor: "pointer" }}>Record the candidate&rsquo;s answer yourself</summary>
+          <div className="row gap-2 wrap" style={{ marginTop: 6 }}>
+            <button className="btn sm" name="op" value="accepted" disabled={pending}>Candidate accepted</button>
+            <input className="input" name="reason" placeholder="Decline reason" style={{ width: 180 }} />
+            <button className="btn sm" name="op" value="declined" disabled={pending}>Declined</button>
+          </div>
+        </details>
+      ) : null}
       {state.message ? <span className={`text-xs ${state.ok ? "pos" : "neg"}`}>{state.message}</span> : null}
     </form>
   );

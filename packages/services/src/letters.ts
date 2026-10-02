@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { prisma } from "@keka/db";
 import { notify } from "./lifecycle";
+import { OFFER_PLACEHOLDERS } from "./offers-math";
 
 /**
  * HR letters: templates with {{placeholders}}, generated per employee with
@@ -129,7 +130,8 @@ export async function saveLetterTemplate(input: {
   if (!(LETTER_CATEGORIES as readonly string[]).includes(input.category)) return { ok: false, message: "Pick a category." };
   if (/<\s*(script|iframe|object|embed)\b|\son\w+\s*=|javascript:/i.test(input.body)) return { ok: false, message: "Letters cannot contain scripts, embedded frames or event handlers." };
   const placeholders = templatePlaceholders(input.body);
-  const unknown = placeholders.filter((p) => !(p in LETTER_PLACEHOLDERS));
+  // Offer letters are filled from the candidate and offer, which adds a few placeholders.
+  const unknown = placeholders.filter((p) => !(p in LETTER_PLACEHOLDERS) && !(input.category === "OFFER" && p in OFFER_PLACEHOLDERS));
   if (unknown.length) return { ok: false, unknown, message: `Unknown placeholder${unknown.length === 1 ? "" : "s"}: ${unknown.map((u) => `{{${u}}}`).join(", ")}.` };
   const clash = await prisma.documentTemplate.findFirst({ where: { tenantId: input.tenantId, name, ...(input.id ? { NOT: { id: input.id } } : {}) }, select: { id: true } });
   if (clash) return { ok: false, message: "Another template already has that name." };
