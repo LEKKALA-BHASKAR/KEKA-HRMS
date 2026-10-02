@@ -191,8 +191,10 @@ export async function rollbackOffCycleRun(runId: string, tenantId: string, reaso
     where: { payGroupId: run.payGroupId, status: "FINALIZED", rolledBackAt: null, OR: [{ year: { gt: run.year } }, { year: run.year, month: { gt: run.month } }, { year: run.year, month: run.month, type: "OFF_CYCLE", sequence: { gt: run.sequence } }] },
   });
   if (later) return { ok: false, message: "A later payroll has been finalised on top of this one. Roll that back first." };
+  if (await prisma.paymentBatchItem.count({ where: { status: "PAID", batch: { runId } } })) return { ok: false, message: "Transfers from this payroll are marked paid; it cannot be rolled back." };
   await prisma.$transaction(async (tx) => {
     await tx.payslip.deleteMany({ where: { runId } });
+    await tx.paymentBatch.deleteMany({ where: { runId } });
     await tx.adhocTransaction.updateMany({ where: { runId }, data: { isProcessed: false } });
     await tx.employeeBonus.updateMany({ where: { runId }, data: { isProcessed: false } });
     await tx.payrollRun.update({ where: { id: runId }, data: { status: "IN_PROGRESS", rolledBackAt: new Date(), rollbackReason: reason || "No reason given", lockedAt: null, lockedBy: null, finalizedAt: null, finalizedBy: null } });

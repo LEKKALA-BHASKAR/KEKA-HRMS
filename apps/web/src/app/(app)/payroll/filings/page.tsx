@@ -106,6 +106,7 @@ export default async function FilingsPage({ searchParams }: { searchParams: Prom
                       </td>
                       <td className="right">
                         <div className="stack gap-2" style={{ alignItems: "flex-end" }}>
+                          <Link className="btn sm" href={`/payroll/filings/24q?fy=${fy}&q=${q}`}>Challans &amp; 24Q data</Link>
                           {f?.fileUrl ? <a className="btn sm" href={f.fileUrl}>Download</a> : null}
                           {f?.status !== "FILED" ? <Generate24q fy={fy} quarter={q} label={f ? "Regenerate" : "Generate"} /> : null}
                           {f?.status === "GENERATED" ? <MarkFiled filingId={f.id} hint="Token no." /> : null}

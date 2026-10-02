@@ -22,6 +22,7 @@ import { BonusDecision, ClaimDecision } from "../../_forms/bonuses";
 type RunLike = {
   id: string; year: number; month: number;
   periodStart: Date; periodEnd: Date;
+  attendanceFrom?: Date | null; attendanceTo?: Date | null;
   status: string;
   employeeCount: number;
   payGroup: {
@@ -39,6 +40,7 @@ type LineLike = {
   id: string; employeeId: string; payAction: string; comment: string | null;
   totalDays: number;
   payableDays: unknown; lopDays: unknown;
+  attendanceLopDays?: unknown; carriedLopDays?: unknown; lopReversalDays?: unknown;
   grossEarnings: unknown; totalDeductions: unknown; netPay: unknown; employerCost: unknown;
   pfWage: unknown; pfEmployee: unknown; pfEmployer: unknown; epsEmployer: unknown; vpf: unknown;
   esiGross: unknown; esiEmployee: unknown; esiEmployer: unknown;
@@ -100,19 +102,24 @@ export async function Step1({ run, lines, editable }: StepProps) {
     }),
     prisma.lopAdjustment.findMany({
       where: { employeeId: { in: employeeIds }, year: run.year, month: run.month },
+      orderBy: [{ reversalForYear: "asc" }, { reversalForMonth: "asc" }],
     }),
     prisma.attendanceRecord.groupBy({
       by: ["employeeId"],
       where: {
         employeeId: { in: employeeIds },
-        date: { gte: run.periodStart, lte: run.periodEnd },
+        date: { gte: run.attendanceFrom ?? run.periodStart, lte: run.attendanceTo ?? run.periodEnd },
         status: "NO_ATTENDANCE",
       },
       _count: true,
     }),
   ]);
 
-  const adjByEmp = new Map(adjustments.map((a) => [a.employeeId, a]));
+  // Carried rows (from closed months) are recalculated with the run; only
+  // the manual adjustment is edited here.
+  const adjByEmp = new Map(adjustments.filter((a) => a.reversalForYear === null).map((a) => [a.employeeId, a]));
+  const carried = adjustments.filter((a) => a.reversalForYear !== null && a.runId === run.id);
+  const windowFrom = run.attendanceFrom ?? run.periodStart, windowTo = run.attendanceTo ?? run.periodEnd;
   const gapsByEmp = new Map(attendanceGaps.map((g) => [g.employeeId, g._count]));
   const nameByEmp = new Map(lines.map((l) => [l.employeeId, empName(l.employee)]));
 
@@ -126,7 +133,35 @@ export async function Step1({ run, lines, editable }: StepProps) {
         {run.payGroup.attendanceCutoffDay
           ? ` The attendance cut-off for this pay group is day ${run.payGroup.attendanceCutoffDay} — LOP after that date rolls into next month.`
           : ""}
+        {" "}This run counts attendance and unpaid leave from <strong>{formatDate(windowFrom)}</strong> to <strong>{formatDate(windowTo)}</strong>.
       </Callout>
+
+      <Card
+        title={`Carried from closed months (${carried.length})`}
+        description="LOP recorded after an earlier month was finalised is charged here as LOP days; LOP reversed after it closed is paid back as arrears at that month's day rate. Worked out again on every recalculation."
+        tight
+      >
+        {carried.length === 0 ? (
+          <Empty title="Nothing carried">No LOP changed in months that are already finalised.</Empty>
+        ) : (
+          <div className="table-wrap">
+            <table className="data">
+              <thead><tr><th>Employee</th><th>From month</th><th>What changed</th><th className="num">Days</th><th className="num">Arrears</th></tr></thead>
+              <tbody>
+                {carried.map((a) => (
+                  <tr key={a.id}>
+                    <td>{nameByEmp.get(a.employeeId) ?? a.employeeId}</td>
+                    <td className="nowrap">{formatPeriod(a.reversalForYear!, a.reversalForMonth!)}</td>
+                    <td>{n(a.days) > 0 ? <Badge tone="danger">LOP recorded late — deducted now</Badge> : <Badge tone="success">LOP reversed — paid as arrears</Badge>}</td>
+                    <td className="num">{n(a.days).toFixed(2)}</td>
+                    <td className="num">{a.amount ? <Money value={a.amount} /> : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       <Card
         title="Leave applied"
@@ -176,7 +211,9 @@ export async function Step1({ run, lines, editable }: StepProps) {
                 <th>Employee</th>
                 <th className="num">Days in month</th>
                 <th className="num">No-attendance days</th>
-                <th className="num">System LOP</th>
+                <th className="num">LOP in window</th>
+                <th className="num">Carried LOP</th>
+                <th className="num">Total LOP</th>
                 <th className="num">Payable days</th>
                 <th>Manual adjustment</th>
               </tr>
@@ -196,6 +233,8 @@ export async function Step1({ run, lines, editable }: StepProps) {
                     <td className="num">
                       {gaps > 0 ? <Badge tone="warning">{gaps}</Badge> : <span className="subtle">0</span>}
                     </td>
+                    <td className="num">{l.attendanceLopDays === null || l.attendanceLopDays === undefined ? "—" : n(l.attendanceLopDays).toFixed(2)}</td>
+                    <td className="num">{n(l.carriedLopDays) ? n(l.carriedLopDays).toFixed(2) : <span className="subtle">0</span>}</td>
                     <td className="num">{n(l.lopDays).toFixed(2)}</td>
                     <td className="num strong">{n(l.payableDays).toFixed(2)}</td>
                     <td>

@@ -142,6 +142,8 @@ model Employee {
   salaryRevisions   SalaryRevision[]
   payrollLines      PayrollRunEmployee[]
   payslips          Payslip[]
+  salaryHolds       SalaryHold[]
+  paymentItems      PaymentBatchItem[]
   statutoryProfile  EmployeeStatutoryProfile?
   declarations      InvestmentDeclaration[]
   loans             Loan[]
@@ -426,6 +428,8 @@ model EmployeeBankAccount {
   /// Bank-account verification result.
   isVerified    Boolean   @default(false)
   verifiedAt    DateTime?
+  /// Who verified it by hand (a cancelled cheque or penny drop seen offline).
+  verifiedBy    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

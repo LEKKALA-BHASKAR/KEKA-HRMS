@@ -399,6 +399,12 @@ model PayrollRun {
   rolledBackAt   DateTime?
   rollbackReason String?
 
+  /// The attendance window this run counted LOP over: the day after the
+  /// previous run's window up to the pay group's cut-off day. Null on runs
+  /// calculated before cut-offs were applied, which counted the whole month.
+  attendanceFrom DateTime?
+  attendanceTo   DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -406,6 +412,9 @@ model PayrollRun {
   payslips         Payslip[]
   approvalRequests PayrollApprovalRequest[]
   journalVouchers  JournalVoucher[]
+  salaryHolds      SalaryHold[]             @relation("SalaryHeldIn")
+  releasedHolds    SalaryHold[]             @relation("SalaryReleasedIn")
+  paymentBatches   PaymentBatch[]
 
   @@unique([payGroupId, year, month, type, sequence])
   @@index([tenantId, year, month])
@@ -442,6 +451,11 @@ model PayrollRunEmployee {
   /// Manual adjustment on top of the system-calculated LOP.
   lopAdjustment   Decimal  @default(0) @db.Decimal(9, 2)
   lopReversalDays Decimal  @default(0) @db.Decimal(9, 2)
+  /// LOP counted from attendance and unpaid leave inside the run's window,
+  /// before adjustments. Kept so later runs can see LOP recorded late.
+  attendanceLopDays Decimal? @db.Decimal(9, 2)
+  /// LOP recorded after an earlier run closed, charged in this run.
+  carriedLopDays    Decimal  @default(0) @db.Decimal(9, 2)
   /// For daily, hourly and per-unit staff.
   payableUnits    Decimal? @db.Decimal(12, 2)
 
