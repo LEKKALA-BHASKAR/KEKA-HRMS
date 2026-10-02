@@ -93,7 +93,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     viewer.employee
       ? prisma.survey.count({
           where: {
-            tenantId: viewer.tenantId, status: "ACTIVE",
+            tenantId: viewer.tenantId, status: "ACTIVE", kind: { not: "EXIT" },
             participants: { none: { employeeId: viewer.employee.id } },
             OR: [{ departmentIds: { isEmpty: true } }, { departmentIds: { has: myDept ?? "-" } }],
           },

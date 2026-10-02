@@ -1,0 +1,88 @@
+// ============================================================================
+//  KEKA — Core HR workflows: job changes through approval, email
+//  notification settings
+// ============================================================================
+//  JobChange is a promotion, transfer or other position change that has been
+//  asked for but not (yet) written to the job history: it waits for its
+//  approval chain (ApprovalAction JOB_CHANGE on the employee's pay group),
+//  for its effective date, or both. Once applied it points at the
+//  EmployeeJobRecord it produced. Changes that need neither are applied
+//  straight away and leave an APPLIED row as their trail.
+//
+//  NotificationSetting overrides, per tenant and event, whether an event
+//  emails and to whom. No row means the event behaves as it always has.
+//
+//  Both carry plain tenant/employee id columns, like the other cross-area
+//  logs, so they add nothing to the Tenant and Employee models.
+// ============================================================================
+
+enum JobChangeStatus {
+  /// Waiting on its approval chain.
+  PENDING_APPROVAL
+  /// Approved (or needing no approval) and waiting for its effective date.
+  SCHEDULED
+  /// Written to the job history.
+  APPLIED
+  REJECTED
+  WITHDRAWN
+}
+
+model JobChange {
+  id         String @id @default(cuid())
+  tenantId   String
+  employeeId String
+
+  effectiveFrom DateTime
+  reason        JobChangeReason
+
+  jobTitleId         String?
+  departmentId       String?
+  businessUnitId     String?
+  locationId         String?
+  legalEntityId      String?
+  bandId             String?
+  payGradeId         String?
+  workerTypeId       String?
+  reportingManagerId String?
+
+  note        String?
+  /// Also record it on the HR activity timeline when applied.
+  logActivity Boolean         @default(false)
+  /// MANUAL (employee profile) or IMPORT (bulk job-details import).
+  source      String          @default("MANUAL")
+  status      JobChangeStatus @default(PENDING_APPROVAL)
+
+  /// PayrollApprovalRequest carrying it through the chain, when one was needed.
+  approvalRequestId String?
+  /// The job record it produced once applied.
+  jobRecordId       String?
+
+  requestedBy String?
+  decidedAt   DateTime?
+  appliedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@index([employeeId, status])
+  @@index([status, effectiveFrom])
+  @@map("job_changes")
+}
+
+/// Admin > Settings > Notifications. One row per event the admin changed.
+model NotificationSetting {
+  id           String   @id @default(cuid())
+  tenantId     String
+  /// Key from the event catalogue (services/notification-events).
+  event        String
+  /// Off: the event still notifies in the app but sends no email.
+  emailEnabled Boolean  @default(true)
+  /// EMPLOYEE | MANAGER | HR — who gets the email.
+  recipients   String[] @default([])
+  /// Extra addresses copied on every email for this event.
+  customEmails String[] @default([])
+  updatedBy    String?
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenantId, event])
+  @@map("notification_settings")
+}

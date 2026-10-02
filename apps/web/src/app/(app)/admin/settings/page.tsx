@@ -10,10 +10,11 @@ import { ProfileForm, VisibilityForm, SecurityForm, UserSecurityForm, DeliverMai
 import { CustomFieldForm, CustomFieldRow } from "./custom-fields";
 import { SsoForm, TestSso } from "./sso";
 import { headers } from "next/headers";
+import { Notifications } from "./notifications";
 import { NoticePolicyForm, NoticePolicyRow, ExitReasonForm, ExitReasonRow, FolderForm, FolderHeader, DocTypeForm, DocTypeRow } from "./workplace";
 
 const P = PERMISSIONS;
-const TABS = { org: "Organisation", fields: "Custom fields", documents: "Documents", exits: "Notice & exits", security: "Security", sso: "Single sign-on", log: "Sign-in log", mail: "Email", jobs: "Scheduled jobs" } as const;
+const TABS = { org: "Organisation", fields: "Custom fields", documents: "Documents", exits: "Notice & exits", security: "Security", sso: "Single sign-on", log: "Sign-in log", mail: "Email", notifications: "Notifications", jobs: "Scheduled jobs" } as const;
 type Tab = keyof typeof TABS;
 const when = (d: Date) => d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
@@ -25,7 +26,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     org: can(viewer, P.ORG_SETTINGS_MANAGE), fields: can(viewer, P.ORG_SETTINGS_MANAGE),
     documents: can(viewer, P.DOCUMENT_MANAGE), exits: can(viewer, P.EXIT_MANAGE),
     security: can(viewer, P.AUTH_SETTINGS_MANAGE), sso: can(viewer, P.AUTH_SETTINGS_MANAGE), log: can(viewer, P.AUTH_SETTINGS_MANAGE),
-    mail: can(viewer, P.ORG_SETTINGS_MANAGE), jobs: can(viewer, P.ORG_SETTINGS_MANAGE),
+    mail: can(viewer, P.ORG_SETTINGS_MANAGE), notifications: can(viewer, P.ORG_SETTINGS_MANAGE), jobs: can(viewer, P.ORG_SETTINGS_MANAGE),
   };
   const tabs = (Object.keys(TABS) as Tab[]).filter((t) => allowed[t]);
   if (!tabs.length) forbidden();
@@ -46,6 +47,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       {tab === "sso" ? <Sso tenantId={viewer.tenantId} /> : null}
       {tab === "log" ? <Log tenantId={viewer.tenantId} /> : null}
       {tab === "mail" ? <Mail tenantId={viewer.tenantId} /> : null}
+      {tab === "notifications" ? <Notifications tenantId={viewer.tenantId} /> : null}
       {tab === "jobs" ? <Jobs /> : null}
     </>
   );
@@ -314,6 +316,8 @@ const JOBS: Array<[string, string, number]> = [
   ["journeys", "Close journey tasks the system can verify", 26 * 3_600_000],
   ["invoices", "Mark unpaid invoices past their due date overdue", 26 * 3_600_000],
   ["ledger-check", "Check every tenant's books balance", 26 * 3_600_000],
+  ["job-changes", "Apply approved promotions and transfers on their effective date", 26 * 3_600_000],
+  ["scheduled-reports", "Email scheduled reports that are due", 26 * 3_600_000],
   ["accrue", "Credit the month's leave", 32 * 86_400_000],
 ];
 

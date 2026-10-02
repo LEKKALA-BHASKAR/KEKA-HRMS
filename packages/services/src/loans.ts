@@ -156,7 +156,7 @@ export async function approveLoan(loanId: string, byUserId: string, note?: strin
       data: { status: "APPROVED", approvedAt: new Date(), approvedBy: byUserId, emiAmount: s.emi.toNumber(), startYear: start.year, startMonth: start.month, outstanding: loan.principal, decisionNote: note ?? null },
     }),
   ]);
-  await notify({ tenantId: loan.employee.tenantId, userIds: [loan.employee.userId], kind: "LOAN", title: "Your loan was approved", body: `EMI ₹${s.emi.toNumber().toLocaleString("en-IN")} from ${start.month}/${start.year}.`, link: "/finances/loans", email: true });
+  await notify({ tenantId: loan.employee.tenantId, userIds: [loan.employee.userId], kind: "LOAN", title: "Your loan was approved", body: `EMI ₹${s.emi.toNumber().toLocaleString("en-IN")} from ${start.month}/${start.year}.`, link: "/finances/loans", email: true, event: "LOAN_APPROVED", employeeIds: [loan.employeeId] });
   return { ok: true, message: `Approved. ${loan.installments} instalments of ₹${s.emi.toNumber().toLocaleString("en-IN")} from ${start.month}/${start.year}; disburse to activate.` };
 }
 

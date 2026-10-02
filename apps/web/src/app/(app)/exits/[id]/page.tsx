@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { formatDate, formatINR } from "@keka/shared";
-import { computeSettlement, noticeDaysFor, type SettlementLine } from "@keka/services";
+import { computeSettlement, noticeDaysFor, exitSurveyResponse, exitSurveyFor, type SettlementLine } from "@keka/services";
 import { requireViewer, can, canAny } from "@/lib/context";
 import { PageHead, Card, Badge, Callout, KeyValue, Person } from "@/components/ui";
 import {
@@ -52,6 +52,10 @@ export default async function ExitDetailPage({ params }: { params: Promise<{ id:
   const rec = lines.filter((l) => l.direction === "RECOVER");
   const net = s ? Number(s.netSettlement) : preview?.net ?? 0;
   const lwdPassed = exit.lastWorkingDay.getTime() <= Date.now();
+  // The exit survey answers, for whoever manages or approves this exit.
+  const seesSurvey = may(P.EXIT_MANAGE) || may(P.EXIT_APPROVE);
+  const surveyResponse = seesSurvey ? await exitSurveyResponse(exit.id) : null;
+  const surveyAsked = seesSurvey && !surveyResponse ? await exitSurveyFor(exit.id) : null;
 
   return (
     <>
@@ -73,6 +77,29 @@ export default async function ExitDetailPage({ params }: { params: Promise<{ id:
             <Card tight title="Exit checklist" description="Tasks the system can verify close themselves — asset returns, loans, the settlement.">
               <JourneyChecklist journeyId={e.journeys[0].id} viewer={viewer} anchorLabel="the last day" />
             </Card>
+          ) : null}
+
+          {surveyResponse ? (
+            <Card title="Exit survey" description={`Answered ${formatDate(surveyResponse.submittedAt)}`} action={<Link className="btn sm ghost" href="/exits/survey">All responses</Link>}>
+              <div className="stack gap-3">
+                {surveyResponse.survey.questions.map((q) => {
+                  const a = surveyResponse.answers.find((x) => x.questionId === q.id);
+                  const value = !a ? null
+                    : q.type === "RATING" ? `${a.score} / 5`
+                    : q.type === "NPS" ? `${a.score} / 10`
+                    : q.type === "SINGLE_CHOICE" || q.type === "MULTI_CHOICE" ? a.choices.map((c) => q.options[c]).filter(Boolean).join(", ")
+                    : a.text;
+                  return (
+                    <div key={q.id}>
+                      <div className="text-xs subtle">{q.prompt}</div>
+                      <div className="text-sm">{value || <span className="subtle">No answer</span>}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          ) : surveyAsked && decided ? (
+            <Card title="Exit survey"><div className="text-sm muted">{e.displayName} has not completed the exit survey yet. It is on their My exit page.</div></Card>
           ) : null}
 
           {decided && (may(P.FNF_MANAGE) || may(P.FNF_APPROVE)) ? (

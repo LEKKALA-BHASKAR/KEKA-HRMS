@@ -162,7 +162,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
 
   // Engagement and learning at a glance.
   const lastSurvey = await prisma.survey.findFirst({
-    where: { tenantId: viewer.tenantId, status: { in: ["ACTIVE", "CLOSED"] }, kind: { not: "POLL" }, questions: { some: { type: "NPS" } } },
+    where: { tenantId: viewer.tenantId, status: { in: ["ACTIVE", "CLOSED"] }, kind: { notIn: ["POLL", "EXIT"] }, questions: { some: { type: "NPS" } } },
     orderBy: { launchedAt: "desc" },
     include: { _count: { select: { participants: true } }, questions: { where: { type: "NPS" }, select: { id: true } }, responses: { select: { answers: { select: { questionId: true, score: true } } } } },
   });

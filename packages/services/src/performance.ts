@@ -111,7 +111,7 @@ export async function launchCycle(cycleId: string): Promise<{ ok: boolean; messa
   const peers = types.length !== reviewersOf(c.reviewerTypes).length;
   await notify({
     tenantId: c.tenantId, userIds: emps.map((e) => e.userId), kind: "PERFORMANCE",
-    title: `${c.name} has started`, body: `Write your self review${peers ? " and choose the peers you would like feedback from" : ""}, then your manager will add theirs.`, link: "/performance?tab=reviews", email: true,
+    title: `${c.name} has started`, body: `Write your self review${peers ? " and choose the peers you would like feedback from" : ""}, then your manager will add theirs.`, link: "/performance?tab=reviews", email: true, event: "REVIEW_CYCLE_STARTED",
   });
   return { ok: true, message: `Launched for ${made} employee(s).`, reviews: made };
 }
@@ -262,7 +262,7 @@ export async function shareCycle(cycleId: string): Promise<{ ok: boolean; messag
   const shared = await prisma.employeeReview.updateMany({ where: { cycleId, status: "CALIBRATED" }, data: { status: "SHARED", sharedAt: new Date() } });
   await prisma.reviewCycle.update({ where: { id: cycleId }, data: { status: "COMPLETED" } });
   const people = await prisma.employeeReview.findMany({ where: { cycleId }, select: { employee: { select: { userId: true } } } });
-  await notify({ tenantId: c.tenantId, userIds: people.map((p) => p.employee.userId), kind: "PERFORMANCE", title: `Your ${c.name} review is ready`, link: "/performance?tab=reviews", email: true });
+  await notify({ tenantId: c.tenantId, userIds: people.map((p) => p.employee.userId), kind: "PERFORMANCE", title: `Your ${c.name} review is ready`, link: "/performance?tab=reviews", email: true, event: "REVIEW_SHARED" });
   return { ok: true, message: `Shared ${shared.count} review(s); the cycle is complete.` };
 }
 

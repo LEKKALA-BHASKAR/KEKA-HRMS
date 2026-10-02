@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { selectStructureForCtc } from "@keka/payroll";
-import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision } from "@keka/services";
+import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision, requestJobChange, jobChangeLabel, jobChangeDue } from "@keka/services";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
 import {
@@ -420,12 +420,18 @@ const jobChangeSchema = z.object({
   note: zOptional(400),
   /// Also record it on the HR activity timeline.
   logActivity: zBool(),
+  /// Wait for the effective date rather than writing the record now (bulk import).
+  holdUntilEffective: zBool(),
 });
 
 /**
  * There is no separate transfer or promotion module. A position change is an
  * effective-dated job record plus an update to the denormalised fields the
- * rest of the system reads.
+ * rest of the system reads. When the employee's pay group has a job-change
+ * approval rule the change waits for its chain (and then for its effective
+ * date, if that is still ahead); otherwise it is written straight away. The
+ * bulk import asks for future-dated rows to wait for their date
+ * (`holdUntilEffective`), so its job records appear on the day they start.
  */
 export async function recordJobChange(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const parsed = parseForm(jobChangeSchema, formData);
@@ -441,128 +447,51 @@ export async function recordJobChange(_prev: ActionState, formData: FormData): P
     jobTitle: d.jobTitleId, band: d.bandId, payGrade: d.payGradeId, workerType: d.workerTypeId, employee: d.reportingManagerId,
   });
   if (foreign) return { ok: false, message: foreign };
+  if (d.reportingManagerId === d.employeeId) {
+    return { ok: false, message: "Someone cannot report to themselves.", errors: { reportingManagerId: "Choose someone else" } };
+  }
+  if (await prisma.jobChange.count({ where: { employeeId: d.employeeId, status: "PENDING_APPROVAL" } })) {
+    return { ok: false, message: "A job change for this employee is already waiting for approval. Approve, reject or withdraw it first." };
+  }
 
   const before = await prisma.employee.findUniqueOrThrow({
     where: { id: d.employeeId },
-    include: {
-      department: { select: { name: true } },
-      location: { select: { name: true, stateCode: true } },
-      band: { select: { name: true } },
-    },
+    include: { department: { select: { name: true } }, location: { select: { name: true } } },
   });
+  const day = d.effectiveFrom.toISOString().slice(0, 10);
+  const what = d.reason.replace(/_/g, " ").toLowerCase();
 
   try {
-    await prisma.$transaction(async (tx) => {
-      // Close the open job record at the day before the new one starts.
-      const open = await tx.employeeJobRecord.findFirst({
-        where: { employeeId: d.employeeId, effectiveTo: null },
-        orderBy: { effectiveFrom: "desc" },
-      });
-      if (open && open.effectiveFrom < d.effectiveFrom) {
-        await tx.employeeJobRecord.update({
-          where: { id: open.id },
-          data: { effectiveTo: new Date(d.effectiveFrom.getTime() - 86_400_000) },
-        });
-      }
-
-      const jobTitleName = d.jobTitleId
-        ? (await tx.jobTitle.findUnique({ where: { id: d.jobTitleId }, select: { name: true } }))?.name
-        : undefined;
-
-      await tx.employeeJobRecord.create({
-        data: {
-          employeeId: d.employeeId,
-          effectiveFrom: d.effectiveFrom,
-          reason: d.reason,
-          jobTitleId: d.jobTitleId ?? open?.jobTitleId ?? null,
-          departmentId: d.departmentId ?? before.departmentId,
-          businessUnitId: d.businessUnitId ?? before.businessUnitId,
-          locationId: d.locationId ?? before.locationId,
-          legalEntityId: d.legalEntityId ?? before.legalEntityId,
-          bandId: d.bandId ?? before.bandId,
-          payGradeId: d.payGradeId ?? before.payGradeId,
-          workerTypeId: d.workerTypeId ?? before.workerTypeId,
-          reportingManagerId: d.reportingManagerId ?? before.reportingManagerId,
-          note: d.note,
-          createdBy: viewer.user.id,
-        },
-      });
-
-      // Update the denormalised current state the rest of the app reads.
-      await tx.employee.update({
-        where: { id: d.employeeId },
-        data: {
-          ...(d.jobTitleId ? { jobTitleName: jobTitleName ?? null } : {}),
-          ...(d.departmentId ? { departmentId: d.departmentId } : {}),
-          ...(d.businessUnitId ? { businessUnitId: d.businessUnitId } : {}),
-          ...(d.locationId ? { locationId: d.locationId } : {}),
-          ...(d.legalEntityId ? { legalEntityId: d.legalEntityId } : {}),
-          ...(d.bandId ? { bandId: d.bandId } : {}),
-          ...(d.payGradeId ? { payGradeId: d.payGradeId } : {}),
-          ...(d.workerTypeId ? { workerTypeId: d.workerTypeId } : {}),
-          ...(d.reportingManagerId ? { reportingManagerId: d.reportingManagerId } : {}),
-          ...(d.reason === "CONFIRMATION"
-            ? { status: "CONFIRMED" as const, confirmationDate: d.effectiveFrom }
-            : {}),
-        },
-      });
-
-      if (d.logActivity) {
-        const typeMap: Record<string, "PROMOTION" | "TRANSFER"> = {
-          PROMOTION: "PROMOTION", DEMOTION: "PROMOTION",
-          TRANSFER: "TRANSFER", LOCATION_CHANGE: "TRANSFER", DEPARTMENT_CHANGE: "TRANSFER",
-        };
-        const activityType = typeMap[d.reason];
-        if (activityType) {
-          await tx.hrActivity.create({
-            data: {
-              tenantId: viewer.tenantId, employeeId: d.employeeId,
-              type: activityType,
-              title: d.reason.replace(/_/g, " ").toLowerCase()
-                .replace(/\b\w/g, (c) => c.toUpperCase()),
-              description: d.note,
-              occurredOn: d.effectiveFrom,
-              fromValue: d.departmentId ? before.department?.name ?? null
-                : d.locationId ? before.location?.name ?? null
-                : before.jobTitleName,
-              toValue: jobTitleName ?? null,
-              recordedBy: viewer.employee?.id ?? null,
-            },
-          });
-        }
-      }
+    const { holdUntilEffective, employeeId: _e, ...fields } = d;
+    const res = await requestJobChange({
+      tenantId: viewer.tenantId, employeeId: d.employeeId, requestedBy: viewer.user.id, fields,
+      source: holdUntilEffective ? "IMPORT" : "MANUAL", holdUntilEffective,
+      summary: `${jobChangeLabel(d.reason)} for ${target.employeeNumber} (${before.displayName ?? before.firstName}) from ${day}`,
     });
-
-    // A location change can move the employee into a different PT/LWF state.
-    let note = "";
-    if (d.locationId && d.locationId !== before.locationId) {
-      const after = await prisma.location.findUnique({
-        where: { id: d.locationId }, select: { stateCode: true, name: true },
-      });
-      if (after?.stateCode !== before.location?.stateCode) {
-        note = ` Their state changed from ${before.location?.stateCode ?? "none"} to ${after?.stateCode ?? "none"}, so Professional Tax and LWF will follow the new state from the next run.`;
-      }
-    }
+    const state = res.applied?.stateChange;
+    const note = state
+      ? ` Their state changed from ${state.from ?? "none"} to ${state.to ?? "none"}, so Professional Tax and LWF will follow the new state from the next run.`
+      : "";
 
     await writeAudit(viewer, {
-      module: "EMPLOYEE", action: "UPDATE", entityType: "EmployeeJobRecord", entityId: d.employeeId,
-      summary: `${d.reason.replace(/_/g, " ").toLowerCase()} for ${target.employeeNumber}, effective ${d.effectiveFrom.toISOString().slice(0, 10)}${note}`,
+      module: "EMPLOYEE", action: "UPDATE", entityType: res.status === "APPLIED" ? "EmployeeJobRecord" : "JobChange",
+      entityId: res.status === "APPLIED" ? d.employeeId : res.jobChangeId,
+      summary: res.status === "PENDING_APPROVAL"
+        ? `Requested ${what} for ${target.employeeNumber}, effective ${day} — sent for approval`
+        : res.status === "SCHEDULED"
+          ? `Scheduled ${what} for ${target.employeeNumber}, effective ${day}`
+          : `${what} for ${target.employeeNumber}, effective ${day}${note}`,
       oldValue: { jobTitle: before.jobTitleName, department: before.department?.name, location: before.location?.name },
     });
 
-    // Promotions, transfers and confirmations each set work in motion.
-    const trigger = ({
-      PROMOTION: "PROMOTION", TRANSFER: "TRANSFER", LOCATION_CHANGE: "TRANSFER",
-      DEPARTMENT_CHANGE: "TRANSFER", CONFIRMATION: "CONFIRMATION",
-    } as const)[d.reason as "PROMOTION"];
-    const journey = trigger
-      ? await startJourney({ employeeId: d.employeeId, trigger, anchorDate: d.effectiveFrom, createdBy: viewer.user.id, sourceType: "EmployeeJobRecord" })
-      : null;
-
     return done(
-      [`/employees/${d.employeeId}`, "/employees", "/activities", "/onboarding"],
-      `Recorded the change effective ${d.effectiveFrom.toISOString().slice(0, 10)}.${note}` +
-        (journey?.created ? ` ${journey.tasks} follow-up task(s) were created.` : ""),
+      [`/employees/${d.employeeId}`, "/employees", "/activities", "/onboarding", "/inbox", "/payroll/approvals"],
+      res.status === "PENDING_APPROVAL"
+        ? `Sent for approval. The change takes effect once every approver in the job-change chain signs off${jobChangeDue(d.effectiveFrom) ? "" : `, on ${day}`}.`
+        : res.status === "SCHEDULED"
+          ? `Scheduled. The job record is written on ${day}.`
+          : `Recorded the change effective ${day}.${note}` +
+            (res.applied?.journeyTasks ? ` ${res.applied.journeyTasks} follow-up task(s) were created.` : ""),
     );
   } catch (err) {
     return toErrorState(err, parsed.data as never);

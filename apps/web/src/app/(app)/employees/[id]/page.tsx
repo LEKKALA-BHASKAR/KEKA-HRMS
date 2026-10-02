@@ -108,6 +108,10 @@ export default async function EmployeePage({
   }));
   const customSections = [...new Set(customFields.map((f) => f.section))];
 
+  // Job changes asked for but not yet in the history: waiting on approval or on their date.
+  const openChanges = tab === "job"
+    ? await prisma.jobChange.findMany({ where: { employeeId: employee.id, tenantId: viewer.tenantId, status: { in: ["PENDING_APPROVAL", "SCHEDULED"] } }, orderBy: { effectiveFrom: "asc" } })
+    : [];
   const noticePolicies = tab === "job"
     ? await prisma.noticePeriodPolicy.findMany({ where: { tenantId: viewer.tenantId, isActive: true }, orderBy: [{ isDefault: "desc" }, { name: "asc" }] })
     : [];
@@ -442,6 +446,26 @@ export default async function EmployeePage({
                 managers={managersO.map((m) => ({ value: m.id, label: `${m.displayName} (${m.employeeNumber})` }))}
               />
             </EditToggle>
+          </Card>
+        ) : null}
+        {openChanges.length ? (
+          <Card tight title={`Upcoming job changes (${openChanges.length})`} description="Recorded but not yet in the job history: waiting for approval, or approved and waiting for the effective date.">
+            <div className="table-wrap">
+              <table className="data">
+                <thead><tr><th>Effective from</th><th>Reason</th><th>Status</th><th>Source</th><th>Note</th></tr></thead>
+                <tbody>
+                  {openChanges.map((c) => (
+                    <tr key={c.id}>
+                      <td className="nowrap">{formatDate(c.effectiveFrom)}</td>
+                      <td><Badge tone="neutral">{c.reason.replace(/_/g, " ").toLowerCase()}</Badge></td>
+                      <td><Badge tone={c.status === "SCHEDULED" ? "info" : "warning"}>{c.status === "SCHEDULED" ? "scheduled" : "awaiting approval"}</Badge></td>
+                      <td className="text-sm muted">{c.source === "IMPORT" ? "Bulk import" : "Profile"}</td>
+                      <td className="text-sm muted">{c.note ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </Card>
         ) : null}
         <Card title="Notice period" description="What this person must serve on resignation. Used when an exit is raised.">

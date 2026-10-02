@@ -620,6 +620,8 @@ model PayRegisterConfig {
 enum ApprovalAction {
   LOCK_PAYROLL
   COMPENSATION_CHANGE
+  /// Promotions, transfers and other job changes (24-core-hr-workflows).
+  JOB_CHANGE
 }
 
 enum ApprovalRequestStatus {

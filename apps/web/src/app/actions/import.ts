@@ -5,7 +5,7 @@ import { parseCsv, mapRows, normaliseDate, normaliseYesNo, normaliseAmount } fro
 import { requireAuth, type Viewer } from "@/lib/context";
 import { writeAudit, actionDone as done, type ActionState } from "@/lib/forms";
 import { IMPORTS, IMPORT_KINDS, type ImportKind } from "@/lib/imports";
-import { createEmployee, reviseSalary, saveEmployeeBank } from "./employee";
+import { createEmployee, reviseSalary, saveEmployeeBank, recordJobChange } from "./employee";
 import { adjustBalanceAction } from "./time";
 import { scheduleBonusAction } from "./bonuses";
 
@@ -40,7 +40,7 @@ function form(fields: Record<string, string | null | undefined | boolean>): Form
 
 /** Look records up by name (or code) without a query per row. */
 async function lookups(tenantId: string) {
-  const [entities, locations, departments, titles, payGroups, plans, leaveTypes, employees, bonusTypes] = await Promise.all([
+  const [entities, locations, departments, titles, payGroups, plans, leaveTypes, employees, bonusTypes, grades, bands] = await Promise.all([
     prisma.legalEntity.findMany({ where: { tenantId }, select: { id: true, name: true } }),
     prisma.location.findMany({ where: { tenantId }, select: { id: true, name: true } }),
     prisma.department.findMany({ where: { tenantId }, select: { id: true, name: true } }),
@@ -50,6 +50,8 @@ async function lookups(tenantId: string) {
     prisma.leaveType.findMany({ where: { tenantId }, select: { id: true, name: true, code: true } }),
     prisma.employee.findMany({ where: { tenantId }, select: { id: true, employeeNumber: true, workEmail: true } }),
     prisma.bonusType.findMany({ where: { tenantId, isActive: true }, select: { id: true, name: true } }),
+    prisma.payGrade.findMany({ where: { tenantId }, select: { id: true, name: true } }),
+    prisma.band.findMany({ where: { tenantId }, select: { id: true, name: true } }),
   ]);
   const byName = (rows: Array<{ id: string; name: string }>) => new Map(rows.map((r) => [lower(r.name), r.id]));
   const types = new Map<string, string>();
@@ -57,6 +59,7 @@ async function lookups(tenantId: string) {
   return {
     entity: byName(entities), location: byName(locations), department: byName(departments), title: byName(titles),
     payGroup: byName(payGroups), plan: byName(plans), leaveType: types, bonusType: byName(bonusTypes),
+    grade: byName(grades), band: byName(bands),
     employee: new Map(employees.map((e) => [lower(e.employeeNumber), e.id])),
     emails: new Set(employees.map((e) => e.workEmail ? lower(e.workEmail) : "").filter(Boolean)),
   };
@@ -188,6 +191,49 @@ function builders(l: Lookups): Record<ImportKind, Builder> {
       if (problems.length) return { error: problems.join("; ") };
       return { label: `${v.employee_number} ${v.bonus_type}`, form: form({ employeeId: emp, bonusTypeId: type.id, amount, payout, note: v.note }) };
     },
+
+    async "job-details"(v) {
+      const problems: string[] = [];
+      const emp = employeeId(v.employee_number ?? "");
+      if (!emp) problems.push(v.employee_number ? `No employee ${v.employee_number}` : "Employee number is required");
+      const from = normaliseDate(v.effective_from ?? "");
+      if (!from) problems.push(v.effective_from ? `“${v.effective_from}” is not a date` : "Effective from is required");
+      const title = ref(l.title, v.designation ?? "", "Designation");
+      const department = ref(l.department, v.department ?? "", "Department");
+      const location = ref(l.location, v.location ?? "", "Location");
+      for (const r of [title, department, location]) if (r.error) problems.push(r.error);
+      // A grade is a pay grade by name, else a band by name.
+      const gradeId = v.grade ? l.grade.get(lower(v.grade)) : undefined;
+      const bandId = v.grade && !gradeId ? l.band.get(lower(v.grade)) : undefined;
+      if (v.grade && !gradeId && !bandId) problems.push(`No grade or band called “${v.grade}”`);
+      let managerId: string | undefined;
+      if (v.reporting_manager) {
+        managerId = employeeId(v.reporting_manager);
+        if (!managerId) problems.push(`No employee ${v.reporting_manager} to report to`);
+        else if (managerId === emp) problems.push("Someone cannot report to themselves");
+      }
+      if (!v.designation && !v.department && !v.location && !v.reporting_manager && !v.grade) {
+        problems.push("Give at least one of designation, department, location, reporting manager or grade");
+      }
+      const REASONS = ["PROMOTION", "TRANSFER", "DEPARTMENT_CHANGE", "LOCATION_CHANGE", "MANAGER_CHANGE", "DEMOTION"];
+      const reason = v.reason
+        ? v.reason.trim().toUpperCase().replace(/[\s-]+/g, "_")
+        : title.id || gradeId || bandId ? "PROMOTION"
+        : department.id && location.id ? "TRANSFER"
+        : department.id ? "DEPARTMENT_CHANGE"
+        : location.id ? "LOCATION_CHANGE"
+        : "MANAGER_CHANGE";
+      if (!REASONS.includes(reason)) problems.push(`Reason “${v.reason}” is not one of ${REASONS.join(", ")}`);
+      if (problems.length) return { error: problems.join("; ") };
+      return {
+        label: `${v.employee_number} ${reason.toLowerCase()} from ${from}`,
+        form: form({
+          employeeId: emp, effectiveFrom: from, reason, jobTitleId: title.id, departmentId: department.id, locationId: location.id,
+          reportingManagerId: managerId, payGradeId: gradeId, bandId, note: v.note || "Bulk job-details import",
+          logActivity: true, holdUntilEffective: true,
+        }),
+      };
+    },
   };
 }
 
@@ -197,6 +243,7 @@ const RUN: Record<ImportKind, (prev: ActionState, f: FormData) => Promise<Action
   salaries: reviseSalary,
   "bank-accounts": saveEmployeeBank,
   bonuses: scheduleBonusAction,
+  "job-details": recordJobChange,
 };
 
 async function readFile(formData: FormData): Promise<{ text?: string; error?: string }> {
@@ -263,11 +310,11 @@ export async function runImportAction(_prev: ImportResult, formData: FormData): 
     }
   }
   await writeAudit(viewer, {
-    module: kind === "leave-balances" ? "LEAVE" : kind === "employees" ? "EMPLOYEE" : kind === "bonuses" ? "PAYROLL" : "FINANCE",
+    module: kind === "leave-balances" ? "LEAVE" : kind === "employees" || kind === "job-details" ? "EMPLOYEE" : kind === "bonuses" ? "PAYROLL" : "FINANCE",
     action: "CREATE", entityType: "BulkImport",
     summary: `Imported ${imported} of ${built.length} ${spec.label.toLowerCase()} row(s) from CSV${failures.length ? `; ${failures.length} refused` : ""}`,
   });
-  const result = done(["/admin/import", "/employees", "/leave", "/payroll/bonuses"], failures.length
+  const result = done(["/admin/import", "/employees", "/leave", "/payroll/bonuses", "/inbox"], failures.length
     ? `Imported ${imported} of ${built.length} row(s). ${failures.length} were refused; fix those rows and import them again.`
     : `Imported all ${imported} row(s).`);
   return { ...result, ok: failures.length === 0, checked: built.length, imported, rowErrors: failures };
