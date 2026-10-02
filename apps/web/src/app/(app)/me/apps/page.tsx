@@ -135,7 +135,7 @@ async function buildApps(viewer: Viewer): Promise<App[]> {
 
   if (assets) {
     apps.push({
-      key: "assets", title: "Assets", href: "/assets", icon: <IconBox />, colour: "#9b7ede",
+      key: "assets", title: "Assets", href: "/me/assets", icon: <IconBox />, colour: "#9b7ede",
       description: "Laptops and equipment issued to you, and requests for new ones.",
       count: held, countLabel: "assets with you", attention: unacknowledged > 0,
       note: unacknowledged ? `${plural(unacknowledged, "asset")} to acknowledge` : held ? `${plural(held, "asset")} with you` : "No assets assigned",

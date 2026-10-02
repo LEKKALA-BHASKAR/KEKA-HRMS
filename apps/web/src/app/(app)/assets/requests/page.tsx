@@ -1,15 +1,15 @@
 import Link from "next/link";
-import { prisma, type Prisma } from "@keka/db";
+import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import {
   ASSET_REQUEST_STATUS_LABEL, ASSET_REQUEST_TYPE_LABEL, currentAssetLevel, canActOnAssetLevel, type AssetLevelState,
 } from "@keka/services";
 import { requireViewer, can } from "@/lib/context";
-import { scopedEmployeeWhere } from "@/lib/scope";
 import { decideAssetRequestAction, cancelAssetRequestAction } from "@/app/actions/assets";
 import { FilterForm, Kebab, ActButton, ModalButton, type MenuItem } from "../_ui";
 import { FSelect, FSearch, FDate, Pager, pageOf, PAGE_SIZE, Toolbar, Segments, fmt, qs } from "../_parts";
 import { RequestDrawer, AssignOverlay } from "../_drawers";
+import { assetRequestsWhere } from "../_queries";
 import s from "../assets.module.css";
 
 /**
@@ -20,8 +20,6 @@ import s from "../assets.module.css";
 
 const P = PERMISSIONS;
 type SP = Record<string, string | undefined>;
-const DAY = 86_400_000;
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 
 export default async function AssetRequestsPage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
@@ -31,26 +29,13 @@ export default async function AssetRequestsPage({ searchParams }: { searchParams
   const me = viewer.employee?.id ?? null;
   const canManage = can(viewer, P.ASSET_MANAGE), canAssign = can(viewer, P.ASSET_ASSIGN);
 
-  const from = sp.from ?? isoDay(new Date(Date.now() - 60 * DAY));
-  const to = sp.to ?? isoDay(new Date());
+  const { where, from, to } = assetRequestsWhere(viewer, sp);
   const filters = closed
     ? { tab: "closed", from: sp.from, to: sp.to, dept: sp.dept, loc: sp.loc, rtype: sp.rtype, rstatus: sp.rstatus, q: sp.q }
     : { dept: sp.dept, loc: sp.loc, rtype: sp.rtype, rstatus: sp.rstatus, q: sp.q };
   const here = `/assets/requests${qs({ ...filters, page: sp.page })}`;
   const join = here.includes("?") ? "&" : "?";
 
-  const statusIn = closed ? ["FULFILLED", "REJECTED", "CANCELLED"] : ["PENDING", "APPROVED"];
-  const where: Prisma.AssetRequestWhereInput = {
-    tenantId,
-    status: { in: (sp.rstatus && statusIn.includes(sp.rstatus) ? [sp.rstatus] : statusIn) as Prisma.EnumAssetRequestStatusFilter["in"] },
-    employee: {
-      ...(scopedEmployeeWhere(viewer, P.ASSET_VIEW) as Prisma.EmployeeWhereInput),
-      ...(sp.dept ? { departmentId: sp.dept } : {}), ...(sp.loc ? { locationId: sp.loc } : {}),
-    },
-    ...(sp.rtype ? { requestType: sp.rtype as Prisma.AssetRequestWhereInput["requestType"] } : {}),
-    ...(closed ? { closedAt: { gte: new Date(`${from}T00:00:00Z`), lte: new Date(`${to}T23:59:59Z`) } } : {}),
-    ...(sp.q ? { OR: [{ title: { contains: sp.q, mode: "insensitive" } }, { reason: { contains: sp.q, mode: "insensitive" } }, { employee: { displayName: { contains: sp.q, mode: "insensitive" } } }] } : {}),
-  };
   const [depts, locs, total] = await Promise.all([
     prisma.department.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.location.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),

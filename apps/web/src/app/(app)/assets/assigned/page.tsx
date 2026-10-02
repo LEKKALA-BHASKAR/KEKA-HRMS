@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { prisma, type Prisma } from "@keka/db";
+import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { requireViewer } from "@/lib/context";
 import { scopedEmployeeWhere } from "@/lib/scope";
@@ -7,6 +7,7 @@ import { FilterForm, Kebab } from "../_ui";
 import { AssetIcon, FSelect, FSearch, Pager, pageOf, PAGE_SIZE, Toolbar, Yellow, qs } from "../_parts";
 import { assetMenu, assetPerms } from "../_menu";
 import { AuditDrawer, AssignOverlay, EmployeeAssetsDrawer } from "../_drawers";
+import { assignedEmployeesWhere } from "../_queries";
 import s from "../assets.module.css";
 
 /**
@@ -36,17 +37,7 @@ export default async function AssignedAssetsPage({ searchParams }: { searchParam
   const filters = { status: sp.status, dept: sp.dept, loc: sp.loc, q: sp.q };
   const here = `/assets/assigned${qs({ ...filters, page: sp.page })}`;
 
-  const where: Prisma.EmployeeWhereInput = {
-    ...(scopedEmployeeWhere(viewer, P.ASSET_VIEW) as Prisma.EmployeeWhereInput),
-    assetAssignments: { some: { returnedOn: null, asset: { tenantId } } },
-    ...(sp.status ? { status: sp.status as Prisma.EmployeeWhereInput["status"] } : {}),
-    ...(sp.dept ? { departmentId: sp.dept } : {}),
-    ...(sp.loc ? { locationId: sp.loc } : {}),
-    ...(sp.q ? { OR: [
-      { displayName: { contains: sp.q, mode: "insensitive" } }, { employeeNumber: { contains: sp.q, mode: "insensitive" } },
-      { assetAssignments: { some: { returnedOn: null, asset: { OR: [{ assetTag: { contains: sp.q, mode: "insensitive" } }, { name: { contains: sp.q, mode: "insensitive" } }] } } } },
-    ] } : {}),
-  };
+  const where = assignedEmployeesWhere(viewer, filters);
   const [depts, locs, total, anyAssigned] = await Promise.all([
     prisma.department.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.location.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
