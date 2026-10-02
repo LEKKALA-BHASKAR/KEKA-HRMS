@@ -540,6 +540,9 @@ model LopAdjustment {
   /// The month the reversed LOP originally fell in.
   reversalForYear  Int?
   reversalForMonth Int?
+  /// For a reversal carried from a closed month: its value at that month's
+  /// day rate, paid as arrears.
+  amount           Decimal? @db.Decimal(18, 2)
   note             String?
   runId            String?
 

@@ -129,7 +129,7 @@ export async function setLopAdjustment(formData: FormData): Promise<void> {
   // One manual adjustment row per employee per period — replace rather than
   // stack, so repeated edits do not compound.
   await prisma.lopAdjustment.deleteMany({
-    where: { tenantId: viewer.tenantId, employeeId, year: run.year, month: run.month },
+    where: { tenantId: viewer.tenantId, employeeId, year: run.year, month: run.month, reversalForYear: null },
   });
   if (days !== 0) {
     await prisma.lopAdjustment.create({
