@@ -13,14 +13,15 @@ import {
   AddHolidayForm, DeleteHolidayButton, AddCalendarForm, type LeaveTypeValues,
 } from "../_time/leave-forms";
 import { Disclosure } from "../org/forms";
+import { ApprovalsTab, CompOffTab, OptionalHolidayQuota, optionalPickCounts } from "./_depth";
 
 const P = PERMISSIONS;
 const n = (v: unknown) => Number(v ?? 0);
-const TABS = ["requests", "balances", "calendar", "types", "plans", "holidays", "accrual", "yearend"] as const;
+const TABS = ["requests", "balances", "calendar", "types", "plans", "approvals", "compoff", "holidays", "accrual", "yearend"] as const;
 type Tab = (typeof TABS)[number];
 const LABEL: Record<Tab, string> = {
   requests: "Requests", balances: "Balances", calendar: "Team calendar", types: "Leave types",
-  plans: "Leave plans", holidays: "Holidays", accrual: "Accrual & ledger", yearend: "Year end",
+  plans: "Leave plans", approvals: "Approval chains", compoff: "Comp off", holidays: "Holidays", accrual: "Accrual & ledger", yearend: "Year end",
 };
 
 export default async function LeaveAdminPage({
@@ -32,7 +33,7 @@ export default async function LeaveAdminPage({
 
   const sp = await searchParams;
   const manage = can(viewer, P.LEAVE_MANAGE);
-  const visible = TABS.filter((t) => manage || !["types", "plans", "accrual", "yearend"].includes(t));
+  const visible = TABS.filter((t) => manage || !["types", "plans", "approvals", "accrual", "yearend"].includes(t));
   const tab: Tab = visible.includes(sp.tab as Tab) ? (sp.tab as Tab) : "requests";
 
   const scopeIds = await scopedEmployeeIds(viewer, P.LEAVE_VIEW);
@@ -61,6 +62,8 @@ export default async function LeaveAdminPage({
       {tab === "calendar" ? <CalendarTab tenantId={viewer.tenantId} scopeIds={scopeIds} month={sp.month} /> : null}
       {tab === "types" ? <TypesTab tenantId={viewer.tenantId} edit={sp.edit} /> : null}
       {tab === "plans" ? <PlansTab viewer={viewer} /> : null}
+      {tab === "approvals" ? <ApprovalsTab tenantId={viewer.tenantId} /> : null}
+      {tab === "compoff" ? <CompOffTab viewer={viewer} /> : null}
       {tab === "holidays" ? <HolidaysTab tenantId={viewer.tenantId} cal={sp.cal} canEdit={can(viewer, P.HOLIDAY_MANAGE)} /> : null}
       {tab === "accrual" ? <AccrualTab tenantId={viewer.tenantId} fyStartMonth={viewer.tenant.fyStartMonth} /> : null}
       {tab === "yearend" ? <YearEndTab tenantId={viewer.tenantId} /> : null}
@@ -157,6 +160,8 @@ async function RequestsTab({
                     <td className="num">
                       {n(r.totalDays).toFixed(1)}
                       {n(r.sandwichDays) > 0 ? <div className="text-xs" style={{ color: "var(--warning)" }}>+{n(r.sandwichDays)} sandwich</div> : null}
+                      {r.status === "PENDING" && Array.isArray(r.approvalSteps) && r.approvalSteps.length > 1
+                        ? <div className="text-xs subtle">level {r.approvalLevel + 1} of {r.approvalSteps.length}</div> : null}
                     </td>
                     <td className="text-sm muted" style={{ maxWidth: 260 }}>{r.reason ?? "—"}{r.rejectReason ? <div className="text-xs neg">Rejected: {r.rejectReason}</div> : null}</td>
                     {filter === "PENDING" ? (
@@ -374,6 +379,7 @@ async function TypesTab({ tenantId, edit }: { tenantId: string; edit?: string })
       ...t, annualQuota: dec(t.annualQuota), maxDaysDuringProbation: dec(t.maxDaysDuringProbation),
       maxAccumulation: dec(t.maxAccumulation), maxNegativeDays: dec(t.maxNegativeDays),
       attachmentAboveDays: dec(t.attachmentAboveDays), maxConsecutiveDays: dec(t.maxConsecutiveDays),
+      maxDaysPerMonth: dec(t.maxDaysPerMonth),
       carryForwardMax: dec(t.carryForwardMax),
       sandwichWeeklyOff: !!sc.weeklyOff?.between, sandwichHoliday: !!sc.holiday?.between,
       sandwichEdges: !!(sc.weeklyOff?.before || sc.holiday?.before),
@@ -409,7 +415,9 @@ async function TypesTab({ tenantId, edit }: { tenantId: string; edit?: string })
                   <td className="text-xs muted">
                     {[t.allowHalfDay && "half-day", t.sandwichConfig && "sandwich", t.allowNegativeBalance && "negative ok",
                       t.priorNoticeDays && `${t.priorNoticeDays}d notice`, t.isHiddenFromEmployee && "admin-only",
-                      t.maxConsecutiveDays && `max ${n(t.maxConsecutiveDays)} in a row`].filter(Boolean).join(" · ") || "—"}
+                      t.maxConsecutiveDays && `max ${n(t.maxConsecutiveDays)} in a row`,
+                      t.maxDaysPerMonth && `max ${n(t.maxDaysPerMonth)}/month`, t.minGapBetweenLeavesDays && `${t.minGapBetweenLeavesDays}d gap`,
+                      t.approvalChain && "approval chain"].filter(Boolean).join(" · ") || "—"}
                   </td>
                   <td className="text-sm">{t.yearEndAction.replace(/_/g, " ").toLowerCase()}{t.carryForwardMax ? ` (cap ${n(t.carryForwardMax)})` : ""}</td>
                   <td className="num">{t._count.requests}</td>
@@ -486,6 +494,7 @@ async function HolidaysTab({ tenantId, cal, canEdit }: { tenantId: string; cal?:
   });
   const selected = calendars.find((c) => c.id === cal) ?? calendars.find((c) => c.year === new Date().getUTCFullYear() && c.isDefault) ?? calendars[0];
   const holidays = selected ? await prisma.holiday.findMany({ where: { calendarId: selected.id }, orderBy: { date: "asc" } }) : [];
+  const picks = selected ? await optionalPickCounts(selected.id) : new Map<string, number>();
   const nextYear = Math.max(new Date().getUTCFullYear() + 1, ...calendars.map((c) => c.year + 1));
 
   return (
@@ -519,7 +528,7 @@ async function HolidaysTab({ tenantId, cal, canEdit }: { tenantId: string; cal?:
                     <td className="nowrap">{formatDate(h.date)}</td>
                     <td className="text-sm muted">{h.date.toLocaleDateString("en-IN", { weekday: "short", timeZone: "UTC" })}</td>
                     <td className="strong">{h.name}</td>
-                    <td>{h.isOptional ? <Badge tone="info">optional</Badge> : <Badge tone="success">public</Badge>}</td>
+                    <td>{h.isOptional ? <><Badge tone="info">optional</Badge> <span className="text-xs subtle">{picks.get(h.id) ?? 0} picked</span></> : <Badge tone="success">public</Badge>}</td>
                     <td className="right">{canEdit ? <DeleteHolidayButton id={h.id} /> : null}</td>
                   </tr>
                 ))}
@@ -528,6 +537,7 @@ async function HolidaysTab({ tenantId, cal, canEdit }: { tenantId: string; cal?:
           </div>
         )}
         {canEdit && selected ? <AddHolidayForm calendarId={selected.id} year={selected.year} /> : null}
+        {selected ? <OptionalHolidayQuota calendarId={selected.id} quota={selected.optionalHolidayQuota} canEdit={canEdit} /> : null}
       </Card>
     </div>
   );

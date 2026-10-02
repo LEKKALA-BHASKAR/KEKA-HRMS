@@ -185,6 +185,7 @@ export interface LeaveTypeValues {
   allowHalfDay?: boolean; allowQuarterDay?: boolean; allowBackdated?: boolean;
   priorNoticeDays?: number | null; requireComment?: boolean; attachmentAboveDays?: number | null;
   isHiddenFromEmployee?: boolean; maxConsecutiveDays?: number | null;
+  maxDaysPerMonth?: number | null; minGapBetweenLeavesDays?: number | null;
   yearEndAction?: string; carryForwardMax?: number | null;
   encashmentEnabled?: boolean; encashmentFormula?: string | null;
   sandwichWeeklyOff?: boolean; sandwichHoliday?: boolean; sandwichEdges?: boolean;
@@ -267,6 +268,12 @@ export function LeaveTypeForm({ type }: { type?: LeaveTypeValues }) {
             </Field>
             <Field label="Attachment above (days)" name="attachmentAboveDays" state={state}>
               <TextInput name="attachmentAboveDays" type="number" step="0.5" state={state} defaultValue={num(t.attachmentAboveDays)} />
+            </Field>
+            <Field label="Max days in a month" name="maxDaysPerMonth" state={state} hint="Across all requests of this type">
+              <TextInput name="maxDaysPerMonth" type="number" step="0.5" state={state} defaultValue={num(t.maxDaysPerMonth)} />
+            </Field>
+            <Field label="Min gap between requests (days)" name="minGapBetweenLeavesDays" state={state}>
+              <TextInput name="minGapBetweenLeavesDays" type="number" state={state} defaultValue={num(t.minGapBetweenLeavesDays)} />
             </Field>
           </div>
 

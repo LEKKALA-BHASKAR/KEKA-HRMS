@@ -3,7 +3,7 @@ import { prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee, type Permission } from "@keka/rbac";
 import {
   decideLeave, decideAttendanceRequest, decideShiftRequest, decideOvertimeRequest, decideCompOffRequest,
-  decideEncashmentRequest, notifyTimeRequest, formatHhmm, TIME_ENTITIES, type TimeEntity,
+  decideEncashmentRequest, notifyTimeRequest, formatHhmm, TIME_ENTITIES, type TimeEntity, type LeaveApprovalActor,
 } from "@keka/services";
 import { formatDate } from "@keka/shared";
 import { can, type Viewer } from "./context";
@@ -79,6 +79,19 @@ export async function reachesEmployee(viewer: Viewer, employeeId: string, permis
   return !!t && canAccessEmployee(viewer, t, permission);
 }
 
+/**
+ * The viewer as a leave approver for one employee, for approval chains: who
+ * they are, whether they manage leave for this person (HR), and whether they
+ * may approve for them at all.
+ */
+export async function leaveActor(viewer: Viewer, employeeId: string): Promise<LeaveApprovalActor> {
+  const [isHr, canApprove] = await Promise.all([
+    can(viewer, P.LEAVE_MANAGE) ? reachesEmployee(viewer, employeeId, P.LEAVE_MANAGE) : Promise.resolve(false),
+    can(viewer, P.LEAVE_APPROVE) ? reachesEmployee(viewer, employeeId, P.LEAVE_APPROVE) : Promise.resolve(false),
+  ]);
+  return { employeeId: viewer.employee?.id ?? null, isHr, canApprove };
+}
+
 /** Decide one time request on the viewer's behalf. */
 export async function decideTimeRequest(
   viewer: Viewer, entity: TimeEntity, id: string, decision: "APPROVE" | "REJECT", note: string | null,
@@ -96,7 +109,7 @@ export async function decideTimeRequest(
 
   const decider = viewer.employee?.id ?? null;
   const cleanNote = note?.trim() || null;
-  const res = entity === "LeaveRequest" ? await decideLeave({ requestId: id, decision, approverEmployeeId: decider, note: cleanNote })
+  const res = entity === "LeaveRequest" ? await decideLeave({ requestId: id, decision, approverEmployeeId: decider, note: cleanNote, actor: await leaveActor(viewer, ref.employeeId) })
     : entity === "AttendanceRequest" ? await decideAttendanceRequest({ requestId: id, decision, deciderEmployeeId: decider, note: cleanNote })
     : entity === "ShiftRequest" ? await decideShiftRequest({ requestId: id, decision, deciderEmployeeId: decider, note: cleanNote })
     : entity === "OvertimeRequest" ? await decideOvertimeRequest({ requestId: id, decision, deciderEmployeeId: decider, note: cleanNote })
@@ -109,9 +122,12 @@ export async function decideTimeRequest(
     entityType: entity, entityId: id,
     summary: `${decision === "APPROVE" ? "Approved" : "Rejected"} ${ref.what}`,
   });
-  await notifyTimeRequest({
-    tenantId: viewer.tenantId, employeeId: ref.employeeId, kind: ref.family,
-    event: decision === "APPROVE" ? "APPROVED" : "REJECTED", what: ref.what, note: cleanNote,
-  });
+  // An approval that only clears one level of a chain is not the outcome yet.
+  if (!("pendingLevel" in res && res.pendingLevel)) {
+    await notifyTimeRequest({
+      tenantId: viewer.tenantId, employeeId: ref.employeeId, kind: ref.family,
+      event: decision === "APPROVE" ? "APPROVED" : "REJECTED", what: ref.what, note: cleanNote,
+    });
+  }
   return { ok: true, message: res.message };
 }
