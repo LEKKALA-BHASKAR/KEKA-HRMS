@@ -26,6 +26,7 @@ import { seedProbation } from "./probation";
 import { seedAccountingOpening, seedAccountingActivity } from "./accounting";
 import { seedHelpdesk } from "./helpdesk";
 import { seedAnalytics } from "./analytics";
+import { seedFinances } from "./finances";
 
 const prisma = new PrismaClient();
 
@@ -889,6 +890,8 @@ async function main() {
   log("Helpdesk (Keka)", `${hd.categories} categories and subcategories, ${hd.tickets} tickets (${hd.open} open, ${hd.closed} closed) with threads, followers and SLA flags`);
   const an = await seedAnalytics(prisma, { tenantId: tenant.id });
   log("Org analytics", `${an.reasons} exit reasons, ${an.leavers} past leavers with history, ${an.raises} raise histories, ${an.snapshots} risk scores (${an.risk.HIGH} high, ${an.risk.MEDIUM} medium today), a shared storyboard`);
+  const fi = await seedFinances(prisma, { tenantId: tenant.id });
+  log("My Finances", `${fi.bonuses} bonuses on Meera's timeline, ${fi.categories} loan categories with codes, a cleared advance and a pending vehicle loan, ${fi.claims} benefit claims, ${fi.held} payslip held back`);
   // @keka-parity-seeds (each area adds its import above and its call above this line)
 
   const ac = await seedAccountingActivity(prisma, { tenantId: tenant.id, byUserId: finance.id });

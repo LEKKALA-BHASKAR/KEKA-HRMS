@@ -94,6 +94,8 @@ export async function seedAnalytics(prisma: PrismaClient, ctx: { tenantId: strin
 
   // ---- Permissions on the system roles (the DB predates them) ----------------
   const analyticsPerms = [PERMISSIONS.ANALYTICS_VIEW, PERMISSIONS.ATTRITION_RISK_VIEW] as string[];
+  // An earlier draft used "analytics.org.view" for ANALYTICS_VIEW; drop any rows it left behind.
+  await prisma.rolePermission.deleteMany({ where: { permission: "analytics.org.view", role: { tenantId: t } } });
   const roles = await prisma.role.findMany({ where: { tenantId: t, isSystem: true }, select: { id: true, key: true } });
   let granted = 0;
   for (const def of SYSTEM_ROLES) {

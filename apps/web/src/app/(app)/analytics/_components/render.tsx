@@ -10,11 +10,11 @@ const DONUT_COLORS: Record<string, string> = {
 };
 
 /** Draw a chart from its data, in the size the card gives it. */
-export function ChartView({ c, width = 960, height, color }: { c: ChartData; width?: number; height?: number; color?: string }) {
+export function ChartView({ c, width = 960, height, color, legendBelow }: { c: ChartData; width?: number; height?: number; color?: string; legendBelow?: boolean }) {
   const empty = c.kind === "donut" ? c.rows.every((r) => r.value === 0) : c.rows.length === 0 || (c.kind !== "area" && c.kind !== "combo" && c.rows.every((r) => r.value === 0));
   if (empty) return <NoData />;
   if (c.kind === "donut") {
-    return <DonutChart width={width} height={height ?? 300} centre={c.centre}
+    return <DonutChart width={width} height={height ?? 300} centre={c.centre} legendBelow={legendBelow}
       parts={c.rows.filter((r) => r.value > 0).map((r) => ({ label: r.label, value: r.value, color: DONUT_COLORS[r.label] }))} />;
   }
   if (c.kind === "area") return <AreaChart points={c.rows} width={width} height={height ?? 340} yLabel={c.yLabel} legend={c.legend} pct={c.pct} />;

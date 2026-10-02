@@ -84,7 +84,7 @@ export function FilterForm({ children, solo, action }: { children: ReactNode; so
 
 export type MenuItem =
   | { kind: "link"; label: string; href: string; icon?: IconKey }
-  | { kind: "act"; label: string; icon?: IconKey; action: Act; hidden: Record<string, string>; confirm?: string }
+  | { kind: "act"; label: string; icon?: IconKey; action: Act; hidden: Record<string, string>; confirm?: string; next?: string }
   | { kind: "modal"; label: string; icon?: IconKey; title: string; action: Act; hidden: Record<string, string>; submitLabel: string; body: ReactNode; danger?: boolean }
   | { kind: "divider" };
 
@@ -104,7 +104,7 @@ const MENU_ICON: Record<IconKey, ReactNode> = {
   cancel: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>,
 };
 
-export function Kebab({ items, label = "Actions", horizontal }: { items: MenuItem[]; label?: string; horizontal?: boolean }) {
+export function Kebab({ items, label = "Actions", horizontal, caret }: { items: MenuItem[]; label?: string; horizontal?: boolean; caret?: boolean }) {
   const [open, setOpen] = useState(false);
   const [up, setUp] = useState(false);
   const [modal, setModal] = useState<number | null>(null);
@@ -130,15 +130,22 @@ export function Kebab({ items, label = "Actions", horizontal }: { items: MenuIte
       const fd = new FormData();
       for (const [k, v] of Object.entries(it.hidden)) fd.set(k, v);
       const r = await it.action({}, fd);
-      if (!r.ok) setError(r.message ?? "That did not work."); else { setError(null); router.refresh(); }
+      if (!r.ok) setError(r.message ?? "That did not work."); else { setError(null); if (it.next) router.push(it.next); else router.refresh(); }
     });
   };
   const current = modal === null ? null : items[modal];
   return (
     <div className={s.menuWrap} ref={ref}>
-      <button type="button" className={s.kebab} aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={toggle} disabled={pending}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={horizontal ? { transform: "rotate(90deg)" } : undefined}><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg>
-      </button>
+      {caret ? (
+        <button type="button" className="btn primary" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={toggle} disabled={pending}
+          style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: "1px solid rgba(255,255,255,.35)", paddingInline: 10 }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 8h14l-7 8z" /></svg>
+        </button>
+      ) : (
+        <button type="button" className={s.kebab} aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={toggle} disabled={pending}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={horizontal ? { transform: "rotate(90deg)" } : undefined}><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg>
+        </button>
+      )}
       {open ? (
         <div className={`${s.menu}${up ? ` ${s.up}` : ""}`} role="menu">
           {items.map((it, i) => {

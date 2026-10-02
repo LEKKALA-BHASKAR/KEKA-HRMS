@@ -35,7 +35,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
   return (
     <>
-      <PageHead title="Reports" subtitle="Each report shows only the people your role covers, on screen and in the download" actions={<Link className="btn" href="/reports/builder">Custom reports</Link>} />
+      <DashboardTabs viewer={viewer} active="reports" />
+      <PageHead title="Employee Reports" subtitle="Each report shows only the people your role covers, on screen and in the download" actions={<Link className="btn" href="/reports/builder">Custom reports</Link>} />
       <div className="grid grid-2" style={{ gridTemplateColumns: "250px minmax(0, 1fr)", alignItems: "start" }}>
         <Card tight>
           <div className="stack" style={{ padding: 6 }}>
@@ -43,7 +44,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
               <div key={g}>
                 <div className="nav-section-label" style={{ padding: "8px 8px 4px" }}>{g}</div>
                 {available.filter((r) => r.group === g).map((r) => (
-                  <Link key={r.key} href={`/reports?r=${r.key}&fy=${params.fy}`} className={`nav-item${r.key === report?.key ? " active" : ""}`}>{r.title}</Link>
+                  <Link key={r.key} href={`/reports?r=${r.key}&fy=${params.fy}`} className={`nav-item${r.key === report?.key ? " active" : ""}`} style={{ display: "block" }}>{r.title}</Link>
                 ))}
               </div>
             ))}

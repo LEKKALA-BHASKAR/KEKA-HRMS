@@ -20,20 +20,21 @@ const META: Record<Key, {
   },
   anniversaries: {
     icon: IconParty, one: "Work Anniversary", many: "Work Anniversaries",
-    todayTitle: "Work anniversaries today", upcomingTitle: "Upcoming Work Anniversaries",
-    emptyToday: "No work anniversaries today.", emptyUpcoming: "No work anniversaries in the next 30 days.",
+    todayTitle: "Work Anniversaries today", upcomingTitle: "Upcoming Work Anniversaries",
+    emptyToday: "No Work Anniversaries today.", emptyUpcoming: "No work anniversaries in the next 30 days.",
   },
   joinees: {
     icon: IconJoinees, one: "New joinee", many: "New joinees",
-    todayTitle: null, upcomingTitle: "Joined in the last 90 days",
-    emptyToday: "", emptyUpcoming: "No one has joined in the last 90 days.",
+    todayTitle: "New joinees today", upcomingTitle: "Recent joinees",
+    emptyToday: "No new joinees today.", emptyUpcoming: "No one has joined in the last 90 days.",
   },
 };
 
 /** Birthdays, work anniversaries and new joinees, one tab each. */
-export function Celebrations({ groups }: { groups: CelebrationGroup[] }) {
+export function Celebrations({ groups, wished, selfId, canWish }: { groups: CelebrationGroup[]; wished?: string[]; selfId?: string | null; canWish?: boolean }) {
   const [active, setActive] = useState<Key>(groups[0]?.key ?? "birthdays");
-  const [open, setOpen] = useState(true);
+  // Keka folds the card away when there is nothing to celebrate today.
+  const [open, setOpen] = useState(() => groups.some((g) => g.count > 0));
   const id = useId();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const group = groups.find((g) => g.key === active) ?? groups[0];
@@ -93,7 +94,9 @@ export function Celebrations({ groups }: { groups: CelebrationGroup[] }) {
         {meta.todayTitle ? (
           <div className={s.section}>
             <h4 className={s.sectionTitle}>{meta.todayTitle}</h4>
-            {group.today.length > 0 ? <People list={group.today} /> : <EmptyArt kind={group.key} text={meta.emptyToday} />}
+            {group.today.length > 0
+              ? <People list={group.today} wish={canWish ? { occasion: OCCASION[group.key], done: new Set(wished ?? []), selfId: selfId ?? null } : undefined} />
+              : <EmptyArt kind={group.key} text={meta.emptyToday} />}
           </div>
         ) : null}
         <div className={s.section}>
@@ -105,18 +108,34 @@ export function Celebrations({ groups }: { groups: CelebrationGroup[] }) {
   );
 }
 
-function People({ list }: { list: Celebrant[] }) {
+const OCCASION: Record<Key, "BIRTHDAY" | "WORK_ANNIVERSARY" | "NEW_JOINEE"> = { birthdays: "BIRTHDAY", anniversaries: "WORK_ANNIVERSARY", joinees: "NEW_JOINEE" };
+const SHOWN = 11;
+
+function People({ list, wish }: { list: Celebrant[]; wish?: { occasion: "BIRTHDAY" | "WORK_ANNIVERSARY" | "NEW_JOINEE"; done: Set<string>; selfId: string | null } }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? list : list.slice(0, SHOWN);
   return (
     <ul className={s.avatarGrid} style={{ listStyle: "none", margin: 0, padding: 0 }}>
-      {list.map((p) => (
-        <li key={p.id}>
-          <Link href={`/directory/${p.id}`} className={s.celebrant}>
+      {shown.map((p) => (
+        <li key={p.id} className={s.celebrant}>
+          <Link href={`/directory/${p.id}`} className={s.celebrant} style={{ gap: 6 }}>
             <Avatar name={p.name} photoUrl={p.photoUrl} size={52} />
             <span className={s.celebrantName}>{p.name}</span>
-            <span className={s.celebrantWhen}>{p.when}{p.note ? <><br />{p.note}</> : null}</span>
           </Link>
+          {wish && p.id !== wish.selfId ? (
+            wish.done.has(`${wish.occasion}:${p.id}`)
+              ? <span className={s.celebrantWhen}>Wished</span>
+              : <Link href={`/?wish=${p.id}&for=${wish.occasion}`} scroll={false} className={s.wishLink} title={`Wish ${p.name}`}>Wish</Link>
+          ) : (
+            <span className={s.celebrantWhen}>{p.when}{p.note ? <><br />{p.note}</> : null}</span>
+          )}
         </li>
       ))}
+      {!all && list.length > SHOWN ? (
+        <li className={s.celebrant}>
+          <button type="button" className={s.moreBubble} onClick={() => setAll(true)} aria-label={`Show ${list.length - SHOWN} more`}>+{list.length - SHOWN}</button>
+        </li>
+      ) : null}
     </ul>
   );
 }

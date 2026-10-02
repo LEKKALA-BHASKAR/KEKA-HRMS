@@ -106,7 +106,7 @@ export async function buildQuickAccess(viewer: Viewer, slots: WidgetSlot[], toda
                   })}
                 </ul>
                 <div className={d.balanceLinks}>
-                  <Link href="/?apply=leave" scroll={false}>Request Leave</Link>
+                  <Link href="/me/leave?apply=1">Request Leave</Link>
                   <Link href="/me/leave">View All Balances</Link>
                 </div>
               </div>

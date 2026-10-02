@@ -37,6 +37,7 @@ export default async function AuditPage({
 
   return (
     <>
+      <DashboardTabs viewer={viewer} active="audit" />
       <PageHead
         title="Audit logs"
         subtitle={`${total} entries · who, when, what, and the old and new values`}

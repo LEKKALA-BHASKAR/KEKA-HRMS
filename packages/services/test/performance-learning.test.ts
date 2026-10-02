@@ -2,7 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   timeframeFor, timeframeOptions, timeframeOfDates, parseTimeframe, goalBucket, progressSeries,
-  formatMinutes, courseProgress, gradeAttempt, validateQuestion, parseQuestionCsv,
+  formatCourseDuration, courseCompletionPct, gradeAttempt, validateQuestion, parseQuestionCsv,
   parseAgendaItems, parseMeetingSummary, parseGoalSuggestions, parseGeneratedQuestions,
 } from "../src/performance-learning-math";
 
@@ -65,11 +65,11 @@ describe("Goals page buckets and line", () => {
 
 describe("Learn arithmetic", () => {
   test("durations and progress", () => {
-    assert.equal(formatMinutes(0), "0h 00m");
-    assert.equal(formatMinutes(169), "2h 49m");
-    assert.equal(courseProgress(0, 0), 0);
-    assert.equal(courseProgress(3, 1), 33);
-    assert.equal(courseProgress(3, 5), 100);
+    assert.equal(formatCourseDuration(0), "0h 00m");
+    assert.equal(formatCourseDuration(169), "2h 49m");
+    assert.equal(courseCompletionPct(0, 0), 0);
+    assert.equal(courseCompletionPct(3, 1), 33);
+    assert.equal(courseCompletionPct(3, 5), 100);
   });
   test("an answer counts only when it is exactly the correct set", () => {
     const qs = [{ id: "a", correctOptionIds: ["o2"] }, { id: "b", correctOptionIds: ["o1", "o3"] }, { id: "c", correctOptionIds: ["o1"] }];

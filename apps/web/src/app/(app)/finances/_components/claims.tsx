@@ -25,7 +25,7 @@ function ClaimForm({ componentId, remaining, today, fyStart, onDone }: {
   const [state, action, pending] = useForm(submitComponentClaimAction);
   useEffect(() => { if (state.ok) { const t = setTimeout(onDone, 900); return () => clearTimeout(t); } }, [state, onDone]);
   return (
-    <form action={action} className={s.dlgForm} encType="multipart/form-data">
+    <form action={action} className={s.dlgForm}>
       <input type="hidden" name="componentId" value={componentId} />
       <FormBanner state={state} />
       <Field label="Claim Amount" name="amount" state={state} required hint={`You can claim up to ${inr0(remaining)} right now.`}>
