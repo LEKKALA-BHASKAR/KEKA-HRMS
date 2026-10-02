@@ -13,7 +13,7 @@
 #                 wildcard DNS name that resolves to this server, so HTTPS works
 #                 without buying a domain. Point your own domain's A record here
 #                 and pass it instead when you have one.
-#   KEKA_BRANCH   git branch to deploy (default main)
+#   KEKA_BRANCH   git branch or commit to deploy (default main)
 #   KEKA_EMAIL    email for Let's Encrypt expiry notices (default: none)
 #   KEKA_PORT     local port the app listens on (default 3100)
 set -euo pipefail
@@ -76,12 +76,12 @@ install -d -m 700 "$STATE_DIR"
 # ---------------------------------------------------------------------------
 log "Fetching the code ($BRANCH)"
 # ---------------------------------------------------------------------------
-if [ -d "$APP_DIR/.git" ]; then
-  sudo -u "$APP_USER" git -C "$APP_DIR" fetch --depth 1 origin "$BRANCH"
-  sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard "origin/$BRANCH"
-else
-  sudo -u "$APP_USER" git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
-fi
+[ -d "$APP_DIR/.git" ] || sudo -u "$APP_USER" git init -q "$APP_DIR"
+sudo -u "$APP_USER" git -C "$APP_DIR" remote remove origin 2>/dev/null || true
+sudo -u "$APP_USER" git -C "$APP_DIR" remote add origin "$REPO_URL"
+sudo -u "$APP_USER" git -C "$APP_DIR" fetch -q --depth 1 origin "$BRANCH"
+sudo -u "$APP_USER" git -C "$APP_DIR" reset -q --hard FETCH_HEAD
+sudo -u "$APP_USER" git -C "$APP_DIR" log -1 --format='Deploying %h %s' 
 
 # ---------------------------------------------------------------------------
 log "Preparing the database and secrets"
@@ -119,7 +119,9 @@ log "Installing dependencies, migrating and building (takes a few minutes)"
 as_app() { sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR' && set -a && . ./.env && set +a && $*"; }
 as_app "npm ci --no-audit --no-fund"
 as_app "npm run db:generate"
-as_app "npx prisma migrate deploy --schema packages/db/prisma/schema"
+# Through the package script so prisma.config.ts supplies the migrations folder;
+# `--schema <dir>` alone finds no migrations and applies nothing.
+as_app "npm run deploy --workspace=@keka/db"
 if [ ! -f "$STATE_DIR/seeded" ]; then
   log "First install: loading the demo company"
   as_app "npm run db:seed"
