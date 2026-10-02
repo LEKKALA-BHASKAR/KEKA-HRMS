@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { prisma, type Prisma } from "@keka/db";
+import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { assetSummary, ASSET_CONDITIONS, ASSET_CONDITION_LABEL, ASSET_STATUS_LABEL, type AssetConditionKey, type AssetStatusKey } from "@keka/services";
 import { requireViewer } from "@/lib/context";
-import { scopedEmployeeWhere } from "@/lib/scope";
 import { ConditionChart } from "./_chart";
 import { AutoSelect, CategorySelect } from "./_summary-controls";
 import { FilterForm, UrlSheet } from "./_ui";
 import { FSelect, FSearch, Pager, pageOf, PAGE_SIZE, Toolbar, fmt, qs } from "./_parts";
+import { summaryListWhere } from "./_queries";
 import s from "./assets.module.css";
 
 /**
@@ -112,19 +112,7 @@ async function ListDrawer({ viewer, list, sp, base, cats, depts, locs }: {
     prisma.costCenter.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.legalEntity.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
-  const holder: Prisma.EmployeeWhereInput = {
-    ...(scopedEmployeeWhere(viewer, P.ASSET_VIEW) as Prisma.EmployeeWhereInput),
-    ...(sp.dbu ? { businessUnitId: sp.dbu } : {}), ...(sp.ddept ? { departmentId: sp.ddept } : {}),
-    ...(sp.dcc ? { costCenterId: sp.dcc } : {}), ...(sp.dle ? { legalEntityId: sp.dle } : {}),
-  };
-  const statusWhere: Prisma.AssetWhereInput = list === "assigned" ? { status: "ASSIGNED" } : list === "available" ? { status: "AVAILABLE" } : { status: { in: ["IN_REPAIR", "LOST", "UNAVAILABLE"] } };
-  const where: Prisma.AssetWhereInput = {
-    tenantId, ...statusWhere,
-    ...(sp.dcat ? { assetType: { categoryId: sp.dcat } } : {}), ...(sp.dtype ? { assetTypeId: sp.dtype } : {}),
-    ...(sp.dcond ? { condition: sp.dcond as AssetConditionKey } : {}), ...(sp.dloc ? { locationId: sp.dloc } : {}),
-    ...(list === "assigned" ? { assignments: { some: { returnedOn: null, employee: holder } } } : {}),
-    ...(sp.q ? { OR: [{ name: { contains: sp.q, mode: "insensitive" } }, { assetTag: { contains: sp.q, mode: "insensitive" } }, ...(list === "assigned" ? [{ assignments: { some: { returnedOn: null, employee: { displayName: { contains: sp.q, mode: "insensitive" as const } } } } }] : [])] } : {}),
-  };
+  const where = summaryListWhere(viewer, list, sp);
   const total = await prisma.asset.count({ where });
   const page = pageOf(sp.page, total);
   const rows = await prisma.asset.findMany({

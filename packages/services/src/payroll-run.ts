@@ -8,6 +8,7 @@ import { daysInMonth, fyStartYear, endOfMonth, startOfMonth } from "@keka/shared
 import { cappedDeductions } from "./declarations";
 import { claimEntitlement, previousIncomeApplies } from "./finances-math";
 import { fbpCarveSpecs, unclaimedFbp } from "./fbp-math";
+import { attendanceWindow, lopCarry, lopDayRate, type PriorCount } from "./payroll-pilot-math";
 
 /**
  * The bridge between the database and the pure payroll engine.
@@ -431,42 +432,11 @@ export async function calculateRun(runId: string): Promise<{
     ytdByEmp.set(line.runEmployee.employeeId, cur);
   }
 
-  // Attendance-driven LOP for the period.
-  const attendance = await prisma.attendanceRecord.groupBy({
-    by: ["employeeId"],
-    where: {
-      employeeId: { in: employeeIds },
-      date: { gte: run.periodStart, lte: run.periodEnd },
-    },
-    _sum: { lopValue: true },
-  });
-  const attendanceLop = new Map(
-    attendance.map((a) => [a.employeeId, Number(a._sum.lopValue ?? 0)]),
-  );
-
-  // Unpaid leave in the period — the first documented LOP driver.
-  const unpaidLeave = await prisma.leaveRequestDay.groupBy({
-    by: ["requestId"],
-    where: {
-      date: { gte: run.periodStart, lte: run.periodEnd },
-      isPaid: false,
-      request: { status: "APPROVED", employeeId: { in: employeeIds } },
-    },
-    _sum: { dayValue: true },
-  });
-  const unpaidRequestIds = unpaidLeave.map((u) => u.requestId);
-  const unpaidRequests = unpaidRequestIds.length > 0
-    ? await prisma.leaveRequest.findMany({
-        where: { id: { in: unpaidRequestIds } },
-        select: { id: true, employeeId: true },
-      })
-    : [];
-  const leaveLop = new Map<string, number>();
-  for (const u of unpaidLeave) {
-    const req = unpaidRequests.find((r) => r.id === u.requestId);
-    if (!req) continue;
-    leaveLop.set(req.employeeId, (leaveLop.get(req.employeeId) ?? 0) + Number(u._sum.dayValue ?? 0));
-  }
+  // LOP is counted over the attendance window, which ends at the pay
+  // group's cut-off; what falls after it belongs to the next run's window.
+  const window = await attendanceWindowFor(run);
+  const systemLopNow = await systemLopBetween(employeeIds, window.from, window.to);
+  const carry = await lopCarryFor(run, employeeIds);
 
   const totalDays = daysInMonth(run.year, run.month);
   const results: Array<{ employee: EligibleEmployee; result: CalculatePayrollResult }> = [];
@@ -508,8 +478,10 @@ export async function calculateRun(runId: string): Promise<{
       allWarnings.push(`${emp.employeeNumber} ${emp.firstName} ${emp.lastName}: no salary structure assigned`);
     }
 
-    const manualLop = (lopByEmp.get(emp.id) ?? []).reduce((s, a) => s + Number(a.days), 0);
-    const systemLop = (attendanceLop.get(emp.id) ?? 0) + (leaveLop.get(emp.id) ?? 0);
+    // Rows carried from closed months are recomputed below, not manual input.
+    const manualLop = (lopByEmp.get(emp.id) ?? []).filter((a) => a.reversalForYear === null).reduce((s, a) => s + Number(a.days), 0);
+    const systemLop = systemLopNow.get(emp.id) ?? 0;
+    const carried = carry.get(emp.id);
 
     const ptEntry = emp.locationId ? tables.ptByState.get(emp.locationId) : undefined;
     const lwfRule = emp.locationId ? tables.lwfByState.get(emp.locationId) ?? null : null;
@@ -539,12 +511,13 @@ export async function calculateRun(runId: string): Promise<{
       attendance: {
         totalDays,
         lopDays: systemLop,
-        lopAdjustment: manualLop,
+        lopAdjustment: manualLop + (carried?.lateDays ?? 0),
         lopReversalDays: 0,
       },
 
       variablePay: {
-        arrears: (arrearsByEmp.get(emp.id) ?? []).reduce((s, a) => s + Number(a.amount), 0),
+        // LOP reversed after a month closed comes back as arrears at that month's rate.
+        arrears: (arrearsByEmp.get(emp.id) ?? []).reduce((s, a) => s + Number(a.amount), 0) + (carried?.arrears ?? 0),
         bonus: (bonusByEmp.get(emp.id) ?? []).reduce(
           (s, b) => s + Number(b.paidAmount ?? b.amount), 0),
         overtimeAmount: (otByEmp.get(emp.id) ?? []).reduce((s, o) => s + Number(o.amount), 0),
@@ -662,6 +635,14 @@ export async function calculateRun(runId: string): Promise<{
 
   await prisma.$transaction(async (tx) => {
     await tx.payslipLine.deleteMany({ where: { runEmployee: { runId } } });
+    // The carry is worked out afresh on every pass.
+    await tx.lopAdjustment.deleteMany({ where: { runId, reversalForYear: { not: null } } });
+    const carryRows = results.filter((r) => r.result).flatMap(({ employee }) => (carry.get(employee.id)?.entries ?? []).map((e) => ({
+      tenantId: run.tenantId, employeeId: employee.id, year: run.year, month: run.month, runId,
+      days: e.days, amount: e.amount || null, reversalForYear: e.year, reversalForMonth: e.month,
+      note: e.days > 0 ? "LOP recorded after the month closed" : "LOP reversed after the month closed",
+    })));
+    if (carryRows.length) await tx.lopAdjustment.createMany({ data: carryRows });
 
     for (const { employee, result } of results) {
       const existing = existingByEmployee.get(employee.id);
@@ -682,7 +663,7 @@ export async function calculateRun(runId: string): Promise<{
             pfWage: 0, pfEmployee: 0, pfEmployer: 0, epsEmployer: 0, vpf: 0,
             esiGross: 0, esiEmployee: 0, esiEmployer: 0,
             professionalTax: 0, lwfEmployee: 0, lwfEmployer: 0, tds: 0,
-            payableDays: 0, calculatedAt: new Date(),
+            payableDays: 0, attendanceLopDays: null, carriedLopDays: 0, lopReversalDays: 0, calculatedAt: new Date(),
           },
         });
         continue;
@@ -696,6 +677,9 @@ export async function calculateRun(runId: string): Promise<{
           totalDays: result.totalDays,
           payableDays: result.payableDays.toNumber(),
           lopDays: result.lopDays.toNumber(),
+          attendanceLopDays: systemLopNow.get(employee.id) ?? 0,
+          carriedLopDays: carry.get(employee.id)?.lateDays ?? 0,
+          lopReversalDays: carry.get(employee.id)?.reversalDays ?? 0,
           grossEarnings: result.grossEarnings.toNumber(),
           totalDeductions: result.totalDeductions.toNumber(),
           employerCost: result.employerCost.toNumber(),
@@ -720,6 +704,9 @@ export async function calculateRun(runId: string): Promise<{
           totalDays: result.totalDays,
           payableDays: result.payableDays.toNumber(),
           lopDays: result.lopDays.toNumber(),
+          attendanceLopDays: systemLopNow.get(employee.id) ?? 0,
+          carriedLopDays: carry.get(employee.id)?.lateDays ?? 0,
+          lopReversalDays: carry.get(employee.id)?.reversalDays ?? 0,
           grossEarnings: result.grossEarnings.toNumber(),
           totalDeductions: result.totalDeductions.toNumber(),
           employerCost: result.employerCost.toNumber(),
@@ -768,6 +755,7 @@ export async function calculateRun(runId: string): Promise<{
         employeeCount: counted,
         totalGross, totalNetPay: totalNet,
         totalDeductions: totalDed, totalEmployerCost: totalEmployer,
+        attendanceFrom: window.from, attendanceTo: window.to,
         status: run.status === "DRAFT" ? "IN_PROGRESS" : run.status,
       },
     });
@@ -779,6 +767,107 @@ export async function calculateRun(runId: string): Promise<{
     totalDeductions: totalDed, totalEmployerCost: totalEmployer,
     warnings: allWarnings,
   };
+}
+
+/**
+ * The attendance window for a regular run: from the day after the previous
+ * finalised regular run's window (its period end, for runs calculated before
+ * cut-offs applied) to this pay group's cut-off day.
+ */
+export async function attendanceWindowFor(run: { payGroupId: string; year: number; month: number; periodStart: Date; periodEnd: Date; payGroup: { attendanceCutoffDay: number | null } }): Promise<{ from: Date; to: Date }> {
+  const prev = await prisma.payrollRun.findFirst({
+    where: { payGroupId: run.payGroupId, type: "REGULAR", status: "FINALIZED", rolledBackAt: null, periodEnd: { lt: run.periodStart } },
+    orderBy: { periodEnd: "desc" },
+    select: { attendanceTo: true, periodEnd: true },
+  });
+  return attendanceWindow({
+    year: run.year, month: run.month, periodStart: run.periodStart, periodEnd: run.periodEnd,
+    cutoffDay: run.payGroup.attendanceCutoffDay, previousTo: prev ? prev.attendanceTo ?? prev.periodEnd : null,
+  });
+}
+
+/** LOP days per employee from attendance penalties and approved unpaid leave, by date. */
+export async function systemLopBetween(employeeIds: string[], from: Date, to: Date): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (employeeIds.length === 0 || from > to) return out;
+  const [attendance, unpaid] = await Promise.all([
+    prisma.attendanceRecord.groupBy({
+      by: ["employeeId"],
+      where: { employeeId: { in: employeeIds }, date: { gte: from, lte: to } },
+      _sum: { lopValue: true },
+    }),
+    prisma.leaveRequestDay.findMany({
+      where: { date: { gte: from, lte: to }, isPaid: false, request: { status: "APPROVED", employeeId: { in: employeeIds } } },
+      select: { dayValue: true, request: { select: { employeeId: true } } },
+    }),
+  ]);
+  for (const a of attendance) out.set(a.employeeId, (out.get(a.employeeId) ?? 0) + Number(a._sum.lopValue ?? 0));
+  for (const d of unpaid) out.set(d.request.employeeId, (out.get(d.request.employeeId) ?? 0) + Number(d.dayValue));
+  for (const [k, v] of out) out.set(k, Math.round(v * 100) / 100);
+  return out;
+}
+
+/** How far back late-recorded LOP is reconciled. */
+const CARRY_LOOKBACK_MONTHS = 3;
+
+/**
+ * LOP that changed after earlier runs closed, per employee. Only runs that
+ * recorded what they counted (attendanceLopDays) are reconciled; older runs
+ * stay as they were paid.
+ */
+export async function lopCarryFor(run: { id: string; tenantId: string; payGroupId: string; periodStart: Date }, employeeIds: string[]) {
+  const out = new Map<string, ReturnType<typeof lopCarry>>();
+  const since = new Date(Date.UTC(run.periodStart.getUTCFullYear(), run.periodStart.getUTCMonth() - CARRY_LOOKBACK_MONTHS, 1));
+  const priors = await prisma.payrollRun.findMany({
+    where: {
+      payGroupId: run.payGroupId, type: "REGULAR", status: "FINALIZED", rolledBackAt: null,
+      periodEnd: { lt: run.periodStart }, periodStart: { gte: since }, attendanceFrom: { not: null }, attendanceTo: { not: null },
+    },
+    include: {
+      lines: {
+        where: { employeeId: { in: employeeIds }, attendanceLopDays: { not: null } },
+        select: { employeeId: true, attendanceLopDays: true, totalDays: true, lines: { select: { type: true, code: true, fullAmount: true } } },
+      },
+    },
+  });
+  if (priors.length === 0) return out;
+  const [lopComponents, applied] = await Promise.all([
+    prisma.salaryComponent.findMany({ where: { tenantId: run.tenantId, isLopApplicable: true }, select: { code: true } }),
+    // Carries that other runs already charged or paid back.
+    prisma.lopAdjustment.findMany({
+      where: {
+        tenantId: run.tenantId, employeeId: { in: employeeIds }, runId: { not: run.id },
+        OR: priors.map((p) => ({ reversalForYear: p.year, reversalForMonth: p.month })),
+      },
+      select: { employeeId: true, days: true, reversalForYear: true, reversalForMonth: true, runId: true },
+    }),
+  ]);
+  // …but only those runs that are finalised count.
+  const finalisedRunIds = new Set((await prisma.payrollRun.findMany({
+    where: { id: { in: [...new Set(applied.map((a) => a.runId).filter((x): x is string => !!x))] }, status: "FINALIZED", rolledBackAt: null },
+    select: { id: true },
+  })).map((r) => r.id));
+  const lopCodes = new Set(lopComponents.map((c) => c.code));
+  const counts = new Map<string, PriorCount[]>();
+  for (const p of priors) {
+    const now = await systemLopBetween(p.lines.map((l) => l.employeeId), p.attendanceFrom!, p.attendanceTo!);
+    for (const l of p.lines) {
+      const already = applied
+        .filter((a) => a.employeeId === l.employeeId && a.reversalForYear === p.year && a.reversalForMonth === p.month && a.runId && finalisedRunIds.has(a.runId))
+        .reduce((s, a) => s + Number(a.days), 0);
+      const list = counts.get(l.employeeId) ?? [];
+      list.push({
+        year: p.year, month: p.month, counted: Number(l.attendanceLopDays), current: now.get(l.employeeId) ?? 0, alreadyCarried: already,
+        dayRate: lopDayRate(l.lines.map((x) => ({ type: x.type, code: x.code, fullAmount: Number(x.fullAmount) })), lopCodes, l.totalDays),
+      });
+      counts.set(l.employeeId, list);
+    }
+  }
+  for (const [employeeId, list] of counts) {
+    const c = lopCarry(list);
+    if (c.entries.length) out.set(employeeId, c);
+  }
+  return out;
 }
 
 /** Create a run for a pay group and period, seeding one row per employee. */

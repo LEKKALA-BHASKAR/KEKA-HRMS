@@ -6,6 +6,7 @@ import { NoData } from "./dashboard";
 const DONUT_COLORS: Record<string, string> = {
   Resignation: "#e8735a", Termination: "#c9ced6", Retirement: "#9b87c4", Absconding: "#f2c744", "End of contract": "#5bc0d0",
   Permanent: "#5bc0d0", Contract: "#f2c744", Intern: "#9b87c4", Consultant: "#ef8f7d", None: "#8891a3",
+  Voluntary: "#e8735a", Involuntary: "#5b9bd5", Other: "#c9ced6",
 };
 
 /** Draw a chart from its data, in the size the card gives it. */

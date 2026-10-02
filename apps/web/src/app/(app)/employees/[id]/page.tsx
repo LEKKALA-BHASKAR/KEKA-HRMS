@@ -17,6 +17,7 @@ import {
 } from "./forms";
 import { CustomFieldsForm } from "./custom-fields";
 import { NoticePolicyPicker } from "./notice";
+import { TimeTab, DocumentsTab, AssetsTab, ExpensesTab, PerformanceTab } from "./tabs";
 import { displayCustomValue, type CustomFieldKind } from "@keka/services";
 
 const P = PERMISSIONS;
@@ -93,6 +94,20 @@ export default async function EmployeePage({
   const canEditFinancials = canAccessEmployee(viewer, target, P.EMPLOYEE_MANAGE_FINANCIALS);
   const canRevise = can(viewer, P.SALARY_REVISE) && showFinancials;
   const canManageAccess = can(viewer, P.EMPLOYEE_DISABLE_LOGIN) || can(viewer, P.EMPLOYEE_INVITE);
+
+  // Module tabs open only for viewers who may see that module for this person.
+  const reach = (permission: (typeof P)[keyof typeof P]) => canAccessEmployee(viewer, target, permission);
+  const seeAttendance = reach(P.ATTENDANCE_VIEW);
+  const seeLeave = reach(P.LEAVE_VIEW);
+  const moduleAccess: Partial<Record<Tab, { ok: boolean; permission: string }>> = {
+    time: { ok: seeAttendance || seeLeave, permission: P.ATTENDANCE_VIEW },
+    documents: { ok: reach(P.DOCUMENT_VIEW), permission: P.DOCUMENT_VIEW },
+    assets: { ok: reach(P.ASSET_VIEW), permission: P.ASSET_VIEW },
+    expenses: { ok: reach(P.EXPENSE_VIEW), permission: P.EXPENSE_VIEW },
+    performance: { ok: reach(P.PERFORMANCE_VIEW), permission: P.PERFORMANCE_VIEW },
+  };
+  const visibleTabs = TABS.filter((t) => moduleAccess[t]?.ok ?? true);
+  const refused = moduleAccess[tab] && !moduleAccess[tab]!.ok ? moduleAccess[tab]! : null;
 
   // Custom fields the organisation added under Settings; inactive ones stay hidden but keep their values.
   const customDefs = tab === "profile"
@@ -184,7 +199,7 @@ export default async function EmployeePage({
       />
 
       <div className="tabs">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <Link key={t} href={tabHref(t)} className={`tab${tab === t ? " active" : ""}`}>
             {t[0].toUpperCase() + t.slice(1)}
           </Link>
@@ -748,13 +763,22 @@ export default async function EmployeePage({
       ) : null}
 
       {/* ---------------------------------------------------------------- */}
-      {(["time", "documents", "assets", "expenses", "performance"] as Tab[]).includes(tab) ? (
-        <Card>
-          <Empty title={`${tab[0].toUpperCase() + tab.slice(1)} — not in this milestone`}>
-            This tab is part of the module roadmap. The schema is in place; the screens
-            are scheduled after the payroll spine.
-          </Empty>
-        </Card>
+      {refused ? <AccessDenied permission={refused.permission} what={`${name}'s ${tab}`} /> : null}
+      {tab === "time" && !refused ? (
+        <TimeTab tenantId={viewer.tenantId} employeeId={employee.id} attendance={seeAttendance} leave={seeLeave} isSelf={isSelf} />
+      ) : null}
+      {tab === "documents" && !refused ? (
+        <DocumentsTab tenantId={viewer.tenantId} employeeId={employee.id} isSelf={isSelf}
+          seeConfidential={reach(P.DOCUMENT_MANAGE)} seeAllLetters={can(viewer, P.LETTER_GENERATE) && reach(P.LETTER_GENERATE)} />
+      ) : null}
+      {tab === "assets" && !refused ? (
+        <AssetsTab tenantId={viewer.tenantId} employeeId={employee.id} isSelf={isSelf} seeValue={reach(P.ASSET_MANAGE)} />
+      ) : null}
+      {tab === "expenses" && !refused ? (
+        <ExpensesTab tenantId={viewer.tenantId} employeeId={employee.id} isSelf={isSelf} />
+      ) : null}
+      {tab === "performance" && !refused ? (
+        <PerformanceTab tenantId={viewer.tenantId} employeeId={employee.id} isSelf={isSelf} seeOneOnOnes={isSelf || viewer.allReportIds.has(employee.id)} />
       ) : null}
     </>
   );

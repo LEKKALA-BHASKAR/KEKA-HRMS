@@ -8,6 +8,7 @@ import { remindAcknowledgementAction } from "@/app/actions/assets";
 import { FilterForm, Kebab, RemindForm } from "../_ui";
 import { FSelect, FSearch, FDate, Pager, pageOf, PAGE_SIZE, Toolbar, Segments, EmptyList, condLabel, fmt, qs } from "../_parts";
 import { RequestDrawer, AuditDrawer } from "../_drawers";
+import { acknowledgementsWhere } from "../_queries";
 import s from "../assets.module.css";
 
 /**
@@ -18,30 +19,18 @@ import s from "../assets.module.css";
 
 const P = PERMISSIONS;
 type SP = Record<string, string | undefined>;
-const DAY = 86_400_000;
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 
 export default async function AcknowledgementsPage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
   const viewer = await requireViewer();
   const tenantId = viewer.tenantId;
   const done = sp.tab === "completed";
-  const from = sp.from ?? isoDay(new Date(Date.now() - 30 * DAY));
-  const to = sp.to ?? isoDay(new Date());
+  const { where, from, to } = acknowledgementsWhere(viewer, sp);
   const filters = done ? { tab: "completed", from: sp.from, to: sp.to, emp: sp.emp, cond: sp.cond, q: sp.q } : { emp: sp.emp, cond: sp.cond, q: sp.q };
   const here = `/assets/acknowledgements${qs({ ...filters, page: sp.page })}`;
   const join = here.includes("?") ? "&" : "?";
   const scope = scopedEmployeeWhere(viewer, P.ASSET_VIEW) as Prisma.EmployeeWhereInput;
 
-  const where: Prisma.AssetAssignmentWhereInput = {
-    asset: { tenantId, ...(sp.q ? { OR: [{ assetTag: { contains: sp.q, mode: "insensitive" } }, { name: { contains: sp.q, mode: "insensitive" } }] } : {}) },
-    employee: scope,
-    ...(sp.emp ? { employeeId: sp.emp } : {}),
-    ...(sp.cond ? { conditionOut: sp.cond as Prisma.AssetAssignmentWhereInput["conditionOut"] } : {}),
-    ...(done
-      ? { ackStatus: "ACKNOWLEDGED", acknowledgedAt: { gte: new Date(`${from}T00:00:00Z`), lte: new Date(`${to}T23:59:59Z`) } }
-      : { ackStatus: "PENDING", returnedOn: null }),
-  };
   const [holders, total] = await Promise.all([
     prisma.employee.findMany({
       where: { ...scope, assetAssignments: { some: done ? { ackStatus: "ACKNOWLEDGED" } : { ackStatus: "PENDING", returnedOn: null } } },

@@ -204,10 +204,6 @@ async function main() {
     augLeaveRecords.length === 3 && augLeaveRecords.every((r) => Number(r.lopValue) === 0 && r.status === "ON_LEAVE"),
     augLeaveRecords.map((r) => `${r.status}:${r.lopValue}`).join(", "));
 
-  const attendanceLop = Number((await prisma.attendanceRecord.aggregate({
-    where: { employeeId: deepak.id, date: { gte: utc(2026, 8, 1), lte: utc(2026, 8, 31) } },
-    _sum: { lopValue: true },
-  }))._sum.lopValue ?? 0);
 
   // The seed finalises August; check that run as it stands. Only when it is
   // missing do we stand up (and later remove) a run of our own.
@@ -219,9 +215,18 @@ async function main() {
   const line = await prisma.payrollRunEmployee.findUniqueOrThrow({
     where: { runId_employeeId: { runId, employeeId: deepak.id } },
   });
-  check("Payroll LOP = 3 unpaid-leave days + his attendance LOP, no more",
-    Number(line.lopDays) === 3 + attendanceLop,
-    `payroll ${line.lopDays} = 3 leave + ${attendanceLop} attendance`);
+  // The run counts LOP inside its attendance window, which ends on the pay
+  // group's cut-off day; leave after the cut-off belongs to the next run.
+  const run = await prisma.payrollRun.findUniqueOrThrow({ where: { id: runId }, select: { attendanceFrom: true, attendanceTo: true } });
+  const from = run.attendanceFrom ?? utc(2026, 8, 1), to = run.attendanceTo ?? utc(2026, 8, 31);
+  const leaveInWindow = augLeaveRecords.filter((r) => r.date >= from && r.date <= to).length;
+  const attendanceLop = Number((await prisma.attendanceRecord.aggregate({
+    where: { employeeId: deepak.id, date: { gte: from, lte: to } },
+    _sum: { lopValue: true },
+  }))._sum.lopValue ?? 0);
+  check("Payroll LOP = his unpaid-leave days in the window + his attendance LOP, no more",
+    Number(line.lopDays) === leaveInWindow + attendanceLop,
+    `payroll ${line.lopDays} = ${leaveInWindow} leave + ${attendanceLop} attendance (window ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)})`);
   check("Payable days fell accordingly", Number(line.payableDays) === 31 - Number(line.lopDays),
     `${line.payableDays} of 31`);
 

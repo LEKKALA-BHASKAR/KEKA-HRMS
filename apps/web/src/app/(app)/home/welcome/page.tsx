@@ -234,7 +234,7 @@ export default async function WelcomePage() {
               </>
             ) : (
               <p className={s.muted} style={{ margin: 0 }}>
-                No HR contact has been set up yet. <Link href="/helpdesk?view=mine" className={s.link}>Raise a helpdesk ticket</Link> instead.
+                No HR contact has been set up yet. <Link href="/me/helpdesk?new=1" className={s.link}>Raise a helpdesk ticket</Link> instead.
               </p>
             )}
           </section>

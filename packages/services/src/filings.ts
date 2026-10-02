@@ -6,6 +6,7 @@ import {
 } from "@keka/documents";
 import { loadStatutoryTables, ageAtFyEnd, slabsFor } from "./payroll-run";
 import { previousIncomeApplies } from "./finances-math";
+import { unverifiedWarnings } from "./payroll-pilot-math";
 
 /**
  * Statutory outputs from finalised payroll: the PF ECR, the ESI contribution
@@ -69,21 +70,33 @@ export async function buildEsiFile(runId: string, tenantId: string): Promise<Bui
   };
 }
 
+/**
+ * The whole run's salary transfers. Payout holds are left out; salaries held
+ * in earlier runs and released into this one are added. Transfers to bank
+ * accounts nobody has verified are kept but flagged.
+ */
 export async function buildBankAdvice(runId: string, tenantId: string): Promise<BuiltFile> {
   const run = await finalisedRun(runId, tenantId);
-  const lines = await prisma.payrollRunEmployee.findMany({
-    where: { runId, ...processed, payAction: { in: ["PROCESS_AS_SALARY"] }, netPay: { gt: 0 } },
-    include: { employee: { select: { displayName: true, workEmail: true, bankAccounts: { where: { isPrimary: true }, take: 1 } } } },
-  });
+  const employee = { select: { displayName: true, workEmail: true, bankAccounts: { where: { isPrimary: true }, take: 1 } } } as const;
+  const [lines, released, held] = await Promise.all([
+    prisma.payrollRunEmployee.findMany({ where: { runId, ...processed, payAction: { in: ["PROCESS_AS_SALARY"] }, netPay: { gt: 0 } }, include: { employee } }),
+    prisma.salaryHold.findMany({ where: { releaseRunId: runId, status: "RELEASED" }, include: { employee } }),
+    prisma.salaryHold.count({ where: { runId, status: "HELD" } }),
+  ]);
   const narration = `SALARY ${MONTHS[run.month].slice(0, 3).toUpperCase()} ${run.year}`;
-  const payments: BankPayment[] = lines.map((l) => ({
-    name: l.employee.displayName ?? "", accountNumber: l.employee.bankAccounts[0]?.accountNumber ?? "",
-    ifsc: (l.employee.bankAccounts[0]?.ifsc ?? "").toUpperCase(), amount: Number(l.netPay), narration, email: l.employee.workEmail,
+  const rows = [
+    ...lines.map((l) => ({ e: l.employee, amount: Number(l.netPay), narration })),
+    ...released.map((h) => ({ e: h.employee, amount: Number(h.amount), narration: `${narration} HOLD REL` })),
+  ];
+  const payments: BankPayment[] = rows.map(({ e, amount, narration }) => ({
+    name: e.displayName ?? "", accountNumber: e.bankAccounts[0]?.accountNumber ?? "",
+    ifsc: (e.bankAccounts[0]?.ifsc ?? "").toUpperCase(), amount, narration, email: e.workEmail,
   }));
   const r = bankAdvice(payments);
+  const warnings = unverifiedWarnings(rows.map(({ e }) => ({ name: e.displayName ?? "", accountNumber: e.bankAccounts[0]?.accountNumber ?? null, verified: e.bankAccounts[0]?.isVerified ?? false })));
   return {
-    filename: `Bank-Advice-${run.year}-${String(run.month).padStart(2, "0")}.csv`, mimeType: "text/csv", content: Buffer.from("﻿" + r.content), issues: r.issues,
-    summary: `${payments.length - r.issues.length} transfer(s), ₹${r.total.toLocaleString("en-IN")}`,
+    filename: `Bank-Advice-${run.year}-${String(run.month).padStart(2, "0")}.csv`, mimeType: "text/csv", content: Buffer.from("﻿" + r.content), issues: [...r.issues, ...warnings],
+    summary: `${payments.length - r.issues.length} transfer(s), ₹${r.total.toLocaleString("en-IN")}${released.length ? ` incl. ${released.length} released hold(s)` : ""}${held ? `; ${held} salary hold(s) left out` : ""}${warnings.length ? `; ${warnings.length} unverified account(s)` : ""}`,
   };
 }
 

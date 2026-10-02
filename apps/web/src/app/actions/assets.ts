@@ -449,6 +449,61 @@ export async function recoverAssetAction(_prev: ActionState, fd: FormData): Prom
   return { ok: true, message: `${a.asset.name ?? a.asset.assetType.name} recovered.` };
 }
 
+/**
+ * Settle a damage charge from a recovered asset: deduct it in the holder's
+ * open payroll run (payroll rights), or record that it was collected some
+ * other way (cash, bank transfer). Charges still open when someone leaves are
+ * picked up by the final settlement instead.
+ */
+export async function recordDamageRecoveryAction(_prev: ActionState, fd: FormData): Promise<ActionState> {
+  const viewer = await requireViewer();
+  const method = str(fd, "method") === "PAYROLL" ? "PAYROLL" : "COLLECTED";
+  if (method === "PAYROLL" ? !can(viewer, P.PAYROLL_RUN) : !can(viewer, P.ASSET_ASSIGN)) return DENIED;
+  const note = str(fd, "note").slice(0, 300);
+  const a = await prisma.assetAssignment.findFirst({
+    where: { id: str(fd, "assignmentId"), asset: { tenantId: viewer.tenantId } },
+    include: { asset: { include: { assetType: true } }, employee: { select: { id: true, payGroupId: true } } },
+  });
+  if (!a) return NO("Assignment not found.");
+  const emp = await scopedEmployee(viewer, a.employeeId, method === "PAYROLL" ? P.PAYROLL_RUN : P.ASSET_ASSIGN);
+  if (!emp) return DENIED;
+  if (!a.returnedOn || !a.damageCharge || Number(a.damageCharge) <= 0) return NO("There is no damage charge to recover on this assignment.");
+  if (a.chargeRecovered) return NO("This charge has already been recovered.");
+  if (method === "COLLECTED" && note.length < 3) return { ok: false, message: "Say how the amount was collected.", errors: { note: "Required." } };
+
+  let runId: string | null = null;
+  if (method === "PAYROLL") {
+    if (!a.employee.payGroupId) return NO(`${emp.displayName} is not in a pay group, so payroll cannot deduct it.`);
+    const run = await prisma.payrollRun.findFirst({
+      where: { tenantId: viewer.tenantId, payGroupId: a.employee.payGroupId, status: { in: ["DRAFT", "IN_PROGRESS"] } },
+      orderBy: [{ year: "desc" }, { month: "desc" }],
+    });
+    if (!run) return NO("There is no open payroll run for this employee's pay group.");
+    runId = run.id;
+    await prisma.$transaction(async (tx) => {
+      await tx.adhocTransaction.create({
+        data: {
+          employeeId: a.employee.id, type: "DEDUCTION", name: `Asset damage recovery — ${a.asset.assetType.name} (${a.asset.assetTag})`,
+          amount: a.damageCharge!, taxTreatment: "NON_TAXABLE", year: run.year, month: run.month, runId: run.id,
+          comment: a.damageNote, createdBy: viewer.user.id, sourceType: "AssetAssignment", sourceId: a.id,
+        },
+      });
+      await tx.assetAssignment.update({ where: { id: a.id }, data: { chargeRecovered: true } });
+    });
+    const { calculateRun } = await import("@keka/services");
+    await calculateRun(run.id);
+  } else {
+    await prisma.assetAssignment.update({ where: { id: a.id }, data: { chargeRecovered: true, damageNote: [a.damageNote, `Recovered: ${note}`].filter(Boolean).join(" · ").slice(0, 500) } });
+  }
+  await writeAudit(viewer, {
+    module: "ASSET", action: "UPDATE", entityType: "AssetAssignment", entityId: a.id,
+    summary: `Recovered ₹${Number(a.damageCharge)} damage on ${a.asset.assetTag} from ${emp.displayName} ${method === "PAYROLL" ? "through payroll" : `(${note})`}`,
+  });
+  refresh();
+  if (runId) { try { revalidatePath(`/payroll/runs/${runId}`); } catch { /* outside a request */ } }
+  return { ok: true, message: method === "PAYROLL" ? "Added as a deduction in the open payroll run." : "Recovery recorded." };
+}
+
 export async function acknowledgeAssetAction(_prev: ActionState, fd: FormData): Promise<ActionState> {
   const viewer = await requireViewer();
   if (!viewer.employee) return NO("No employee record is linked to this login.");

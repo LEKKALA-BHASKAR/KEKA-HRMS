@@ -37,7 +37,7 @@ export async function OffCycleView({ runId, viewer }: { runId: string; viewer: V
       <PageHead
         title={`Off-cycle payroll ${run.sequence} · ${formatPeriod(run.year, run.month)}`}
         subtitle={<>{run.payGroup.name}{reason ? ` · ${reason}` : ""}{run.payDate ? ` · pays on ${formatDate(run.payDate)}` : ""} · <Link href={`/payroll/runs/${run.baseRunId}`}>regular run</Link></>}
-        actions={<RunStatusBadge status={run.status} />}
+        actions={<><RunStatusBadge status={run.status} />{run.status === "FINALIZED" ? <Link className="btn" href={`/payroll/runs/${run.id}/payouts`}>Payouts &amp; payslips</Link> : null}</>}
       />
       <div className="grid grid-4" style={{ marginBottom: 16 }}>
         <Stat label="Employees" value={String(run.employeeCount)} />

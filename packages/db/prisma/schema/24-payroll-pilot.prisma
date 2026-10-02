@@ -1,0 +1,110 @@
+// ============================================================================
+//  KEKA — Payroll payout: salary holds and payment batches
+// ============================================================================
+//  A finalised run says what each person is owed; these models track getting
+//  the money out of the bank. A salary hold withholds one person's net pay
+//  from the bank file until it is released — into the same run, a later run
+//  or an off-cycle run. Payment batches split what a run pays into bank files
+//  with a paid / failed outcome per person, so failures can be re-batched.
+// ============================================================================
+
+enum SalaryHoldStatus {
+  HELD
+  RELEASED
+}
+
+/// One person's net pay withheld from a finalised run.
+model SalaryHold {
+  id         String           @id @default(cuid())
+  tenantId   String
+  runId      String
+  run        PayrollRun       @relation("SalaryHeldIn", fields: [runId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  /// Net pay withheld, as finalised.
+  amount Decimal          @db.Decimal(18, 2)
+  reason String?
+  status SalaryHoldStatus @default(HELD)
+
+  heldAt     DateTime  @default(now())
+  heldBy     String?
+  /// The run whose bank file and payment batches carry the released money.
+  releaseRunId String?
+  releaseRun   PayrollRun? @relation("SalaryReleasedIn", fields: [releaseRunId], references: [id], onDelete: SetNull)
+  releasedAt   DateTime?
+  releasedBy   String?
+  releaseNote  String?
+
+  paymentItems PaymentBatchItem[]
+
+  @@unique([runId, employeeId])
+  @@index([tenantId, status])
+  @@index([releaseRunId])
+  @@map("salary_holds")
+}
+
+enum PaymentBatchStatus {
+  /// Created; the bank file can be downloaded and uploaded to the bank.
+  OPEN
+  /// Every item has an outcome.
+  CLOSED
+}
+
+enum PaymentItemStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+/// A slice of a run's net pay sent to the bank as one file.
+model PaymentBatch {
+  id        String             @id @default(cuid())
+  tenantId  String
+  runId     String
+  run       PayrollRun         @relation(fields: [runId], references: [id], onDelete: Cascade)
+  /// 1, 2, 3 … within the run.
+  number    Int
+  status    PaymentBatchStatus @default(OPEN)
+  note      String?
+  createdAt DateTime           @default(now())
+  createdBy String?
+  closedAt  DateTime?
+
+  items PaymentBatchItem[]
+
+  @@unique([runId, number])
+  @@index([tenantId])
+  @@map("payment_batches")
+}
+
+/// One transfer inside a batch. The bank details are a snapshot taken when
+/// the batch was made, so a corrected account shows up on the re-batch.
+model PaymentBatchItem {
+  id           String            @id @default(cuid())
+  batchId      String
+  batch        PaymentBatch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  /// Set when the transfer pays out a released salary hold rather than the
+  /// run's own line for this person.
+  salaryHoldId String?
+  salaryHold   SalaryHold?       @relation(fields: [salaryHoldId], references: [id], onDelete: SetNull)
+
+  amount          Decimal           @db.Decimal(18, 2)
+  bankName        String?
+  accountNumber   String?
+  ifsc            String?
+  accountVerified Boolean           @default(false)
+
+  status        PaymentItemStatus @default(PENDING)
+  /// Bank reference (UTR) for a paid transfer.
+  reference     String?
+  failureReason String?
+  markedAt      DateTime?
+  markedBy      String?
+
+  @@index([batchId])
+  @@index([employeeId])
+  @@map("payment_batch_items")
+}

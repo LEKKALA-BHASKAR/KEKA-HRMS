@@ -471,6 +471,11 @@ model TdsChallan {
   filing   StatutoryFiling? @relation(fields: [filingId], references: [id], onDelete: SetNull)
   tenantId String
   tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// The deductor (pay group, and so TAN) and salary month the deposit covers.
+  payGroupId String?
+  year       Int?
+  month      Int?
+  createdBy  String?
 
   /// 200 = TDS payable by taxpayer, 400 = TDS on regular assessment.
   minorHeadCode String?
@@ -489,5 +494,6 @@ model TdsChallan {
   createdAt DateTime @default(now())
 
   @@index([tenantId])
+  @@index([tenantId, year, month])
   @@map("tds_challans")
 }

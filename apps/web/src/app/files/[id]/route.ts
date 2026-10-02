@@ -22,6 +22,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   else if (file.relatedType === "Offer") allowed = can(viewer, PERMISSIONS.OFFER_MANAGE);
   else if (file.relatedType === "Invoice") allowed = can(viewer, PERMISSIONS.INVOICE_MANAGE);
   else if (file.relatedType === "CandidateResume") allowed = can(viewer, PERMISSIONS.CANDIDATE_MANAGE);
+  else if (file.relatedType === "Asset" || file.relatedType === "AssetImport") allowed = can(viewer, PERMISSIONS.ASSET_MANAGE) || can(viewer, PERMISSIONS.ASSET_ASSIGN);
   else if (file.employeeId) {
     if (file.employeeId === viewer.employee?.id) allowed = true;
     else {

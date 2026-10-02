@@ -77,6 +77,27 @@ export function ChartCard({ chartKey, title, info, rawHref, exportQs, children, 
   );
 }
 
+/** The KPI row over Growth & Retention and Attrition Analysis; a card's link opens its raw data (`rawBase` ends in "?" or "&"). */
+export function KpiCards({ kpis, rawBase }: { kpis: Array<{ key: string; label: string; value: string; meta: string; info: string; color: string; rawKey?: string; rawText?: string }>; rawBase: string }) {
+  return (
+    <div className={s.kpis}>
+      {kpis.map((k) => (
+        <div key={k.key} className={s.kpi} data-kpi={k.key}>
+          <span className={s.kpiRule} style={{ background: k.color }} />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className={s.kpiLabel}>{k.label} <InfoIcon text={k.info} /></div>
+            <div className={s.kpiValue}>{k.value}</div>
+            <div className={s.kpiFoot}>
+              <span className="text-sm muted">{k.meta}</span>
+              {k.rawKey ? <Link className={s.kpiLink} href={`${rawBase}raw=${k.rawKey}`} scroll={false}>{k.rawText ?? "View"}</Link> : null}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function NoData({ children }: { children?: ReactNode }) {
   return <div className={s.empty}>{children ?? "No data for these filters."}</div>;
 }
