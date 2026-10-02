@@ -9,6 +9,8 @@
  *   tsx scripts/jobs.ts probation             nightly; opens probation reviews, auto-confirms ended probations
  *   tsx scripts/jobs.ts accrue [YYYY-MM]      monthly; credits leave for the month
  *   tsx scripts/jobs.ts leave-year-end        nightly; closes ended leave years (carry forward, pay out, lapse)
+ *   tsx scripts/jobs.ts leave-auto-approve    nightly; approves chained leave left past its auto-approve window
+ *   tsx scripts/jobs.ts shift-allowance [YYYY-MM]  nightly; rebuilds the month's unpaid shift allowance from attendance
  *   tsx scripts/jobs.ts invoices              nightly; marks unpaid invoices past due as overdue
  *   tsx scripts/jobs.ts ledger-check          nightly; fails if any tenant's books do not balance
  *   tsx scripts/jobs.ts nightly               all of the nightly jobs (+ accrual on the 1st)
@@ -67,6 +69,19 @@ async function main() {
       for (const t of tenants) { const s = await svc.runLeaveYearEnd({ tenantId: t.id, apply: true }); closed += s.closed; paid += s.paid; expired += s.expired; }
       return { tenants: tenants.length, closed, payments: paid, expiredCarryForwards: expired };
     },
+    "leave-auto-approve": async () => {
+      let checked = 0, approved = 0;
+      for (const t of tenants) { const s = await svc.autoApproveStaleLeave(t.id); checked += s.checked; approved += s.approved; }
+      return { tenants: tenants.length, checked, approved };
+    },
+    "shift-allowance": async () => {
+      const m = /^(\d{4})-(\d{2})$/.exec(arg ?? "");
+      const now = new Date();
+      const year = m ? Number(m[1]) : now.getUTCFullYear(), month = m ? Number(m[2]) : now.getUTCMonth() + 1;
+      let entries = 0, amount = 0;
+      for (const t of tenants) { const s = await svc.generateShiftAllowances({ tenantId: t.id, year, month }); entries += s.entries; amount += s.amount; }
+      return { period: `${year}-${String(month).padStart(2, "0")}`, entries, amount };
+    },
     invoices: async () => ({ markedOverdue: await svc.markOverdueInvoices() }),
     // Debits must equal credits, and every cached balance must equal its
     // lines. A failure here is a bug to investigate, so it fails the job
@@ -99,7 +114,7 @@ async function main() {
 
   let ok = true;
   if (cmd === "nightly") {
-    for (const name of ["process-attendance", "journeys", "probation", "leave-year-end", "invoices", "ledger-check", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
+    for (const name of ["process-attendance", "leave-auto-approve", "shift-allowance", "journeys", "probation", "leave-year-end", "invoices", "ledger-check", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
     if (new Date().getUTCDate() === 1) ok = (await record("accrue", jobs.accrue)) && ok;
   } else if (cmd && jobs[cmd]) {
     ok = await record(cmd, jobs[cmd]);

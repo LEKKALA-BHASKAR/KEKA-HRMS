@@ -56,3 +56,4 @@ export * from "./public-api";
 export * from "./report-engine";
 export * from "./dashboards";
 export * from "./sso";
+export * from "./leave-policy";

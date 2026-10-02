@@ -5,6 +5,7 @@ import {
   DEFAULT_WEEKLY_OFF, DEFAULT_RULES, dayKey, eachDayUtc, classifyDay,
   countLeave, validateLeave, accrueFor, evaluateDay, applyMonthlyPenalties,
 } from "@keka/time";
+import { type LeaveApprovalActor, manualDayValues } from "./leave-policy-math";
 
 /**
  * Leave and attendance operations against the database.
@@ -72,6 +73,35 @@ export interface ResolvedTimePolicy {
   allowWeeklyOffRequests: boolean;
   /** Days a penalty waits before applying, so the employee can regularise. */
   penaltyBufferDays: number;
+  /** Worked weekly offs and holidays credit comp-off on processing. */
+  autoCreditCompOff: boolean;
+  overtimeMultiplier: number;
+  overtimeOffDayMultiplier: number;
+  overtimeRoundingMinutes: number;
+}
+
+/**
+ * Holiday calendar: the assigned one, else any calendar covering the
+ * employee's location, else the default.
+ */
+async function calendarIdsFor(tenantId: string, locationId: string | null, assignedId: string | null): Promise<string[]> {
+  if (assignedId) return [assignedId];
+  const cals = await prisma.holidayCalendar.findMany({
+    where: { tenantId }, select: { id: true, isDefault: true, locationIds: true },
+  });
+  const byLocation = cals.filter((c) => Array.isArray(c.locationIds) &&
+    (c.locationIds as string[]).includes(locationId ?? ""));
+  return (byLocation.length > 0 ? byLocation : cals.filter((c) => c.isDefault)).map((c) => c.id);
+}
+
+/** The holiday calendars an employee is on at a date. */
+export async function employeeHolidayCalendarIds(employeeId: string, at: Date): Promise<string[]> {
+  const emp = await prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { tenantId: true, locationId: true } });
+  const assignment = await prisma.employeeTimePolicy.findFirst({
+    where: { employeeId, effectiveFrom: { lte: at }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: at } }] },
+    orderBy: { effectiveFrom: "desc" }, select: { holidayCalendarId: true },
+  });
+  return calendarIdsFor(emp.tenantId, emp.locationId, assignment?.holidayCalendarId ?? null);
 }
 
 const GENERAL_SHIFT: ShiftSpec = { startTime: "09:30", endTime: "18:30", breakMinutes: 60, isFlexible: false };
@@ -101,21 +131,13 @@ export async function resolveTimePolicy(employeeId: string, at: Date): Promise<R
     ? await prisma.weeklyOffPolicy.findUnique({ where: { id: assignment.weeklyOffPolicyId } })
     : await prisma.weeklyOffPolicy.findFirst({ where: { tenantId: emp.tenantId, isDefault: true, isActive: true } });
 
-  // Holiday calendar: the assigned one, else the default, else any calendar
-  // covering the employee's location.
-  let calendarIds: string[] = [];
-  if (assignment?.holidayCalendarId) {
-    calendarIds = [assignment.holidayCalendarId];
-  } else {
-    const cals = await prisma.holidayCalendar.findMany({
-      where: { tenantId: emp.tenantId }, select: { id: true, isDefault: true, locationIds: true },
-    });
-    const byLocation = cals.filter((c) => Array.isArray(c.locationIds) &&
-      (c.locationIds as string[]).includes(emp.location?.id ?? ""));
-    calendarIds = (byLocation.length > 0 ? byLocation : cals.filter((c) => c.isDefault)).map((c) => c.id);
-  }
+  const calendarIds = await calendarIdsFor(emp.tenantId, emp.location?.id ?? null, assignment?.holidayCalendarId ?? null);
+  // Public holidays, plus the optional holidays this employee has picked.
   const holidays = calendarIds.length > 0
-    ? await prisma.holiday.findMany({ where: { calendarId: { in: calendarIds }, isOptional: false }, select: { date: true } })
+    ? await prisma.holiday.findMany({
+        where: { calendarId: { in: calendarIds }, OR: [{ isOptional: false }, { selections: { some: { employeeId } } }] },
+        select: { date: true },
+      })
     : [];
 
   const shiftRow = assignment?.shiftId
@@ -167,6 +189,10 @@ export async function resolveTimePolicy(employeeId: string, at: Date): Promise<R
     allowShiftChangeRequests: policy?.allowShiftChangeRequests ?? true,
     allowWeeklyOffRequests: policy?.allowWeeklyOffRequests ?? true,
     penaltyBufferDays: policy?.penaltyBufferDays ?? 0,
+    autoCreditCompOff: policy?.autoCreditCompOff ?? false,
+    overtimeMultiplier: policy ? Number(policy.overtimeMultiplier) : 1,
+    overtimeOffDayMultiplier: policy ? Number(policy.overtimeOffDayMultiplier) : 1,
+    overtimeRoundingMinutes: policy?.overtimeRoundingMinutes ?? 0,
   };
 }
 
@@ -384,6 +410,13 @@ export async function previewLeave(input: ApplyLeaveInput) {
     onProbation, usedDuringProbation,
   });
 
+  // Usage limits: days per month, the gap between requests, and a
+  // consecutive run that an adjoining request would make too long.
+  if (!count.empty && to.getTime() >= from.getTime()) {
+    const { usageIssuesFor } = await import("./leave-policy");
+    issues.push(...await usageIssuesFor({ employeeId: input.employeeId, type, count, from, to, calendar: policy.calendar }));
+  }
+
   // Hidden types are admin-only.
   if (type.isHiddenFromEmployee && !input.onBehalf) {
     issues.push({ field: "leaveTypeId", message: `${type.name} can only be applied by an administrator.` });
@@ -395,6 +428,11 @@ export async function previewLeave(input: ApplyLeaveInput) {
 export async function applyLeave(input: ApplyLeaveInput): Promise<ApplyLeaveResult> {
   const p = await previewLeave(input);
   if (p.issues.length > 0) return { ok: false, issues: p.issues, totalDays: p.count.totalDays };
+
+  // The approval chain is fixed when the request is raised, so a later policy
+  // change never reroutes a request already in flight.
+  const { stepsForNewRequest } = await import("./leave-policy");
+  const steps = await stepsForNewRequest(p.emp.id, p.type.id, p.from);
 
   const request = await prisma.leaveRequest.create({
     data: {
@@ -410,6 +448,7 @@ export async function applyLeave(input: ApplyLeaveInput): Promise<ApplyLeaveResu
       attachmentUrl: input.attachmentUrl ?? null,
       requestedBy: input.requestedByEmployeeId ?? null,
       status: "PENDING",
+      ...(steps ? { approvalSteps: steps as never, approvalLevel: 0, levelSince: new Date() } : {}),
       days: {
         create: p.count.days.map((d) => ({
           date: d.date, portion: d.portion, dayValue: d.value,
@@ -432,7 +471,14 @@ export async function decideLeave(opts: {
   decision: "APPROVE" | "REJECT";
   approverEmployeeId?: string | null;
   note?: string | null;
-}): Promise<{ ok: boolean; message: string }> {
+  /**
+   * Who is deciding, for a request on an approval chain: they must hold the
+   * level waiting. Omitted, the decision is taken as authorised (jobs, scripts).
+   */
+  actor?: LeaveApprovalActor | null;
+  /** The system clearing every remaining level after the auto-approve window. */
+  auto?: boolean;
+}): Promise<{ ok: boolean; message: string; pendingLevel?: boolean }> {
   const request = await prisma.leaveRequest.findUniqueOrThrow({
     where: { id: opts.requestId },
     include: { leaveType: true, days: true },
@@ -441,10 +487,48 @@ export async function decideLeave(opts: {
     return { ok: false, message: `This request is already ${request.status.toLowerCase()}.` };
   }
 
+  // Approval chain: only the holder of the waiting level (or HR) decides it,
+  // and an approval short of the last level moves the request along.
+  const policy = await import("./leave-policy");
+  const chain = policy.chainState(request);
+  let finalSteps: unknown = undefined;
+  if (chain && chain.current) {
+    const now = new Date();
+    if (opts.auto) {
+      finalSteps = policy.autoApproveSteps(chain.steps, chain.level, now);
+    } else {
+      if (opts.actor && !policy.canActOnStep(chain.current, opts.actor)) {
+        return { ok: false, message: `This request is waiting for ${await policy.stepLabel(chain.current)} (level ${chain.level + 1} of ${chain.steps.length}).` };
+      }
+      const actor = opts.actor ?? { employeeId: opts.approverEmployeeId ?? null, isHr: true, canApprove: true };
+      if (opts.decision === "REJECT") {
+        finalSteps = chain.steps.map((st, i) => (i === chain.level
+          ? { ...st, status: "REJECTED", by: actor.employeeId, at: now.toISOString(), note: opts.note ?? null } : st));
+      } else {
+        const cfg = await policy.approvalChainFor(request.employeeId, request.leaveTypeId, request.fromDate);
+        const next = policy.approveStep(chain.steps, chain.level, actor, now, opts.note ?? null, cfg?.skipSamePerson ?? true);
+        finalSteps = next.steps;
+        if (next.nextLevel !== null) {
+          await prisma.leaveRequest.update({
+            where: { id: request.id },
+            data: { approvalSteps: next.steps as never, approvalLevel: next.nextLevel, levelSince: now },
+          });
+          const step = next.steps[next.nextLevel];
+          await policy.notifyNextApprover(request.tenantId, request.employeeId, step, `${request.leaveType.name} request`);
+          return {
+            ok: true, pendingLevel: true,
+            message: `Approved at level ${chain.level + 1} of ${chain.steps.length}. It now goes to ${await policy.stepLabel(step)}.`,
+          };
+        }
+      }
+    }
+  }
+  const stepsData = finalSteps === undefined ? {} : { approvalSteps: finalSteps as never };
+
   if (opts.decision === "REJECT") {
     await prisma.leaveRequest.update({
       where: { id: request.id },
-      data: { status: "REJECTED", approvedBy: opts.approverEmployeeId ?? null, approvedAt: new Date(), rejectReason: opts.note ?? null },
+      data: { status: "REJECTED", approvedBy: opts.approverEmployeeId ?? null, approvedAt: new Date(), rejectReason: opts.note ?? null, ...stepsData },
     });
     await reprocessRange(request.employeeId, request.fromDate, request.toDate);
     return { ok: true, message: "Rejected." };
@@ -472,7 +556,7 @@ export async function decideLeave(opts: {
   await prisma.$transaction(async (tx) => {
     await tx.leaveRequest.update({
       where: { id: request.id },
-      data: { status: "APPROVED", approvedBy: opts.approverEmployeeId ?? null, approvedAt: new Date() },
+      data: { status: "APPROVED", approvedBy: opts.auto ? null : opts.approverEmployeeId ?? null, approvedAt: new Date(), ...stepsData },
     });
     if (tracksBalance) {
       await tx.leaveLedgerEntry.create({
@@ -494,7 +578,7 @@ export async function decideLeave(opts: {
     requestId: request.id, employeeId: request.employeeId, employeeNumber: emp.employeeNumber, leaveType: request.leaveType.name,
     fromDate: dayKey(request.fromDate), toDate: dayKey(request.toDate), days: Number(request.totalDays),
   });
-  return { ok: true, message: "Approved." };
+  return { ok: true, message: opts.auto ? "Auto-approved." : "Approved." };
 }
 
 export async function cancelLeave(opts: {
@@ -936,7 +1020,7 @@ export async function processAttendance(opts: {
     summary.employees++;
 
     const tz = policy.tzOffset;
-    const [logs, leaveDays, requests, shiftOverrides] = await Promise.all([
+    const [logs, leaveDays, requests, shiftOverrides, pinned] = await Promise.all([
       prisma.attendanceLog.findMany({
         where: {
           employeeId: emp.id, status: "VALID",
@@ -961,7 +1045,13 @@ export async function processAttendance(opts: {
         where: { employeeId: emp.id, date: { gte: empFrom, lte: empTo } },
         include: { shift: true },
       }),
+      // Days an administrator has pinned to a status.
+      prisma.attendanceRecord.findMany({
+        where: { employeeId: emp.id, date: { gte: empFrom, lte: empTo }, manualStatus: { not: null } },
+        select: { date: true, manualStatus: true, editReason: true },
+      }),
     ]);
+    const pinnedByDay = new Map(pinned.map((p) => [dayKey(p.date), p]));
 
     const logsByDay = new Map<string, typeof logs>();
     for (const l of logs) {
@@ -1009,6 +1099,17 @@ export async function processAttendance(opts: {
         tzOffsetMinutes: tz,
         trackAttendance: policy.trackAttendance,
       });
+      const pin = pinnedByDay.get(key);
+      if (pin?.manualStatus) {
+        // A pinned day pays what its status pays and is out of the monthly
+        // late and missing-punch counts.
+        const v = manualDayValues(pin.manualStatus, policy.rules.noAttendanceIsLop);
+        results.push({
+          ...r, date, key, status: pin.manualStatus as DayResult["status"], ...v, isLate: false, isMissingPunch: false,
+          notes: [`Set by an administrator: ${pin.editReason ?? "no reason given"}`],
+        });
+        continue;
+      }
       results.push({ ...r, date, key });
     }
 
@@ -1046,6 +1147,7 @@ export async function processAttendance(opts: {
           },
           update: {
             status, firstIn: r.firstIn, lastOut: r.lastOut,
+            shiftId: shiftByDay.get(key)?.shiftId ?? policy.defaultShiftId,
             grossHours: r.grossHours, effectiveHours: r.effectiveHours, overtimeHours: r.overtimeHours,
             payableValue: r.payableValue, lopValue: r.lopValue, penaltyReason: r.penaltyReason,
             isRegularised: requests.some((q) => (q.type === "REGULARISATION" || q.type === "ADJUSTMENT") &&
@@ -1064,6 +1166,14 @@ export async function processAttendance(opts: {
         if (r.isLate) summary.lateDays++;
         if (r.penaltyReason) summary.penalisedDays++;
       }
+    }
+
+    if (policy.autoCreditCompOff) {
+      const { autoCreditCompOffDays } = await import("./leave-policy");
+      await autoCreditCompOffDays({
+        tenantId: emp.tenantId, employeeId: emp.id, fullPct: policy.rules.fullDayThresholdPct, halfPct: policy.rules.halfDayThresholdPct,
+        days: results.map((r) => ({ date: r.date, status: r.status, effectiveHours: r.effectiveHours, requiredHours: r.requiredHours })),
+      });
     }
   }
   return summary;

@@ -3,6 +3,7 @@ import { resolveStructure, type StructureComponentSpec } from "@keka/payroll";
 import { dayKey, eachDayUtc } from "@keka/time";
 import { resolveTimePolicy, reprocessRange, recomputeBalance, leaveYearStart } from "./time";
 import { notify } from "./lifecycle";
+import { roundOvertimeMinutes } from "./leave-policy-math";
 import {
   formatHhmm, overtimeRate, overtimeAmount, encashmentFormulaParts, encashmentEstimate, encashableDays, compOffCreditFor,
 } from "./time-math";
@@ -306,9 +307,21 @@ export async function decideOvertimeRequest(opts: {
   }
 
   const wages = await monthlyWages(req.employeeId, req.toDate);
-  const rate = overtimeRate((wages?.basic ?? 0) * 12);
-  const hours = r2(req.requestedMinutes / 60);
-  const amount = overtimeAmount(req.requestedMinutes, rate);
+  // The attendance policy may round the minutes down to a block and pay a
+  // multiple of the hourly rate — a higher one when every day claimed was a
+  // weekly off or holiday. The defaults (no rounding, 1×) pay hours as claimed.
+  const policy = await resolveTimePolicy(req.employeeId, req.toDate);
+  const offDays = await prisma.attendanceRecord.count({
+    where: { employeeId: req.employeeId, date: { gte: req.fromDate, lte: req.toDate }, status: { in: ["WEEKLY_OFF", "HOLIDAY"] } },
+  });
+  const multiplier = offDays >= days(req.fromDate, req.toDate) ? policy.overtimeOffDayMultiplier : policy.overtimeMultiplier;
+  const minutes = roundOvertimeMinutes(req.requestedMinutes, policy.overtimeRoundingMinutes);
+  if (minutes <= 0) {
+    return { ok: false, message: `After rounding down to ${policy.overtimeRoundingMinutes}-minute blocks there is no overtime to pay. Reject it instead.` };
+  }
+  const rate = Math.round(overtimeRate((wages?.basic ?? 0) * 12) * (multiplier > 0 ? multiplier : 1) * 10_000) / 10_000;
+  const hours = r2(minutes / 60);
+  const amount = overtimeAmount(minutes, rate);
 
   // The month the overtime was worked, unless its payroll is already closed.
   let year = req.toDate.getUTCFullYear(), month = req.toDate.getUTCMonth() + 1;
@@ -333,8 +346,8 @@ export async function decideOvertimeRequest(opts: {
   return {
     ok: true, requestId: entryId,
     message: rate > 0
-      ? `Approved — ${formatHhmm(req.requestedMinutes)} hrs go to ${month}/${year} payroll at ₹${rate.toFixed(2)}/hr.`
-      : `Approved — ${formatHhmm(req.requestedMinutes)} hrs recorded for ${month}/${year}. There is no salary on record to price them; HR will set the rate.`,
+      ? `Approved — ${formatHhmm(minutes)} hrs go to ${month}/${year} payroll at ₹${rate.toFixed(2)}/hr${multiplier !== 1 ? ` (${multiplier}× the hourly rate)` : ""}.`
+      : `Approved — ${formatHhmm(minutes)} hrs recorded for ${month}/${year}. There is no salary on record to price them; HR will set the rate.`,
   };
 }
 
@@ -374,6 +387,11 @@ export async function compOffEligibleDays(employeeId: string, opts: { today?: Da
       select: { fromDate: true, toDate: true },
     }),
   ]);
+  // Days the attendance policy already credited on its own.
+  const autoCredited = new Set((await prisma.leaveLedgerEntry.findMany({
+    where: { employeeId, kind: "COMP_OFF_CREDIT", periodKey: { startsWith: "COMPOFF-AUTO:" } },
+    select: { periodKey: true },
+  })).map((e) => e.periodKey!.slice("COMPOFF-AUTO:".length)));
   const required = policy.defaultShift.isFlexible && policy.defaultShift.requiredHours
     ? policy.defaultShift.requiredHours
     : Math.max(1, (() => {
@@ -385,7 +403,7 @@ export async function compOffEligibleDays(employeeId: string, opts: { today?: Da
       })());
   const isClaimed = (d: Date) => claimed.some((c) => c.fromDate.getTime() <= d.getTime() && c.toDate.getTime() >= d.getTime());
   return records.flatMap((r) => {
-    if (isClaimed(r.date)) return [];
+    if (isClaimed(r.date) || autoCredited.has(dayKey(r.date))) return [];
     const credit = compOffCreditFor(Number(r.effectiveHours), required, policy.rules.fullDayThresholdPct, policy.rules.halfDayThresholdPct);
     if (credit === 0) return [];
     return [{
