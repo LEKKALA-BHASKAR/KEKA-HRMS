@@ -87,10 +87,12 @@ export const getViewer = cache(async (): Promise<Viewer | null> => {
 /**
  * The same context for a user outside a request — a scheduled job acting
  * as the person who set it up, so it sees exactly what they would. Null
- * when the login is disabled or gone.
+ * when the login is disabled or gone, or belongs to another tenant than
+ * the one given.
  */
-export async function viewerForUser(userId: string): Promise<Viewer | null> {
-  return buildViewer(userId, null);
+export async function viewerForUser(userId: string, tenantId?: string): Promise<Viewer | null> {
+  const v = await buildViewer(userId, null);
+  return v && (!tenantId || v.tenantId === tenantId) ? v : null;
 }
 
 async function buildViewer(userId: string, session: { tenantId: string; sessionVersion: number } | null): Promise<Viewer | null> {
