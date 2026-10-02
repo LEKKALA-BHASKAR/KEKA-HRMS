@@ -19,7 +19,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   let allowed = false;
   if (file.relatedType === "StatutoryFiling") allowed = can(viewer, PERMISSIONS.STATUTORY_MANAGE);
   else if (file.relatedType === "PayrollOutput") allowed = can(viewer, PERMISSIONS.PAYROLL_RUN);
-  else if (file.relatedType === "Offer") allowed = can(viewer, PERMISSIONS.OFFER_MANAGE);
+  else if (file.relatedType === "Offer" || file.relatedType === "OfferSignature") allowed = can(viewer, PERMISSIONS.OFFER_MANAGE);
   else if (file.relatedType === "Invoice") allowed = can(viewer, PERMISSIONS.INVOICE_MANAGE);
   else if (file.relatedType === "CandidateResume") allowed = can(viewer, PERMISSIONS.CANDIDATE_MANAGE);
   else if (file.relatedType === "Asset" || file.relatedType === "AssetImport") allowed = can(viewer, PERMISSIONS.ASSET_MANAGE) || can(viewer, PERMISSIONS.ASSET_ASSIGN);
@@ -27,7 +27,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     if (file.employeeId === viewer.employee?.id) allowed = true;
     else {
       const t = await prisma.employee.findUnique({ where: { id: file.employeeId }, select: { id: true, departmentId: true, locationId: true, legalEntityId: true, businessUnitId: true, reportingManagerId: true } });
-      const perm = file.relatedType === "Form16" ? PERMISSIONS.PAY_REGISTER_VIEW : file.relatedType === "ExpenseReceipt" ? PERMISSIONS.EXPENSE_VIEW : file.relatedType === "DeclarationItem" ? PERMISSIONS.TAX_DECLARATION_APPROVE : file.relatedType === "AttendanceSelfie" ? PERMISSIONS.ATTENDANCE_VIEW : file.relatedType === "BgvReport" ? PERMISSIONS.BGV_MANAGE : PERMISSIONS.DOCUMENT_VIEW;
+      const perm = file.relatedType === "Form16" ? PERMISSIONS.PAY_REGISTER_VIEW : file.relatedType === "FnfStatement" ? PERMISSIONS.FNF_MANAGE : file.relatedType === "ExpenseReceipt" ? PERMISSIONS.EXPENSE_VIEW : file.relatedType === "DeclarationItem" ? PERMISSIONS.TAX_DECLARATION_APPROVE : file.relatedType === "AttendanceSelfie" ? PERMISSIONS.ATTENDANCE_VIEW : file.relatedType === "BgvReport" ? PERMISSIONS.BGV_MANAGE : PERMISSIONS.DOCUMENT_VIEW;
       allowed = !!t && canAccessEmployee(viewer, t, perm);
     }
   } else allowed = can(viewer, PERMISSIONS.ORG_SETTINGS_MANAGE);

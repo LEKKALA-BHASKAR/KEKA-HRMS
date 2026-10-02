@@ -538,7 +538,69 @@ model PsaSetting {
   criticalRequestDays          Int                @default(10)
   projectCreationNeedsApproval Boolean            @default(false)
   defaultRevenueRecognition    RevenueRecognition @default(INCOME_TO_DATE)
-  updatedAt                    DateTime           @updatedAt
+
+  // --- Timesheet policy. The defaults are the rules that were hardcoded. ---
+  /// Least hours on a day with time logged; null = no floor.
+  tsMinHoursPerDay       Decimal?               @db.Decimal(5, 2)
+  tsMaxHoursPerDay       Decimal                @default(24) @db.Decimal(5, 2)
+  /// Checked on submission only; null = no limit.
+  tsMinHoursPerWeek      Decimal?               @db.Decimal(6, 2)
+  tsMaxHoursPerWeek      Decimal?               @db.Decimal(6, 2)
+  /// Time is logged in steps of this many minutes.
+  tsIncrementMinutes     Int                    @default(15)
+  tsRounding             TimesheetRounding      @default(REJECT)
+  tsApprovalChain        TimesheetApprovalChain @default(EITHER)
+  /// Approve on submission, when the week is within tsAutoApproveMaxHours.
+  tsAutoApprove          Boolean                @default(false)
+  tsAutoApproveMaxHours  Decimal?               @db.Decimal(6, 2)
+  /// Approvers see a warning above this many hours in a week.
+  tsFlagWeeklyHoursAbove Decimal                @default(50) @db.Decimal(6, 2)
+  /// Remind people who have not submitted, this many days after the week ends.
+  tsRemindersEnabled     Boolean                @default(false)
+  tsReminderAfterDays    Int                    @default(1)
+  /// Tell their manager, this many days after the week ends.
+  tsEscalationEnabled    Boolean                @default(false)
+  tsEscalateAfterDays    Int                    @default(3)
+
+  updatedAt DateTime @updatedAt
 
   @@map("psa_settings")
+}
+
+/// What happens to time not logged in whole increments.
+enum TimesheetRounding {
+  /// Refuse it ("log in quarter hours").
+  REJECT
+  NEAREST
+  UP
+}
+
+enum TimesheetApprovalChain {
+  /// The line manager, or the manager of every project on the sheet.
+  EITHER
+  LINE_MANAGER
+  PROJECT_MANAGER
+  /// The line manager, then the project manager(s).
+  LINE_THEN_PROJECT
+}
+
+enum TimesheetReminderKind {
+  REMINDER
+  ESCALATION
+}
+
+/// One reminder (to the person) or escalation (to their manager) per unsubmitted week, so the job never repeats itself.
+model TimesheetReminder {
+  id          String                @id @default(cuid())
+  tenantId    String
+  tenant      Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Employee id (plain column).
+  employeeId  String
+  periodStart DateTime
+  kind        TimesheetReminderKind
+  sentAt      DateTime              @default(now())
+
+  @@unique([employeeId, periodStart, kind])
+  @@index([tenantId, periodStart])
+  @@map("timesheet_reminders")
 }

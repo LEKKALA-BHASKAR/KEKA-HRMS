@@ -9,7 +9,7 @@ import type { ImportColumn } from "@keka/services";
 
 const P = PERMISSIONS;
 
-export type ImportKind = "employees" | "leave-balances" | "salaries" | "bank-accounts" | "bonuses";
+export type ImportKind = "employees" | "leave-balances" | "salaries" | "bank-accounts" | "bonuses" | "candidates" | "job-details";
 
 export const IMPORTS: Record<ImportKind, { label: string; description: string; permission: Permission; columns: ImportColumn[] }> = {
   employees: {
@@ -83,6 +83,41 @@ export const IMPORTS: Record<ImportKind, { label: string; description: string; p
       { key: "bonus_type", label: "Bonus type", required: true, hint: "Name as set up under Payroll › Bonuses", example: "Performance Bonus" },
       { key: "amount", label: "Amount", required: true, example: "50000" },
       { key: "payout_month", label: "Payout month", required: true, hint: "yyyy-mm, or any date in that month", example: "2026-11" },
+      { key: "note", label: "Note", example: "FY26 appraisal" },
+    ],
+  },
+  candidates: {
+    label: "Candidates",
+    description: "Candidates sourced elsewhere (a job board export, an agency list) applied to an open job at its first stage. Someone already in the pipeline for that job is reported, not duplicated.",
+    permission: P.CANDIDATE_MANAGE,
+    columns: [
+      { key: "job", label: "Job", hint: "The job code, like JOB-1004. Optional when importing from a job's page", example: "JOB-1004" },
+      { key: "first_name", label: "First name", required: true, example: "Rohan" },
+      { key: "last_name", label: "Last name", required: true, example: "Kapoor" },
+      { key: "email", label: "Email", required: true, example: "rohan.kapoor@mail.test" },
+      { key: "phone", label: "Phone", example: "+91 98450 12345" },
+      { key: "current_employer", label: "Current employer", example: "Infosys" },
+      { key: "current_title", label: "Current title", example: "Senior Engineer" },
+      { key: "experience_years", label: "Experience (years)", example: "6" },
+      { key: "current_ctc", label: "Current CTC", hint: "Annual, in rupees", example: "1800000" },
+      { key: "expected_ctc", label: "Expected CTC", hint: "Annual, in rupees", example: "2400000" },
+      { key: "notice_days", label: "Notice period (days)", example: "60" },
+      { key: "source", label: "Source", hint: "JOB_BOARD, AGENCY, DIRECT_SOURCING, REFERRAL, WALK_IN, CAREER_PORTAL or INTERNAL", example: "JOB_BOARD" },
+    ],
+  },
+  "job-details": {
+    label: "Job details",
+    description: "Promotions, transfers and manager changes in bulk. Each row is a job change on its effective date: future-dated rows are written on that day, and when the pay group has a job-change approval rule every row goes through it first.",
+    permission: P.EMPLOYEE_UPDATE,
+    columns: [
+      { key: "employee_number", label: "Employee number", required: true, example: "ACM0007" },
+      { key: "effective_from", label: "Effective from", required: true, hint: "yyyy-mm-dd or dd/mm/yyyy", example: "2026-11-01" },
+      { key: "designation", label: "Designation", hint: "Job title as set up under Organisation", example: "Senior Software Engineer" },
+      { key: "department", label: "Department", example: "Product Engineering" },
+      { key: "location", label: "Location", example: "Bengaluru HQ" },
+      { key: "reporting_manager", label: "Reporting manager", hint: "Their employee number", example: "ACM0002" },
+      { key: "grade", label: "Grade", hint: "Pay grade, or band, by name", example: "" },
+      { key: "reason", label: "Reason", hint: "PROMOTION, TRANSFER, DEPARTMENT_CHANGE, LOCATION_CHANGE, MANAGER_CHANGE, DEMOTION; worked out from the columns when blank", example: "PROMOTION" },
       { key: "note", label: "Note", example: "FY26 appraisal" },
     ],
   },

@@ -7,6 +7,7 @@ import {
   draftOffer, approveOffer, extendOffer, recordOfferResponse, completeHire, notify,
   raiseRequisition, updateRequisition, decideRequisitions, archiveRequisition, isSuperApprover, saveScorecard,
   requisitionProblems, parseKit, plainText, type RequisitionInput,
+  parseManualBreakup, issueOfferLink, revokeOfferLink,
 } from "@keka/services";
 import { foreignReference } from "@/lib/ownership";
 import { requireAuth, requireViewer, can, canAny, type Viewer } from "@/lib/context";
@@ -326,7 +327,7 @@ export async function remindPanelistAction(_prev: ActionState, formData: FormDat
   const link = `/hiring/applications/${iv.applicationId}?tab=feedback&feedback=${iv.id}`;
   const recent = await prisma.notification.count({ where: { tenantId: viewer.tenantId, userId: seat.employee.userId, link, createdAt: { gte: new Date(Date.now() - 86_400_000) } } });
   if (recent) return { ok: false, message: `${seat.employee.displayName} was reminded in the last 24 hours.` };
-  await notify({ tenantId: viewer.tenantId, userIds: [seat.employee.userId], kind: "HIRING", title: `Feedback due: ${iv.application.candidate.firstName} ${iv.application.candidate.lastName}`, body: `${iv.title} for ${iv.application.job.title}`, link, email: true });
+  await notify({ tenantId: viewer.tenantId, userIds: [seat.employee.userId], kind: "HIRING", title: `Feedback due: ${iv.application.candidate.firstName} ${iv.application.candidate.lastName}`, body: `${iv.title} for ${iv.application.job.title}`, link, email: true, event: "INTERVIEW_FEEDBACK_DUE" });
   await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "Interview", entityId: iv.id, summary: `Reminded ${seat.employee.displayName} to give feedback` });
   return done([`/hiring/applications/${iv.applicationId}`], `Reminder sent to ${seat.employee.displayName}.`);
 }
@@ -369,6 +370,11 @@ export async function saveCandidateFeedbackAction(_prev: ActionState, formData: 
 const offerSchema = z.object({
   applicationId: zId(), annualCtc: zRequiredNumber({ min: 1 }), joiningBonus: zNumber({ min: 0 }),
   proposedJoiningDate: zRequiredDate(), expiresOn: zRequiredDate(), reportingManagerId: z.string().optional().transform((v) => v || null), jobTitleId: z.string().optional().transform((v) => v || null),
+  templateId: z.string().optional().transform((v) => v || null),
+  /** STRUCTURE (resolve from salaryStructureId, or the structure for the CTC) or MANUAL (the typed breakup). */
+  breakupMode: z.enum(["STRUCTURE", "MANUAL"]).default("STRUCTURE"),
+  salaryStructureId: z.string().optional().transform((v) => v || null),
+  breakup: z.string().max(4000).optional().transform((v) => v ?? ""),
 });
 
 export async function draftOfferAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -378,7 +384,14 @@ export async function draftOfferAction(_prev: ActionState, formData: FormData): 
   if (!(await inTenant(viewer, await prisma.application.findUnique({ where: { id: parsed.data.applicationId } })))) return { ok: false, message: "Application not found." };
   const foreign = await foreignReference(viewer.tenantId, { employee: parsed.data.reportingManagerId, jobTitle: parsed.data.jobTitleId });
   if (foreign) return { ok: false, message: foreign };
-  const res = await draftOffer(parsed.data);
+  const { breakupMode, breakup: breakupText, ...rest } = parsed.data;
+  let breakup = null;
+  if (breakupMode === "MANUAL") {
+    const b = parseManualBreakup(breakupText, rest.annualCtc);
+    if (b.error) return { ok: false, message: b.error, errors: { breakup: b.error }, values: values(formData) };
+    breakup = b.rows!;
+  }
+  const res = await draftOffer({ ...rest, salaryStructureId: breakupMode === "MANUAL" ? null : rest.salaryStructureId, breakup });
   if (res.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Offer", entityId: parsed.data.applicationId, summary: `Offer drafted at ₹${parsed.data.annualCtc}: ${res.message}` });
   return res.ok ? done([`/hiring/applications/${parsed.data.applicationId}`, "/hiring/offers"], res.message) : { ok: false, message: res.message, values: values(formData) };
 }
@@ -398,10 +411,18 @@ export async function offerOpAction(_prev: ActionState, formData: FormData): Pro
     res = await extendOffer(applicationId, async (pdf, filename) => {
       const f = await saveFile({ tenantId: viewer.tenantId, filename, mimeType: "application/pdf", data: pdf, relatedType: "Offer", relatedId: applicationId, uploadedBy: viewer.user.id });
       return `/files/${f.id}`;
-    });
+    }, { byUserId: viewer.user.id });
+  } else if (op === "resend") {
+    if (!can(viewer, P.OFFER_MANAGE)) return { ok: false, message: "You cannot send offer links." };
+    res = await issueOfferLink({ tenantId: viewer.tenantId, applicationId, byUserId: viewer.user.id });
+  } else if (op === "revoke") {
+    if (!can(viewer, P.OFFER_MANAGE)) return { ok: false, message: "You cannot revoke offer links." };
+    res = await revokeOfferLink({ tenantId: viewer.tenantId, applicationId });
   } else if (op === "accepted" || op === "declined") {
     if (!can(viewer, P.OFFER_MANAGE)) return { ok: false, message: "You cannot record offer responses." };
-    res = await recordOfferResponse(applicationId, op === "accepted", String(formData.get("reason") ?? "") || null);
+    const reason = String(formData.get("reason") ?? "").trim() || null;
+    if (op === "declined" && !reason) return { ok: false, message: "Record why the candidate declined." };
+    res = await recordOfferResponse(applicationId, op === "accepted", reason, viewer.user.id);
   } else return { ok: false, message: "Unknown action." };
   if (res.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: op === "approve" ? "APPROVE" : "UPDATE", entityType: "Offer", entityId: applicationId, summary: `Offer ${op}: ${res.message}` });
   return res.ok ? done([`/hiring/applications/${applicationId}`, "/hiring/offers"], res.message) : { ok: false, message: res.message };

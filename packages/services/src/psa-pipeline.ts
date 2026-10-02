@@ -143,7 +143,7 @@ export async function requestOpportunityConversion(tenantId: string, id: string,
       billingModel: o.billingModel, currency: o.currency, estimatedRevenue: o.estimatedRevenue, status: "NEW", requestedById: byUserId,
     },
   });
-  await notify({ tenantId, userIds: await projectAdminUserIds(tenantId), kind: "PROJECT", title: `${o.name} was won — convert it to a project`, link: "/projects/list?view=requests" });
+  await notify({ tenantId, userIds: await projectAdminUserIds(tenantId), kind: "PROJECT", title: `${o.name} was won — convert it to a project`, link: "/projects/pipeline/requests" });
   return { ok: true, message: "Project creation request sent to the project admin.", id: req.id };
 }
 
@@ -406,7 +406,7 @@ export async function raiseProjectRequest(tenantId: string, form: ProjectForm, b
   const saved = req
     ? await prisma.projectRequest.update({ where: { id: req.id }, data: { ...data, clientId: form.clientId ?? req.clientId } })
     : await prisma.projectRequest.create({ data: { ...data, tenantId, source: "PROJECT", clientId: form.clientId ?? null, requestedById: byUserId } });
-  await notify({ tenantId, userIds: (await projectAdminUserIds(tenantId)).filter((u) => u !== byUserId), kind: "PROJECT", title: `Project request: ${saved.name}`, link: "/projects/approvals?view=requests" });
+  await notify({ tenantId, userIds: (await projectAdminUserIds(tenantId)).filter((u) => u !== byUserId), kind: "PROJECT", title: `Project request: ${saved.name}`, link: "/projects/pipeline/requests" });
   return { ok: true, message: "Project request raised for approval.", id: saved.id };
 }
 
@@ -459,6 +459,6 @@ export async function rejectProjectRequest(tenantId: string, id: string, byUserI
   if (!req) return { ok: false, message: "Request not found." };
   if (!["NEW", "PENDING"].includes(req.status)) return { ok: false, message: `This request is already ${req.status.toLowerCase()}.` };
   await prisma.projectRequest.update({ where: { id: req.id }, data: { status: "REJECTED", decidedById: byUserId, decidedAt: new Date(), rejectReason: reason.trim() } });
-  await notify({ tenantId, userIds: [req.requestedById], kind: "PROJECT", title: `Project request ${req.name} was rejected`, body: reason.trim(), link: "/projects/list?view=past" });
+  await notify({ tenantId, userIds: [req.requestedById], kind: "PROJECT", title: `Project request ${req.name} was rejected`, body: reason.trim(), link: "/projects/pipeline/requests" });
   return { ok: true, message: "Request rejected." };
 }

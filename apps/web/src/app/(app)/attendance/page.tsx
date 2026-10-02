@@ -12,16 +12,17 @@ import {
 import { DecisionForm } from "../_time/leave-forms";
 import { AttCode, AttLegend, hours, istTime } from "../_time/attendance-view";
 import { Disclosure } from "../org/forms";
+import { AdjustTab } from "./_adjust";
 
 const P = PERMISSIONS;
 const n = (v: unknown) => Number(v ?? 0);
-const TABS = ["today", "register", "requests", "shifts", "policies", "assign", "process"] as const;
+const TABS = ["today", "register", "requests", "shifts", "policies", "assign", "process", "adjust"] as const;
 type Tab = (typeof TABS)[number];
 const LABEL: Record<Tab, string> = {
   today: "Today", register: "Monthly register", requests: "Requests", shifts: "Shifts",
-  policies: "Policies", assign: "Assignments", process: "Process",
+  policies: "Policies", assign: "Assignments", process: "Process", adjust: "Adjustments",
 };
-const ADMIN_TABS: Tab[] = ["shifts", "policies", "assign", "process"];
+const ADMIN_TABS: Tab[] = ["shifts", "policies", "assign", "process", "adjust"];
 
 export default async function AttendanceAdminPage({
   searchParams,
@@ -57,6 +58,7 @@ export default async function AttendanceAdminPage({
       {tab === "policies" ? <PoliciesTab tenantId={viewer.tenantId} edit={sp.edit} /> : null}
       {tab === "assign" ? <AssignTab tenantId={viewer.tenantId} /> : null}
       {tab === "process" ? <ProcessTab tenantId={viewer.tenantId} /> : null}
+      {tab === "adjust" ? <AdjustTab viewer={viewer} /> : null}
     </>
   );
 }

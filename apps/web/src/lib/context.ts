@@ -81,19 +81,19 @@ async function collectAllReports(rootId: string, tenantId: string): Promise<Set<
 export const getViewer = cache(async (): Promise<Viewer | null> => {
   const session = await readSession();
   if (!session) return null;
-  return loadViewer(session.userId, session.tenantId, session.sv ?? 0);
+  return buildViewer(session.userId, { tenantId: session.tenantId, sessionVersion: session.sv ?? 0 });
 });
 
 /**
- * Another user's authorisation context, in the same tenant — only so that
- * something they shared (a storyboard) can be computed at their scope. It is
- * never used to act as them.
+ * The same context for a user outside a request — a scheduled job acting
+ * as the person who set it up, so it sees exactly what they would. Null
+ * when the login is disabled or gone.
  */
-export async function viewerForUser(userId: string, tenantId: string): Promise<Viewer | null> {
-  return loadViewer(userId, tenantId);
+export async function viewerForUser(userId: string): Promise<Viewer | null> {
+  return buildViewer(userId, null);
 }
 
-async function loadViewer(userId: string, tenantId: string, sessionVersion?: number): Promise<Viewer | null> {
+async function buildViewer(userId: string, session: { tenantId: string; sessionVersion: number } | null): Promise<Viewer | null> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: {
@@ -112,12 +112,12 @@ async function loadViewer(userId: string, tenantId: string, sessionVersion?: num
     },
   });
 
-  if (!user || user.tenantId !== tenantId) return null;
+  if (!user || (session && user.tenantId !== session.tenantId)) return null;
   // A disabled login takes effect immediately, with no grace period.
   if (user.loginDisabled || user.isDeactivated) return null;
   // "Sign out everywhere" and password changes bump the version; older
   // sessions stop working on their next request.
-  if (sessionVersion !== undefined && sessionVersion !== user.sessionVersion) return null;
+  if (session && session.sessionVersion !== user.sessionVersion) return null;
 
   const grants: RoleGrant[] = user.roleAssignments.map((a) => ({
     roleId: a.roleId,

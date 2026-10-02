@@ -56,7 +56,8 @@ export default async function ExitsPage({ searchParams }: { searchParams: Promis
 
   return (
     <>
-      <PageHead title="Exits" subtitle="Resignations, clearance and full-and-final settlement" />
+      <PageHead title="Exits" subtitle="Resignations, clearance and full-and-final settlement"
+        actions={canAny(viewer, [P.EXIT_MANAGE, P.EXIT_APPROVE]) ? <Link className="btn" href="/exits/survey">Exit survey</Link> : undefined} />
       <div className="grid grid-4" style={{ marginBottom: 16 }}>
         <Stat label="Awaiting approval" value={String(count(["INITIATED", "PENDING_APPROVAL"]))} meta="resignations to decide" />
         <Stat label="Serving notice" value={String(exits.filter((e) => e.status === "APPROVED" && e.lastWorkingDay >= today).length)} meta="approved, still working" />
@@ -78,6 +79,7 @@ export default async function ExitsPage({ searchParams }: { searchParams: Promis
       <div className="tabs" style={{ marginTop: 16 }}>
         <Link href="/exits" className={`tab${active ? " active" : ""}`}>In progress</Link>
         <Link href="/exits?view=closed" className={`tab${!active ? " active" : ""}`}>Closed</Link>
+        {canAny(viewer, [P.FNF_MANAGE, P.FNF_APPROVE]) ? <Link href="/exits/settlements" className="tab">Settlements report</Link> : null}
       </div>
       <Card tight>
         {exits.length === 0 ? <Empty title={active ? "No exits in progress" : "No closed exits"} /> : (

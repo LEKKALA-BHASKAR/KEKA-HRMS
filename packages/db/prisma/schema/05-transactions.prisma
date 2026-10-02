@@ -510,6 +510,8 @@ model ExitRecord {
   discussionNote   String?
   isRehireEligible Boolean?
   attachmentUrl    String?
+  /// The EXIT survey sent to this person; null means the tenant's default.
+  exitSurveyId     String?
 
   initiatedBy String?
   approvedBy  String?
@@ -590,6 +592,12 @@ model FnfSettlement {
   statementUrl String?
   finalizedAt  DateTime?
   finalizedBy  String?
+
+  /// A voided settlement has had its effects reversed and can be redrafted.
+  /// These keep the most recent void even after a new draft replaces it.
+  voidedAt   DateTime?
+  voidedBy   String?
+  voidReason String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

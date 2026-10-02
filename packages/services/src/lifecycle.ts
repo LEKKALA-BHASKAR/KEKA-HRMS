@@ -6,6 +6,9 @@ import {
 import { fyStartYear } from "@keka/shared";
 import { loadStatutoryTables, ageAtFyEnd, slabsFor } from "./payroll-run";
 import { recomputeBalance, leaveYearStart, trueUpExitAccrual } from "./time";
+import type { FnfEffects } from "./fnf-math";
+import { planEmail } from "./core-hr-workflows-math";
+import { notificationEvent, OFF_BY_DEFAULT } from "./notification-events";
 
 /**
  * The employee lifecycle beyond the payroll month: journeys that follow from
@@ -37,6 +40,13 @@ export interface NotifyInput {
   email?: boolean;
   relatedType?: string;
   relatedId?: string;
+  /**
+   * Event key from NOTIFICATION_EVENTS. With one, the admin's notification
+   * setting for the event decides whether the email goes and to whom.
+   */
+  event?: string;
+  /** The employee(s) the event is about, so "employee" and "manager" recipients can be resolved. */
+  employeeIds?: Array<string | null | undefined>;
 }
 
 /**
@@ -54,16 +64,48 @@ export async function notify(input: NotifyInput, tx: Prisma.TransactionClient = 
     })),
   });
   if (input.email) {
-    const users = await tx.user.findMany({ where: { id: { in: ids } }, select: { email: true } });
-    await tx.emailOutbox.createMany({
-      data: users.map((u) => ({
-        tenantId: input.tenantId, toAddress: u.email, subject: input.title,
-        textBody: `${input.body ?? input.title}${input.link ? `\n\nOpen: ${input.link}` : ""}`,
-        relatedType: input.relatedType ?? null, relatedId: input.relatedId ?? null,
-      })),
-    });
+    const addresses = await emailAddressesFor(input, ids, tx);
+    if (addresses.length) {
+      await tx.emailOutbox.createMany({
+        data: addresses.map((toAddress) => ({
+          tenantId: input.tenantId, toAddress, subject: input.title,
+          textBody: `${input.body ?? input.title}${input.link ? `\n\nOpen: ${input.link}` : ""}`,
+          relatedType: input.relatedType ?? null, relatedId: input.relatedId ?? null,
+        })),
+      });
+    }
   }
   return ids.length;
+}
+
+/**
+ * Who an event's email goes to: the users the caller chose, unless the
+ * admin has changed the event under Settings > Notifications (switched it
+ * off, re-targeted it to employee / manager / HR, or copied an address).
+ */
+async function emailAddressesFor(input: NotifyInput, callSite: string[], tx: Prisma.TransactionClient): Promise<string[]> {
+  const event = input.event ? notificationEvent(input.event) : null;
+  const setting = event
+    ? await tx.notificationSetting.findUnique({ where: { tenantId_event: { tenantId: input.tenantId, event: event.key } } })
+    : null;
+  if (event && !setting && OFF_BY_DEFAULT.has(event.key)) return [];
+  const plan = event ? planEmail(setting, event.defaults, event.configurable) : planEmail(null, [], false);
+  if (!plan.send) return [];
+  let userIds = callSite;
+  if (!plan.useCallSite) {
+    const subjects = (input.employeeIds ?? []).filter((e): e is string => !!e);
+    const emps = subjects.length
+      ? await tx.employee.findMany({ where: { id: { in: subjects }, tenantId: input.tenantId }, select: { userId: true, reportingManager: { select: { userId: true } } } })
+      : [];
+    userIds = [];
+    if (plan.groups.includes("EMPLOYEE")) userIds.push(...emps.map((e) => e.userId).filter((u): u is string => !!u));
+    if (plan.groups.includes("MANAGER")) userIds.push(...emps.map((e) => e.reportingManager?.userId).filter((u): u is string => !!u));
+    if (plan.groups.includes("HR")) userIds.push(...(await usersWithPermission(input.tenantId, event?.hrPermission ?? "employee.record.update")));
+  }
+  const users = userIds.length
+    ? await tx.user.findMany({ where: { id: { in: [...new Set(userIds)] }, tenantId: input.tenantId }, select: { email: true } })
+    : [];
+  return [...new Set([...users.map((u) => u.email.toLowerCase()), ...plan.customEmails])];
 }
 
 /** The login behind an employee, if they have one. */
@@ -86,7 +128,8 @@ export async function usersWithPermission(tenantId: string, permission: string):
 }
 
 export interface OutboxTransport {
-  send(mail: { to: string; subject: string; text: string; html?: string | null }): Promise<void>;
+  /** attachmentFileIds are StoredFile ids; the transport reads and attaches them. */
+  send(mail: { to: string; subject: string; text: string; html?: string | null; attachmentFileIds?: string[] }): Promise<void>;
 }
 
 /**
@@ -101,7 +144,7 @@ export async function deliverOutbox(transport: OutboxTransport, opts: { limit?: 
   let sent = 0, failed = 0;
   for (const m of batch) {
     try {
-      await transport.send({ to: m.toAddress, subject: m.subject, text: m.textBody, html: m.htmlBody });
+      await transport.send({ to: m.toAddress, subject: m.subject, text: m.textBody, html: m.htmlBody, attachmentFileIds: m.attachmentFileIds });
       await prisma.emailOutbox.update({ where: { id: m.id }, data: { status: "SENT", sentAt: new Date(), attempts: { increment: 1 }, lastError: null } });
       sent++;
     } catch (err) {
@@ -392,6 +435,7 @@ export async function initiateExit(input: InitiateExitInput): Promise<{ ok: bool
     kind: "EXIT", title: `${emp.displayName}: ${input.type.toLowerCase().replace(/_/g, " ")} ${selfInitiated ? "submitted" : "recorded"}`,
     body: `Last working day ${lwd.toISOString().slice(0, 10)}.${shortfall ? ` ${shortfall} day(s) short of the ${notice.days}-day notice period.` : ""}`,
     link: `/exits/${exit.id}`, email: true, relatedType: "ExitRecord", relatedId: exit.id,
+    event: "EXIT_SUBMITTED", employeeIds: [input.employeeId],
   });
 
   return { ok: true, message: selfInitiated ? "Resignation submitted for approval." : "Exit recorded.", exitId: exit.id, lastWorkingDay: lwd, shortfallDays: shortfall };
@@ -417,7 +461,7 @@ export async function decideExit(opts: {
     ]);
     await trueUpExitAccrual(exit.employeeId);
     await startJourney({ employeeId: exit.employeeId, trigger: "EXIT", anchorDate: lwd, sourceType: "ExitRecord", sourceId: exit.id, createdBy: opts.byUserId });
-    await notify({ tenantId: exit.employee.tenantId, userIds: [exit.employee.userId], kind: "EXIT", title: "Your resignation was accepted", body: `Your last working day is ${lwd.toISOString().slice(0, 10)}.`, link: "/me/exit", email: true });
+    await notify({ tenantId: exit.employee.tenantId, userIds: [exit.employee.userId], kind: "EXIT", title: "Your resignation was accepted", body: `Your last working day is ${lwd.toISOString().slice(0, 10)}.`, link: "/me/exit", email: true, event: "EXIT_ACCEPTED", employeeIds: [exit.employeeId] });
     return { ok: true, message: `Approved. Last working day ${lwd.toISOString().slice(0, 10)}; the exit checklist has started.` };
   }
   await prisma.exitRecord.update({
@@ -662,7 +706,7 @@ export async function computeSettlement(employeeId: string, opts: { waiveNoticeR
 const sumOf = (lines: SettlementLine[], f: (l: SettlementLine) => boolean) => r2(lines.filter(f).reduce((s, l) => s + l.amount, 0));
 
 /** Compute and save as a draft for review. Refuses once finalised. */
-export async function draftSettlement(employeeId: string, opts: { waiveNoticeRecovery?: boolean } = {}): Promise<{ ok: boolean; message: string; settlementId?: string }> {
+export async function draftSettlement(employeeId: string, opts: { waiveNoticeRecovery?: boolean; settlementYear?: number; settlementMonth?: number } = {}): Promise<{ ok: boolean; message: string; settlementId?: string }> {
   const existing = await prisma.fnfSettlement.findUnique({ where: { employeeId } });
   if (existing && ["FINALIZED", "PAID", "ALREADY_PAID"].includes(existing.status)) {
     return { ok: false, message: "The settlement is already finalised." };
@@ -671,13 +715,22 @@ export async function draftSettlement(employeeId: string, opts: { waiveNoticeRec
   if (!exit || !["APPROVED", "IN_CLEARANCE", "SETTLED"].includes(exit.status)) {
     return { ok: false, message: "The exit must be approved before a settlement can be drafted." };
   }
+  // The month it is booked in: as chosen, else as chosen before, else the
+  // last working day's month.
+  const { validateSettlementMonth } = await import("./fnf-math");
+  const keep = existing?.status !== "VOIDED" && existing?.settlementYear && existing?.settlementMonth ? { year: existing.settlementYear, month: existing.settlementMonth } : null;
+  const period = opts.settlementYear && opts.settlementMonth ? { year: opts.settlementYear, month: opts.settlementMonth }
+    : keep && !validateSettlementMonth(exit.lastWorkingDay, keep.year, keep.month) ? keep
+    : { year: exit.lastWorkingDay.getUTCFullYear(), month: exit.lastWorkingDay.getUTCMonth() + 1 };
+  const bad = validateSettlementMonth(exit.lastWorkingDay, period.year, period.month);
+  if (bad) return { ok: false, message: bad };
   // Leave earned only to the last working day is what gets encashed.
   await trueUpExitAccrual(employeeId);
   const c = await computeSettlement(employeeId, opts);
   const L = c.lines;
   const data = {
     status: "IN_REVIEW" as const,
-    settlementYear: exit.lastWorkingDay.getUTCFullYear(), settlementMonth: exit.lastWorkingDay.getUTCMonth() + 1,
+    settlementYear: period.year, settlementMonth: period.month,
     leaveEncashment: sumOf(L, (l) => l.group === "Leave"),
     gratuity: sumOf(L, (l) => l.label === "Gratuity"),
     noticeBuyoutPay: sumOf(L, (l) => l.label === "Pay in lieu of notice"),
@@ -730,10 +783,22 @@ export async function finalizeSettlement(employeeId: string, byUserId: string, t
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.fnfSettlement.update({ where: { id: s.id }, data: { status: "FINALIZED", finalizedAt: new Date(), finalizedBy: byUserId } });
+    // Record exactly what finalising changes, so a void can put it back.
+    const open = await tx.loanInstallment.findMany({ where: { status: "SCHEDULED", loan: { employeeId, status: { in: ["DISBURSED", "ACTIVE"] } } } });
+    const effects: FnfEffects = {
+      installments: open.map((i) => ({ id: i.id, interestPart: Number(i.interestPart), totalAmount: Number(i.totalAmount) })),
+      loans: (await tx.loan.findMany({ where: { employeeId, status: { in: ["DISBURSED", "ACTIVE"] } }, select: { id: true, status: true } })).map((l) => ({ id: l.id, status: l.status })),
+      assetAssignmentIds: (await tx.assetAssignment.findMany({ where: { employeeId, returnedOn: { not: null }, damageCharge: { gt: 0 }, chargeRecovered: false }, select: { id: true } })).map((a) => a.id),
+      bonusIds: (await tx.employeeBonus.findMany({ where: { employeeId, isProcessed: false, payAction: "PAY" }, select: { id: true } })).map((b) => b.id),
+      claimIds: (await tx.componentClaim.findMany({ where: { employeeId, status: "APPROVED" }, select: { id: true } })).map((c) => c.id),
+      employeeStatus: s.employee.status, exitStatus: exit.status,
+    };
+    await tx.fnfSettlement.update({
+      where: { id: s.id },
+      data: { status: "FINALIZED", finalizedAt: new Date(), finalizedBy: byUserId, breakdown: { ...((s.breakdown ?? {}) as object), effects } as unknown as Prisma.InputJsonValue },
+    });
     // Recovered in the settlement: the rest of each schedule is prepaid,
     // principal only, as the settlement line was computed.
-    const open = await tx.loanInstallment.findMany({ where: { status: "SCHEDULED", loan: { employeeId, status: { in: ["DISBURSED", "ACTIVE"] } } } });
     for (const i of open) {
       await tx.loanInstallment.update({ where: { id: i.id }, data: { status: "PREPAID", interestPart: 0, totalAmount: i.principalPart, deductedAt: new Date() } });
     }

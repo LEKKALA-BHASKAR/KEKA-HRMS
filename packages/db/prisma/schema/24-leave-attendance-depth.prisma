@@ -1,0 +1,27 @@
+// ============================================================================
+//  KEKA — Leave and attendance policy depth
+// ============================================================================
+//  Optional (restricted) holidays picked by employees. Field additions for the
+//  same work: approval chains on LeavePlan/LeaveType/LeaveRequest, usage limits
+//  (already on LeaveType), optional-holiday quota on HolidayCalendar, shift
+//  allowance on Shift/ShiftAllowanceEntry, admin day edits on AttendanceRecord,
+//  LOP import source on LopAdjustment (06-time) and comp-off/overtime policy
+//  flags on AttendancePolicy (12-time-ops).
+// ============================================================================
+
+/// An optional holiday an employee has taken. Counts as a holiday for them
+/// in attendance; the calendar's optionalHolidayQuota caps how many.
+model OptionalHolidaySelection {
+  id         String   @id @default(cuid())
+  tenantId   String
+  employeeId String
+  holidayId  String
+  holiday    Holiday  @relation(fields: [holidayId], references: [id], onDelete: Cascade)
+  /// Who picked it, when not the employee (user id).
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  @@unique([employeeId, holidayId])
+  @@index([tenantId, employeeId])
+  @@map("optional_holiday_selections")
+}

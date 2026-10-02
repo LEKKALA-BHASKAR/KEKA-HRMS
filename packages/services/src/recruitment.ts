@@ -1,6 +1,7 @@
-import { prisma } from "@keka/db";
-import { renderLetter } from "@keka/documents";
+import { prisma, Prisma } from "@keka/db";
 import { notify, usersWithPermission } from "./lifecycle";
+import { extendOfferFromTemplate, recordResponseOnBehalf } from "./offers";
+import type { BreakupRow } from "./offers-math";
 
 /**
  * The hiring pipeline: requisition → job → application → stages →
@@ -154,7 +155,7 @@ export async function scheduleInterview(opts: {
   await notify({
     tenantId: app.tenantId, userIds: panelUsers.map((p) => p.userId), kind: "HIRING",
     title: `Interview: ${app.candidate.firstName} ${app.candidate.lastName} for ${app.job.title}`,
-    body: `${opts.scheduledAt.toISOString().slice(0, 16).replace("T", " ")} UTC, ${opts.durationMinutes} min, ${opts.mode.toLowerCase()}`, link: `/hiring/applications/${app.id}`, email: true,
+    body: `${opts.scheduledAt.toISOString().slice(0, 16).replace("T", " ")} UTC, ${opts.durationMinutes} min, ${opts.mode.toLowerCase()}`, link: `/hiring/applications/${app.id}`, email: true, event: "INTERVIEW_SCHEDULED",
   });
   return { ok: true, message: `Scheduled round ${interview.round}; the panel has been invited.`, interviewId: interview.id };
 }
@@ -168,6 +169,10 @@ export async function scheduleInterview(opts: {
  */
 export async function draftOffer(opts: {
   applicationId: string; annualCtc: number; proposedJoiningDate: Date; expiresOn: Date; reportingManagerId?: string | null; jobTitleId?: string | null; joiningBonus?: number | null;
+  /** The offer letter template; empty takes the company's first offer template. */
+  templateId?: string | null;
+  /** Breakup from this salary structure, or typed by the recruiter; neither picks the structure for the CTC. */
+  salaryStructureId?: string | null; breakup?: BreakupRow[] | null;
 }): Promise<Result> {
   const app = await prisma.application.findUnique({ where: { id: opts.applicationId }, include: { job: true, offer: true } });
   if (!app) return { ok: false, message: "Application not found." };
@@ -175,6 +180,8 @@ export async function draftOffer(opts: {
   if (app.offer && !["DECLINED", "WITHDRAWN", "EXPIRED"].includes(app.offer.status)) return { ok: false, message: "There is already an offer in progress." };
   if (opts.expiresOn <= new Date()) return { ok: false, message: "The offer must expire in the future." };
   if (opts.proposedJoiningDate < opts.expiresOn) return { ok: false, message: "The joining date should be after the offer expires." };
+  if (opts.templateId && !(await prisma.documentTemplate.count({ where: { id: opts.templateId, tenantId: app.tenantId, category: "OFFER", isArchived: false } }))) return { ok: false, message: "Pick an offer letter template." };
+  if (opts.salaryStructureId && !(await prisma.salaryStructure.count({ where: { id: opts.salaryStructureId, payGroup: { tenantId: app.tenantId }, isActive: true } }))) return { ok: false, message: "Pick an active salary structure." };
   const max = app.job.maxAnnualCtc === null ? null : Number(app.job.maxAnnualCtc);
   const needsApproval = max !== null && opts.annualCtc > max;
   const data = {
@@ -182,6 +189,9 @@ export async function draftOffer(opts: {
     annualCtc: opts.annualCtc, proposedJoiningDate: opts.proposedJoiningDate, expiresOn: opts.expiresOn,
     reportingManagerId: opts.reportingManagerId ?? app.job.hiringManagerId, jobTitleId: opts.jobTitleId ?? null, joiningBonus: opts.joiningBonus ?? null,
     approvedAt: needsApproval ? null : new Date(), declineReason: null, respondedAt: null, extendedAt: null,
+    templateId: opts.templateId ?? null, salaryStructureId: opts.breakup?.length ? null : opts.salaryStructureId ?? null,
+    salaryBreakup: opts.breakup?.length ? (opts.breakup as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
+    breakupSource: opts.breakup?.length ? "MANUAL" : "STRUCTURE", renderedBody: null, contentHash: null, letterUrl: null,
   };
   if (app.offer) await prisma.offer.update({ where: { id: app.offer.id }, data });
   else await prisma.offer.create({ data: { ...data, applicationId: app.id } });
@@ -198,64 +208,20 @@ export async function approveOffer(applicationId: string, byUserId: string): Pro
   return { ok: true, message: "Approved above budget." };
 }
 
-/** Send the offer: a letter PDF, an email, and the application marked as offered. */
-export async function extendOffer(applicationId: string, saveLetter: (pdf: Buffer, filename: string) => Promise<string>): Promise<Result> {
-  const app = await prisma.application.findUnique({
-    where: { id: applicationId },
-    include: { offer: true, candidate: true, job: { include: { requisition: true } } },
-  });
-  if (!app?.offer) return { ok: false, message: "Draft an offer first." };
-  if (app.offer.status !== "APPROVED") return { ok: false, message: app.offer.status === "PENDING_APPROVAL" ? "The offer is waiting for approval." : "This offer cannot be extended." };
-  const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: app.tenantId } });
-  const [location, manager] = await Promise.all([
-    app.job.locationId ? prisma.location.findUnique({ where: { id: app.job.locationId } }) : null,
-    app.offer.reportingManagerId ? prisma.employee.findUnique({ where: { id: app.offer.reportingManagerId }, select: { displayName: true, jobTitleName: true } }) : null,
-  ]);
-  const fmt = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
-  const pdf = renderLetter({
-    company: { name: tenant.name, address: location?.name ?? null },
-    date: fmt(new Date()), to: [`${app.candidate.firstName} ${app.candidate.lastName}`, app.candidate.email],
-    subject: `Offer of employment — ${app.job.title}`,
-    paragraphs: [
-      `Dear ${app.candidate.firstName},`,
-      `We are delighted to offer you the position of ${app.job.title} at ${tenant.name}. The principal terms of the offer are set out below; the detailed terms will be in your appointment letter on joining.`,
-      `This offer is valid until ${fmt(app.offer.expiresOn!)}. Please confirm your acceptance by replying to this email before then.`,
-    ],
-    table: [
-      ["Position", app.job.title],
-      ["Annual cost to company", `Rs. ${Number(app.offer.annualCtc).toLocaleString("en-IN")}`],
-      ...(app.offer.joiningBonus ? [["Joining bonus", `Rs. ${Number(app.offer.joiningBonus).toLocaleString("en-IN")}`] as [string, string]] : []),
-      ["Date of joining", fmt(app.offer.proposedJoiningDate!)],
-      ["Location", location?.name ?? "As agreed"],
-      ["Reporting to", manager ? `${manager.displayName}${manager.jobTitleName ? `, ${manager.jobTitleName}` : ""}` : "To be confirmed"],
-    ],
-    signatory: { name: "Talent Acquisition", title: tenant.name },
-    footer: "This offer is subject to satisfactory background verification and the documents listed in your onboarding checklist.",
-  });
-  const url = await saveLetter(pdf, `Offer-${app.candidate.lastName}-${app.job.code ?? app.jobId}.pdf`);
-  await prisma.$transaction([
-    prisma.offer.update({ where: { id: app.offer.id }, data: { status: "EXTENDED", extendedAt: new Date(), letterUrl: url } }),
-    prisma.application.update({ where: { id: app.id }, data: { status: "OFFER_EXTENDED" } }),
-    prisma.emailOutbox.create({
-      data: {
-        tenantId: app.tenantId, toAddress: app.candidate.email, subject: `Your offer from ${tenant.name}`,
-        textBody: `Dear ${app.candidate.firstName},\n\nCongratulations — please find your offer for the ${app.job.title} role attached. It is valid until ${fmt(app.offer.expiresOn!)}.\n\nTalent Acquisition, ${tenant.name}`,
-        relatedType: "Offer", relatedId: app.offer.id,
-      },
-    }),
-  ]);
-  return { ok: true, message: "Offer extended; the letter is attached to the email." };
+/**
+ * Send the offer: the letter from the offer template (see offers.ts), and the
+ * candidate's link to accept or decline it.
+ */
+export async function extendOffer(applicationId: string, saveLetter: (pdf: Buffer, filename: string) => Promise<string>, opts: { byUserId?: string | null; baseUrl?: string } = {}): Promise<Result & { url?: string }> {
+  return extendOfferFromTemplate(applicationId, saveLetter, opts);
 }
 
-export async function recordOfferResponse(applicationId: string, accepted: boolean, reason?: string | null): Promise<Result> {
+/** The recruiter records the candidate's answer given by phone or email. */
+export async function recordOfferResponse(applicationId: string, accepted: boolean, reason?: string | null, byUserId?: string | null): Promise<Result> {
   const offer = await prisma.offer.findUnique({ where: { applicationId } });
   if (!offer || offer.status !== "EXTENDED") return { ok: false, message: "No extended offer to respond to." };
   if (offer.expiresOn && offer.expiresOn < new Date(Date.now() - DAY) && accepted) return { ok: false, message: "This offer has expired. Extend a fresh one." };
-  await prisma.$transaction([
-    prisma.offer.update({ where: { id: offer.id }, data: { status: accepted ? "ACCEPTED" : "DECLINED", respondedAt: new Date(), declineReason: accepted ? null : reason ?? null } }),
-    prisma.application.update({ where: { id: applicationId }, data: { status: accepted ? "OFFER_ACCEPTED" : "OFFER_DECLINED" } }),
-  ]);
-  return { ok: true, message: accepted ? "Accepted. Convert the candidate to an employee when the paperwork is in." : "Declined." };
+  return recordResponseOnBehalf(applicationId, accepted, reason ?? null, byUserId ?? null);
 }
 
 /** After the employee record exists: link it, close the application, fill the job. */

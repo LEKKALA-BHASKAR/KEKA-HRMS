@@ -15,6 +15,9 @@ enum SurveyKind {
   ENPS
   /// One question, results visible to everyone who voted.
   POLL
+  /// Answered by a leaving employee on /me/exit; never listed with the
+  /// engagement surveys. Responses carry the exit they belong to.
+  EXIT
 }
 
 enum SurveyStatus {
@@ -112,11 +115,14 @@ model SurveyResponse {
   /// The respondent's department when they answered, for breakdowns that
   /// respect the minimum group size.
   departmentId String?
+  /// EXIT surveys: the ExitRecord this response is for (plain column).
+  exitRecordId String?
   submittedAt  DateTime  @default(now())
 
   answers SurveyAnswer[]
 
   @@index([surveyId])
+  @@index([exitRecordId])
   @@map("survey_responses")
 }
 

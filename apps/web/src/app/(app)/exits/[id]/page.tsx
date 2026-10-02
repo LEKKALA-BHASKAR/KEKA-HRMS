@@ -3,13 +3,14 @@ import { notFound } from "next/navigation";
 import { prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { formatDate, formatINR } from "@keka/shared";
-import { computeSettlement, noticeDaysFor, type SettlementLine } from "@keka/services";
+import { computeSettlement, noticeDaysFor, settlementMonthOptions, periodLabel, fnfAdjustments, adjustmentTargets, adjustmentsNet, exitSurveyResponse, exitSurveyFor, type SettlementLine } from "@keka/services";
 import { requireViewer, can, canAny } from "@/lib/context";
 import { PageHead, Card, Badge, Callout, KeyValue, Person } from "@/components/ui";
 import {
   ExitDecisionForm, WithdrawExitButton, DraftSettlementForm, FinalizeSettlementButton,
 } from "../../_lifecycle/forms";
 import { JourneyChecklist } from "../../_lifecycle/journey-view";
+import { VoidSettlementForm, EmailStatementForm, AddAdjustmentForm, AttachAdjustment, RemoveAdjustment } from "./fnf-forms";
 
 const P = PERMISSIONS;
 const DAY = 86_400_000;
@@ -52,6 +53,19 @@ export default async function ExitDetailPage({ params }: { params: Promise<{ id:
   const rec = lines.filter((l) => l.direction === "RECOVER");
   const net = s ? Number(s.netSettlement) : preview?.net ?? 0;
   const lwdPassed = exit.lastWorkingDay.getTime() <= Date.now();
+  const settled = !!s && ["FINALIZED", "PAID", "ALREADY_PAID"].includes(s.status);
+  const months = settlementMonthOptions(exit.lastWorkingDay).map((m) => ({ value: m.value, label: m.label }));
+  const period = s?.settlementYear && s.settlementMonth ? `${s.settlementYear}-${String(s.settlementMonth).padStart(2, "0")}` : undefined;
+  const adjustments = s && may(P.FNF_MANAGE) ? await fnfAdjustments(s.id) : [];
+  const openRuns = settled && may(P.FNF_MANAGE) ? await adjustmentTargets(e.id, viewer.tenantId) : [];
+  const targets = [
+    ...openRuns.map((r) => ({ value: `run:${r.id}`, label: r.label })),
+    ...months.map((m) => ({ value: `month:${m.value}`, label: `Hold for ${m.label} (pay later in an off-cycle payroll)` })),
+  ];
+  // The exit survey answers, for whoever manages or approves this exit.
+  const seesSurvey = may(P.EXIT_MANAGE) || may(P.EXIT_APPROVE);
+  const surveyResponse = seesSurvey ? await exitSurveyResponse(exit.id) : null;
+  const surveyAsked = seesSurvey && !surveyResponse ? await exitSurveyFor(exit.id) : null;
 
   return (
     <>
@@ -75,9 +89,32 @@ export default async function ExitDetailPage({ params }: { params: Promise<{ id:
             </Card>
           ) : null}
 
+          {surveyResponse ? (
+            <Card title="Exit survey" description={`Answered ${formatDate(surveyResponse.submittedAt)}`} action={<Link className="btn sm ghost" href="/exits/survey">All responses</Link>}>
+              <div className="stack gap-3">
+                {surveyResponse.survey.questions.map((q) => {
+                  const a = surveyResponse.answers.find((x) => x.questionId === q.id);
+                  const value = !a ? null
+                    : q.type === "RATING" ? `${a.score} / 5`
+                    : q.type === "NPS" ? `${a.score} / 10`
+                    : q.type === "SINGLE_CHOICE" || q.type === "MULTI_CHOICE" ? a.choices.map((c) => q.options[c]).filter(Boolean).join(", ")
+                    : a.text;
+                  return (
+                    <div key={q.id}>
+                      <div className="text-xs subtle">{q.prompt}</div>
+                      <div className="text-sm">{value || <span className="subtle">No answer</span>}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          ) : surveyAsked && decided ? (
+            <Card title="Exit survey"><div className="text-sm muted">{e.displayName} has not completed the exit survey yet. It is on their My exit page.</div></Card>
+          ) : null}
+
           {decided && (may(P.FNF_MANAGE) || may(P.FNF_APPROVE)) ? (
             <Card title="Full and final settlement"
-              description={s ? `${s.status.replace(/_/g, " ").toLowerCase()}${breakdown?.computedAt ? ` · computed ${formatDate(new Date(breakdown.computedAt))}` : ""}` : "Preview — not saved until you compute it"}
+              description={s ? `${s.status.replace(/_/g, " ").toLowerCase()}${s.settlementYear && s.settlementMonth ? ` · booked in ${periodLabel(s.settlementYear, s.settlementMonth)}` : ""}${breakdown?.computedAt ? ` · computed ${formatDate(new Date(breakdown.computedAt))}` : ""}` : "Preview — not saved until you compute it"}
               action={<span className={`strong ${net >= 0 ? "pos" : "neg"}`}>{net >= 0 ? "Payable " : "Recoverable "}{formatINR(Math.abs(net))}</span>}>
               {lines.length === 0 ? <div className="text-sm muted">Nothing payable or recoverable beyond the final salary.</div> : (
                 <div className="grid grid-2" style={{ alignItems: "start" }}>
@@ -103,16 +140,62 @@ export default async function ExitDetailPage({ params }: { params: Promise<{ id:
                 </ul>
               ) : null}
               <div className="divider" />
-              {s && ["FINALIZED", "PAID", "ALREADY_PAID"].includes(s.status) ? (
-                <Callout tone="success" title="Finalised">Finalised {s.finalizedAt ? formatDate(s.finalizedAt) : ""}. Recoveries are settled and access is revoked.</Callout>
+              {s?.status === "VOIDED" && s.voidedAt ? (
+                <div style={{ marginBottom: 12 }}><Callout tone="danger" title="Voided">Voided {formatDate(s.voidedAt)}: {s.voidReason}. Its effects were reversed; recompute and finalise a fresh settlement.</Callout></div>
+              ) : null}
+              {settled && s ? (
+                <div className="stack gap-3">
+                  <Callout tone="success" title="Finalised">Finalised {s.finalizedAt ? formatDate(s.finalizedAt) : ""}. Recoveries are settled and access is revoked.</Callout>
+                  <div className="row gap-3" style={{ justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+                    <div className="row gap-2">
+                      <a className="btn" href={`/exits/${exit.id}/statement`}>Download statement (PDF)</a>
+                      {s.statementUrl ? <a className="btn ghost" href={s.statementUrl}>Last emailed copy</a> : null}
+                    </div>
+                    {may(P.FNF_MANAGE) ? <EmailStatementForm employeeId={e.id} email={e.personalEmail ?? e.workEmail ?? null} /> : null}
+                  </div>
+                  {may(P.FNF_APPROVE) && e.id !== viewer.employee?.id ? <VoidSettlementForm employeeId={e.id} /> : null}
+                </div>
               ) : (
                 <div className="row gap-3" style={{ justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
-                  {may(P.FNF_MANAGE) ? <DraftSettlementForm employeeId={e.id} drafted={!!s} waived={!!breakdown?.waiveNoticeRecovery} /> : <span />}
+                  {may(P.FNF_MANAGE) ? <DraftSettlementForm employeeId={e.id} drafted={!!s} waived={!!breakdown?.waiveNoticeRecovery} months={months} period={period} /> : <span />}
+                  {s && s.status !== "VOIDED" ? <a className="btn ghost" href={`/exits/${exit.id}/statement`}>Draft statement (PDF)</a> : null}
                   {s && may(P.FNF_APPROVE) && e.id !== viewer.employee?.id ? (
                     lwdPassed ? <FinalizeSettlementButton employeeId={e.id} /> : <span className="text-xs muted">Can be finalised after {formatDate(exit.lastWorkingDay)}</span>
                   ) : null}
                 </div>
               )}
+            </Card>
+          ) : null}
+
+          {s && may(P.FNF_MANAGE) && (settled || adjustments.length > 0) ? (
+            <Card tight title="Adjustments after settlement"
+              description="A payment or recovery found after the settlement is final. It is paid through a payroll the employee is in — usually an off-cycle payroll against their last month."
+              action={adjustments.length ? <span className={`strong ${adjustmentsNet(adjustments) >= 0 ? "pos" : "neg"}`}>Net {formatINR(adjustmentsNet(adjustments))}</span> : undefined}>
+              {adjustments.length ? (
+                <div className="table-wrap">
+                  <table className="data">
+                    <thead><tr><th>Adjustment</th><th className="num">Amount</th><th>Status</th><th /></tr></thead>
+                    <tbody>
+                      {adjustments.map((a) => (
+                        <tr key={a.id} style={{ verticalAlign: "top" }}>
+                          <td className="strong">{a.name}<div className="text-xs subtle">{a.type === "PAYMENT" ? "Pay" : "Recover"}{a.taxable ? " · taxable" : ""}{a.comment ? ` · ${a.comment}` : ""}</div></td>
+                          <td className={`num ${a.type === "PAYMENT" ? "" : "neg"}`}>{a.type === "PAYMENT" ? "" : "−"}{formatINR(a.amount)}</td>
+                          <td className="text-sm">{a.isProcessed ? <Badge tone="success">paid</Badge> : <Badge tone="warning">pending</Badge>}<div className="text-xs muted" style={{ marginTop: 4 }}>{a.status}</div></td>
+                          <td className="right">
+                            {!a.isProcessed ? (
+                              <div className="stack gap-2" style={{ alignItems: "flex-end" }}>
+                                <AttachAdjustment adjustmentId={a.id} runs={openRuns.filter((r) => r.id !== a.runId).map((r) => ({ value: r.id, label: r.label }))} />
+                                <RemoveAdjustment adjustmentId={a.id} />
+                              </div>
+                            ) : a.runId ? <Link className="btn sm ghost" href={`/payroll/runs/${a.runId}`}>Open payroll</Link> : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+              {settled ? <div style={{ padding: 16, borderTop: adjustments.length ? "1px solid var(--border)" : undefined }}><AddAdjustmentForm employeeId={e.id} targets={targets} /></div> : null}
             </Card>
           ) : null}
         </div>

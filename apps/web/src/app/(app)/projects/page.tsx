@@ -2,12 +2,13 @@ import Link from "next/link";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatDate, formatINR } from "@keka/shared";
-import { weekStart } from "@keka/services";
+import { weekStart, getTimesheetPolicy } from "@keka/services";
 import { requireViewer, can, canAny, type Viewer } from "@/lib/context";
 import { timesheetsToApproveWhere } from "@/lib/scope";
 import { PageHead, Card, Badge, Empty, Person, Stat, Progress } from "@/components/ui";
 import { Disclosure } from "../org/forms";
 import { TimesheetGrid, TimesheetDecision, TaskStatus, ProjectForm, ClientForm, InvoiceOps, type SheetRow } from "./forms";
+import { firstSettingsHref } from "./billing/nav";
 
 const P = PERMISSIONS;
 const DAY = 86_400_000;
@@ -15,7 +16,7 @@ const iso = (d: Date) => d.toISOString().slice(0, 10);
 const label = (s: string) => s.replace(/_/g, " ").toLowerCase();
 const HEALTH: Record<string, "success" | "warning" | "danger"> = { GREEN: "success", AMBER: "warning", RED: "danger" };
 const SHEET: Record<string, "success" | "warning" | "danger" | "info" | "neutral"> = { DRAFT: "neutral", SUBMITTED: "warning", APPROVED: "success", REJECTED: "danger", LOCKED: "info" };
-const INVOICE: Record<string, "success" | "warning" | "danger" | "info" | "neutral"> = { DRAFT: "neutral", SENT: "info", PARTIALLY_PAID: "warning", PAID: "success", OVERDUE: "danger", CANCELLED: "neutral" };
+const INVOICE: Record<string, "success" | "warning" | "danger" | "info" | "neutral"> = { DRAFT: "neutral", SENT: "info", PARTIALLY_PAID: "warning", PAID: "success", OVERDUE: "danger", CANCELLED: "neutral", WRITTEN_OFF: "danger" };
 
 /** Projects a viewer can open: all of them with PROJECT_VIEW, else the ones they manage or work on. */
 function visibleProjects(viewer: Viewer): Record<string, unknown> {
@@ -32,10 +33,17 @@ export default async function ProjectsPage({ searchParams }: { searchParams: Pro
   const tabs = [...(viewer.employee ? ["time"] : []), ...(approver ? ["approvals"] : []), "projects", ...(billing ? ["billing"] : [])];
   const sp = await searchParams;
   const tab = tabs.includes(sp.tab ?? "") ? sp.tab! : tabs[0];
+  const settings = firstSettingsHref(viewer);
+  const links = [
+    canAny(viewer, [P.OPPORTUNITY_VIEW, P.OPPORTUNITY_MANAGE]) && <Link key="pipe" className="btn" href="/projects/pipeline">Pipeline</Link>,
+    canAny(viewer, [P.RESOURCE_VIEW, P.RESOURCE_MANAGE]) && <Link key="res" className="btn" href="/projects/resources">Resource planner</Link>,
+    can(viewer, P.INVOICE_MANAGE) && <Link key="bill" className="btn" href="/projects/billing">Billing</Link>,
+    settings && <Link key="set" className="btn" href={settings}>Settings</Link>,
+  ].filter(Boolean);
   return (
     <>
       <PageHead title="Projects & time" subtitle="Log time against the projects you are on; approved billable time becomes the client's invoice"
-        actions={canAny(viewer, [P.RESOURCE_VIEW, P.RESOURCE_MANAGE]) ? <Link className="btn" href="/projects/resources">Resource planner</Link> : undefined} />
+        actions={links.length ? <>{links}</> : undefined} />
       <div className="tabs">
         {tabs.map((t) => <Link key={t} href={`/projects?tab=${t}`} className={`tab${tab === t ? " active" : ""}`}>{{ time: "My time", approvals: "Approvals", projects: "Projects", billing: "Clients & invoices" }[t]}</Link>)}
       </div>
@@ -136,6 +144,7 @@ async function Approvals({ viewer }: { viewer: Viewer }) {
     include: { employee: { select: { displayName: true, employeeNumber: true } }, entries: { include: { project: { select: { name: true } }, task: { select: { title: true } } }, orderBy: { date: "asc" } } },
     orderBy: { submittedAt: "asc" },
   });
+  const policy = await getTimesheetPolicy(viewer.tenantId);
   const decided = await prisma.timesheet.findMany({ where: { tenantId: viewer.tenantId, approvedBy: viewer.user.id }, include: { employee: { select: { displayName: true, employeeNumber: true } } }, orderBy: { approvedAt: "desc" }, take: 10 });
   return (
     <div className="stack gap-4">
@@ -150,7 +159,8 @@ async function Approvals({ viewer }: { viewer: Viewer }) {
                   <div style={{ minWidth: 220 }}>
                     <Person name={s.employee.displayName ?? ""} meta={`Week of ${formatDate(s.periodStart)} · ${Number(s.totalHours)} h, ${Number(s.billableHours)} billable`} />
                     <div className="text-xs subtle" style={{ marginTop: 6 }}>{[...byProject].map(([p, h]) => `${p} ${h} h`).join(" · ")}</div>
-                    {Number(s.totalHours) > 50 ? <div className="text-xs" style={{ color: "var(--warning)" }}>More than 50 hours in a week</div> : null}
+                    {Number(s.totalHours) > policy.flagWeeklyHoursAbove ? <div className="text-xs" style={{ color: "var(--warning)" }}>More than {policy.flagWeeklyHoursAbove} hours in a week</div> : null}
+                    {s.approvalStep > 0 ? <div className="text-xs subtle">Approved by the line manager; yours is the second level</div> : null}
                   </div>
                   <TimesheetDecision timesheetId={s.id} />
                 </div>
@@ -248,7 +258,7 @@ async function Billing({ viewer }: { viewer: Viewer }) {
               <thead><tr><th>Invoice</th><th>Client</th><th>Issued</th><th>Due</th><th className="num">Total</th><th className="num">Outstanding</th><th>Status</th><th /></tr></thead>
               <tbody>{list.map((i) => (
                 <tr key={i.id}>
-                  <td><span className="strong text-sm">{i.invoiceNumber}</span>{i.fileUrl ? <> · <a href={i.fileUrl} className="text-xs">PDF</a></> : null}<div className="text-xs subtle">{i.project ? <Link href={`/projects/${i.projectId}`}>{i.project.name}</Link> : ""}</div></td>
+                  <td><Link href={`/projects/billing/${i.id}`} className="strong text-sm">{i.invoiceNumber}</Link>{i.fileUrl ? <> · <a href={i.fileUrl} className="text-xs">PDF</a></> : null}<div className="text-xs subtle">{i.project ? <Link href={`/projects/${i.projectId}`}>{i.project.name}</Link> : ""}</div></td>
                   <td className="text-sm">{i.client.name}</td>
                   <td className="text-sm nowrap">{formatDate(i.issueDate)}</td>
                   <td className="text-sm nowrap">{formatDate(i.dueDate)}</td>

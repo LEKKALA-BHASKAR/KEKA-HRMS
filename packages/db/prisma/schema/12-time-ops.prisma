@@ -68,6 +68,16 @@ model AttendancePolicy {
   /// Days a penalty waits before applying, so the employee can regularise.
   penaltyBufferDays          Int     @default(2)
 
+  // --- Policy depth ---
+  /// Working a weekly off or holiday credits comp-off automatically when
+  /// attendance is processed, instead of waiting for a request.
+  autoCreditCompOff        Boolean @default(false)
+  /// Overtime pay multipliers on the hourly rate.
+  overtimeMultiplier       Decimal @default(1) @db.Decimal(4, 2)
+  overtimeOffDayMultiplier Decimal @default(1) @db.Decimal(4, 2)
+  /// Overtime minutes are rounded down to this block (0 = exact).
+  overtimeRoundingMinutes  Int     @default(0)
+
   isDefault Boolean  @default(false)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())

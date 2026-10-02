@@ -15,7 +15,7 @@ const label = (s: string) => s.replace(/_/g, " ").toLowerCase();
 const HEALTH: Record<string, "success" | "warning" | "danger"> = { GREEN: "success", AMBER: "warning", RED: "danger" };
 const TASK: Record<string, "success" | "warning" | "danger" | "info" | "neutral"> = { TODO: "neutral", IN_PROGRESS: "info", IN_REVIEW: "info", BLOCKED: "danger", DONE: "success" };
 const MS: Record<string, "success" | "warning" | "danger" | "info" | "neutral"> = { PENDING: "neutral", IN_PROGRESS: "info", DELAYED: "danger", COMPLETED: "success", INVOICED: "info" };
-const INVOICE: Record<string, "success" | "warning" | "danger" | "info" | "neutral"> = { DRAFT: "neutral", SENT: "info", PARTIALLY_PAID: "warning", PAID: "success", OVERDUE: "danger", CANCELLED: "neutral" };
+const INVOICE: Record<string, "success" | "warning" | "danger" | "info" | "neutral"> = { DRAFT: "neutral", SENT: "info", PARTIALLY_PAID: "warning", PAID: "success", OVERDUE: "danger", CANCELLED: "neutral", WRITTEN_OFF: "danger" };
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const viewer = await requireViewer();
@@ -64,7 +64,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       <PageHead
         title={p.name}
         subtitle={<>{p.client?.name ?? "Internal project"} · {label(p.billingModel)}{p.code ? ` · ${p.code}` : ""} · <Badge tone={HEALTH[health.health]} dot>{label(health.health)}</Badge> <span className="text-xs subtle">{health.reason}</span></>}
-        actions={<Link className="btn sm" href="/projects?tab=projects">All projects</Link>}
+        actions={<>{canAny(viewer, [P.PROJECT_MANAGE, P.INVOICE_MANAGE]) ? <Link className="btn sm" href={`/projects/${p.id}/billing`}>Billing, retainer & expenses</Link> : null}<Link className="btn sm" href="/projects?tab=projects">All projects</Link></>}
       />
       <div className="stack gap-4">
         <div className="grid grid-4">
@@ -155,7 +155,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 <thead><tr><th>Invoice</th><th>Period</th><th className="num">Total</th><th className="num">Outstanding</th><th>Status</th><th /></tr></thead>
                 <tbody>{p.invoices.map((i) => (
                   <tr key={i.id}>
-                    <td className="text-sm"><span className="strong">{i.invoiceNumber}</span>{i.fileUrl ? <> · <a href={i.fileUrl} className="text-xs">PDF</a></> : null}<div className="text-xs subtle">due {formatDate(i.dueDate)}</div></td>
+                    <td className="text-sm"><Link href={`/projects/billing/${i.id}`} className="strong">{i.invoiceNumber}</Link>{i.fileUrl ? <> · <a href={i.fileUrl} className="text-xs">PDF</a></> : null}<div className="text-xs subtle">due {formatDate(i.dueDate)}</div></td>
                     <td className="text-sm nowrap">{i.periodStart ? formatDate(i.periodStart) : "—"} – {i.periodEnd ? formatDate(i.periodEnd) : "—"}</td>
                     <td className="num">{formatINR(Number(i.total))}</td>
                     <td className="num">{Number(i.amountDue) ? formatINR(Number(i.amountDue)) : "—"}</td>

@@ -212,7 +212,7 @@ export async function submitSurveyAction(_prev: ActionState, formData: FormData)
   const viewer = await requireViewer();
   if (!viewer.employee) return { ok: false, message: "Only employees can respond." };
   const surveyId = String(formData.get("surveyId"));
-  const s = await prisma.survey.findFirst({ where: { id: surveyId, tenantId: viewer.tenantId }, include: { questions: { orderBy: { sequence: "asc" } } } });
+  const s = await prisma.survey.findFirst({ where: { id: surveyId, tenantId: viewer.tenantId, kind: { not: "EXIT" } }, include: { questions: { orderBy: { sequence: "asc" } } } });
   if (!s) return { ok: false, message: "Survey not found." };
   if (s.status !== "ACTIVE") return { ok: false, message: "This survey is not open for responses." };
   if (s.closesAt && s.closesAt.getTime() + 86_400_000 <= Date.now()) return { ok: false, message: "This survey has closed." };

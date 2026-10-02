@@ -5,9 +5,10 @@ import { parseCsv, mapRows, normaliseDate, normaliseYesNo, normaliseAmount } fro
 import { requireAuth, type Viewer } from "@/lib/context";
 import { writeAudit, actionDone as done, type ActionState } from "@/lib/forms";
 import { IMPORTS, IMPORT_KINDS, type ImportKind } from "@/lib/imports";
-import { createEmployee, reviseSalary, saveEmployeeBank } from "./employee";
+import { createEmployee, reviseSalary, saveEmployeeBank, recordJobChange } from "./employee";
 import { adjustBalanceAction } from "./time";
 import { scheduleBonusAction } from "./bonuses";
+import { addCandidateAction } from "./hiring";
 
 /**
  * Bulk import from CSV.
@@ -40,7 +41,7 @@ function form(fields: Record<string, string | null | undefined | boolean>): Form
 
 /** Look records up by name (or code) without a query per row. */
 async function lookups(tenantId: string) {
-  const [entities, locations, departments, titles, payGroups, plans, leaveTypes, employees, bonusTypes] = await Promise.all([
+  const [entities, locations, departments, titles, payGroups, plans, leaveTypes, employees, bonusTypes, grades, bands] = await Promise.all([
     prisma.legalEntity.findMany({ where: { tenantId }, select: { id: true, name: true } }),
     prisma.location.findMany({ where: { tenantId }, select: { id: true, name: true } }),
     prisma.department.findMany({ where: { tenantId }, select: { id: true, name: true } }),
@@ -50,15 +51,20 @@ async function lookups(tenantId: string) {
     prisma.leaveType.findMany({ where: { tenantId }, select: { id: true, name: true, code: true } }),
     prisma.employee.findMany({ where: { tenantId }, select: { id: true, employeeNumber: true, workEmail: true } }),
     prisma.bonusType.findMany({ where: { tenantId, isActive: true }, select: { id: true, name: true } }),
+    prisma.payGrade.findMany({ where: { tenantId }, select: { id: true, name: true } }),
+    prisma.band.findMany({ where: { tenantId }, select: { id: true, name: true } }),
   ]);
+  const jobs = await prisma.job.findMany({ where: { tenantId, code: { not: null } }, select: { id: true, code: true, status: true } });
   const byName = (rows: Array<{ id: string; name: string }>) => new Map(rows.map((r) => [lower(r.name), r.id]));
   const types = new Map<string, string>();
   for (const t of leaveTypes) { types.set(lower(t.name), t.id); types.set(lower(t.code), t.id); }
   return {
     entity: byName(entities), location: byName(locations), department: byName(departments), title: byName(titles),
     payGroup: byName(payGroups), plan: byName(plans), leaveType: types, bonusType: byName(bonusTypes),
+    grade: byName(grades), band: byName(bands),
     employee: new Map(employees.map((e) => [lower(e.employeeNumber), e.id])),
     emails: new Set(employees.map((e) => e.workEmail ? lower(e.workEmail) : "").filter(Boolean)),
+    job: new Map(jobs.map((j) => [lower(j.code!), j] as const)),
   };
 }
 
@@ -69,6 +75,7 @@ function builders(l: Lookups): Record<ImportKind, Builder> {
   // row may name a manager created earlier in the same file.
   const seenNumbers = new Set<string>();
   const seenEmails = new Set<string>();
+  const seenApplications = new Set<string>();
 
   const employeeId = (n: string) => l.employee.get(lower(n));
   const ref = (map: Map<string, string>, value: string, what: string, required = false): { id?: string; error?: string } => {
@@ -188,6 +195,83 @@ function builders(l: Lookups): Record<ImportKind, Builder> {
       if (problems.length) return { error: problems.join("; ") };
       return { label: `${v.employee_number} ${v.bonus_type}`, form: form({ employeeId: emp, bonusTypeId: type.id, amount, payout, note: v.note }) };
     },
+
+    async candidates(v) {
+      const problems: string[] = [];
+      const job = v.job ? l.job.get(lower(v.job)) : undefined;
+      if (!v.job) problems.push("Job is required (its code, like JOB-1004)");
+      else if (!job) problems.push(`No job with code ${v.job}`);
+      else if (job.status !== "OPEN") problems.push(`${v.job} is not open`);
+      if (!v.first_name) problems.push("First name is required");
+      if (!v.last_name) problems.push("Last name is required");
+      const email = lower(v.email ?? "");
+      if (!email) problems.push("Email is required");
+      else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) problems.push(`“${v.email}” is not an email address`);
+      else if (job && seenApplications.has(`${job.id}|${email}`)) problems.push(`${v.email} appears twice for ${v.job}`);
+      const num = (key: string, label: string, max: number) => {
+        if (!v[key]) return undefined;
+        const n = normaliseAmount(v[key]!);
+        if (n === null || Number(n) < 0 || Number(n) > max) { problems.push(`${label} “${v[key]}” is not a number between 0 and ${max.toLocaleString("en-IN")}`); return undefined; }
+        return n;
+      };
+      const experience = num("experience_years", "Experience", 50);
+      const current = num("current_ctc", "Current CTC", 1e9);
+      const expected = num("expected_ctc", "Expected CTC", 1e9);
+      const notice = num("notice_days", "Notice period", 365);
+      const source = (v.source || "DIRECT_SOURCING").toUpperCase().replace(/[\s-]+/g, "_");
+      if (!["CAREER_PORTAL", "REFERRAL", "INTERNAL", "JOB_BOARD", "AGENCY", "DIRECT_SOURCING", "WALK_IN"].includes(source)) problems.push(`Source “${v.source}” is not recognised`);
+      if (problems.length) return { error: problems.join("; ") };
+      seenApplications.add(`${job!.id}|${email}`);
+      return {
+        label: `${v.first_name} ${v.last_name} → ${v.job}`,
+        form: form({
+          jobId: job!.id, firstName: v.first_name, lastName: v.last_name, email, phone: v.phone, currentEmployer: v.current_employer, currentTitle: v.current_title,
+          totalExperienceYears: experience, currentAnnualCtc: current, expectedAnnualCtc: expected, noticePeriodDays: notice, source,
+        }),
+      };
+    },
+    async "job-details"(v) {
+      const problems: string[] = [];
+      const emp = employeeId(v.employee_number ?? "");
+      if (!emp) problems.push(v.employee_number ? `No employee ${v.employee_number}` : "Employee number is required");
+      const from = normaliseDate(v.effective_from ?? "");
+      if (!from) problems.push(v.effective_from ? `“${v.effective_from}” is not a date` : "Effective from is required");
+      const title = ref(l.title, v.designation ?? "", "Designation");
+      const department = ref(l.department, v.department ?? "", "Department");
+      const location = ref(l.location, v.location ?? "", "Location");
+      for (const r of [title, department, location]) if (r.error) problems.push(r.error);
+      // A grade is a pay grade by name, else a band by name.
+      const gradeId = v.grade ? l.grade.get(lower(v.grade)) : undefined;
+      const bandId = v.grade && !gradeId ? l.band.get(lower(v.grade)) : undefined;
+      if (v.grade && !gradeId && !bandId) problems.push(`No grade or band called “${v.grade}”`);
+      let managerId: string | undefined;
+      if (v.reporting_manager) {
+        managerId = employeeId(v.reporting_manager);
+        if (!managerId) problems.push(`No employee ${v.reporting_manager} to report to`);
+        else if (managerId === emp) problems.push("Someone cannot report to themselves");
+      }
+      if (!v.designation && !v.department && !v.location && !v.reporting_manager && !v.grade) {
+        problems.push("Give at least one of designation, department, location, reporting manager or grade");
+      }
+      const REASONS = ["PROMOTION", "TRANSFER", "DEPARTMENT_CHANGE", "LOCATION_CHANGE", "MANAGER_CHANGE", "DEMOTION"];
+      const reason = v.reason
+        ? v.reason.trim().toUpperCase().replace(/[\s-]+/g, "_")
+        : title.id || gradeId || bandId ? "PROMOTION"
+        : department.id && location.id ? "TRANSFER"
+        : department.id ? "DEPARTMENT_CHANGE"
+        : location.id ? "LOCATION_CHANGE"
+        : "MANAGER_CHANGE";
+      if (!REASONS.includes(reason)) problems.push(`Reason “${v.reason}” is not one of ${REASONS.join(", ")}`);
+      if (problems.length) return { error: problems.join("; ") };
+      return {
+        label: `${v.employee_number} ${reason.toLowerCase()} from ${from}`,
+        form: form({
+          employeeId: emp, effectiveFrom: from, reason, jobTitleId: title.id, departmentId: department.id, locationId: location.id,
+          reportingManagerId: managerId, payGradeId: gradeId, bandId, note: v.note || "Bulk job-details import",
+          logActivity: true, holdUntilEffective: true,
+        }),
+      };
+    },
   };
 }
 
@@ -197,6 +281,8 @@ const RUN: Record<ImportKind, (prev: ActionState, f: FormData) => Promise<Action
   salaries: reviseSalary,
   "bank-accounts": saveEmployeeBank,
   bonuses: scheduleBonusAction,
+  candidates: addCandidateAction,
+  "job-details": recordJobChange,
 };
 
 async function readFile(formData: FormData): Promise<{ text?: string; error?: string }> {
@@ -229,9 +315,14 @@ export async function runImportAction(_prev: ImportResult, formData: FormData): 
   if (mapped.rows.length > MAX_ROWS) return { ok: false, message: `The file has ${mapped.rows.length} rows; the limit is ${MAX_ROWS}. Split it into smaller files.` };
   const note = mapped.unknown.length ? ` Ignored column(s) the import does not use: ${mapped.unknown.join(", ")}.` : "";
 
-  const build = builders(await lookups(viewer.tenantId))[kind];
+  const l = await lookups(viewer.tenantId);
+  // Candidates imported from a job's page go to that job unless a row names another.
+  const pinned = kind === "candidates" && formData.get("jobId") ? await prisma.job.findFirst({ where: { id: String(formData.get("jobId")), tenantId: viewer.tenantId }, select: { id: true, code: true, status: true } }) : null;
+  if (pinned && !pinned.code) return { ok: false, message: "This job has no code to import against." };
+  if (pinned) l.job.set(lower(pinned.code!), pinned);
+  const build = builders(l)[kind];
   const built: Array<{ line: number } & Built> = [];
-  for (const r of mapped.rows) built.push({ line: r.line, ...(await build(r.values)) });
+  for (const r of mapped.rows) built.push({ line: r.line, ...(await build(pinned && !r.values.job ? { ...r.values, job: pinned.code! } : r.values)) });
   const rowErrors = built.flatMap((b) => ("error" in b ? [{ line: b.line, message: b.error }] : []));
 
   if (rowErrors.length) {
@@ -263,11 +354,11 @@ export async function runImportAction(_prev: ImportResult, formData: FormData): 
     }
   }
   await writeAudit(viewer, {
-    module: kind === "leave-balances" ? "LEAVE" : kind === "employees" ? "EMPLOYEE" : kind === "bonuses" ? "PAYROLL" : "FINANCE",
+    module: kind === "leave-balances" ? "LEAVE" : kind === "employees" || kind === "candidates" || kind === "job-details" ? "EMPLOYEE" : kind === "bonuses" ? "PAYROLL" : "FINANCE",
     action: "CREATE", entityType: "BulkImport",
     summary: `Imported ${imported} of ${built.length} ${spec.label.toLowerCase()} row(s) from CSV${failures.length ? `; ${failures.length} refused` : ""}`,
   });
-  const result = done(["/admin/import", "/employees", "/leave", "/payroll/bonuses"], failures.length
+  const result = done(["/admin/import", "/employees", "/leave", "/payroll/bonuses", "/inbox", ...(kind === "candidates" ? ["/hiring/jobs"] : [])], failures.length
     ? `Imported ${imported} of ${built.length} row(s). ${failures.length} were refused; fix those rows and import them again.`
     : `Imported all ${imported} row(s).`);
   return { ...result, ok: failures.length === 0, checked: built.length, imported, rowErrors: failures };

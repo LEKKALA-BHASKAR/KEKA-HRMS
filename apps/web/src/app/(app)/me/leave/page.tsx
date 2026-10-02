@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { prisma } from "@keka/db";
-import { leaveYearStart, localDateKey, tzOffsetMinutes, compOffEligibleDays, encashableTypes } from "@keka/services";
+import { leaveYearStart, localDateKey, tzOffsetMinutes, compOffEligibleDays, encashableTypes, optionalHolidaysFor } from "@keka/services";
 import { requireViewer } from "@/lib/context";
 import { SubTabs } from "@/components/subtabs";
 import { Ring, Donut, Bars, EmptyState } from "@/components/keka";
 import { ApplyLeaveForm, CancelLeaveButton } from "../../_time/leave-forms";
+import { OptionalHolidayButton } from "../../_time/policy-forms";
 import { UrlModal, InfoTip } from "../attendance/_parts/overlay";
 import {
   num, r2, keyOf, dateLabel, daysLabel, daysLower, yearEnd, shiftYears, yearLabel, colourFor, fromLedger, monthName,
@@ -16,7 +17,7 @@ import s from "./leave.module.css";
 
 export const metadata = { title: "My Leave — Keka" };
 
-type Params = { year?: string; apply?: string; policy?: string; encash?: string; compoff?: string; details?: string };
+type Params = { year?: string; apply?: string; policy?: string; encash?: string; compoff?: string; details?: string; optional?: string };
 
 const TABS = [{ label: "Summary", href: "/me/leave" }];
 const WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -248,6 +249,7 @@ export default async function MyLeavePage({ searchParams }: { searchParams: Prom
     ? await prisma.leaveEncashmentRequest.findMany({ where: { tenantId, employeeId }, orderBy: { createdAt: "desc" }, take: 20 })
     : [];
   const typeName = new Map(types.map((x) => [x.t.id, x.t.name]));
+  const optional = sp.optional ? await optionalHolidaysFor(employeeId, today.getUTCFullYear(), today) : null;
 
   return (
     <>
@@ -302,6 +304,7 @@ export default async function MyLeavePage({ searchParams }: { searchParams: Prom
           <Link href={href({ apply: "1" })} scroll={false} className={s.requestBtn}>Request Leave</Link>
           <Link href={href({ encash: "1" })} scroll={false} className={s.actLink}>Request Leave Encashment</Link>
           <Link href={href({ compoff: "1" })} scroll={false} className={s.actLink}>Request Credit for Compensatory Off</Link>
+          <Link href={href({ optional: "1" })} scroll={false} className={s.actLink}>Pick Optional Holidays</Link>
           <Link href={href({ policy: "1" })} scroll={false} className={s.actLink}>Leave Policy Explanation</Link>
         </aside>
       </div>
@@ -444,6 +447,33 @@ export default async function MyLeavePage({ searchParams }: { searchParams: Prom
             })}
             history={compOffHistory.map((h) => ({ id: h.id, workedOn: h.fromDate, days: num(h.days), status: h.status, dayType: "", expiresOn: null, note: h.decisionNote }))}
           />
+        </UrlModal>
+      ) : null}
+      {optional ? (
+        <UrlModal title={`Optional Holidays · ${today.getUTCFullYear()}`} subtitle="Restricted holidays you may take off. A picked day counts as a holiday for you in attendance." closeHref={href({ optional: null })} width={600}>
+          {optional.holidays.length === 0 ? (
+            <div className="muted">Your holiday calendar has no optional holidays this year.</div>
+          ) : (
+            <>
+              {optional.calendars.map((c) => (
+                <div key={c.id} className="text-sm" style={{ marginBottom: 10 }}>
+                  {c.quota > 0 ? <>You have picked <strong>{c.picked} of {c.quota}</strong> from {c.name}.</> : <>{c.name} does not allow optional holidays.</>}
+                </div>
+              ))}
+              <table className="data">
+                <thead><tr><th>Date</th><th>Holiday</th><th /></tr></thead>
+                <tbody>
+                  {optional.holidays.map((h) => (
+                    <tr key={h.id} style={h.past ? { opacity: 0.6 } : undefined}>
+                      <td className="nowrap">{dateLabel(h.date)} <span className="subtle text-xs">{h.date.toLocaleDateString("en-IN", { weekday: "short", timeZone: "UTC" })}</span></td>
+                      <td>{h.name}{h.picked ? <span className="text-xs" style={{ color: "var(--success)" }}> · picked</span> : null}</td>
+                      <td className="right">{h.past ? null : <OptionalHolidayButton holidayId={h.id} picked={h.picked} />}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
         </UrlModal>
       ) : null}
       {detailType ? (

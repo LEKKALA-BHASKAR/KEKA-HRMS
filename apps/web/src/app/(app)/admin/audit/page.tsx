@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { prisma, type Prisma } from "@keka/db";
+import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { requireAuth } from "@/lib/context";
 import { PageHead, Card, Badge, Empty, Callout } from "@/components/ui";
-import { DashboardTabs } from "../../analytics/_components/dashboard";
+import { AUDIT_MODULES, AUDIT_ACTIONS, auditWhere, auditQuery, type AuditFilters } from "./filters";
 
 const P = PERMISSIONS;
 const PAGE_SIZE = 50;
@@ -15,16 +15,13 @@ const MODULE_TONE: Record<string, "success" | "warning" | "danger" | "info" | "n
 
 export default async function AuditPage({
   searchParams,
-}: { searchParams: Promise<{ module?: string; action?: string; page?: string }> }) {
+}: { searchParams: Promise<AuditFilters & { page?: string }> }) {
   const viewer = await requireAuth(P.AUDIT_LOG_VIEW);
-  const sp = await searchParams;
-  const page = Math.max(1, Number(sp.page ?? 1));
-
-  const where: Prisma.AuditLogWhereInput = {
-    tenantId: viewer.tenantId,
-    ...(sp.module ? { module: sp.module as never } : {}),
-    ...(sp.action ? { action: sp.action as never } : {}),
-  };
+  const { page: rawPage, ...filters } = await searchParams;
+  const sp = filters;
+  const page = Math.max(1, Number(rawPage ?? 1));
+  const where = auditWhere(viewer.tenantId, filters);
+  const filtered = !!(sp.module || sp.action || sp.from || sp.to || sp.q);
 
   const [logs, total] = await Promise.all([
     prisma.auditLog.findMany({
@@ -44,6 +41,7 @@ export default async function AuditPage({
       <PageHead
         title="Audit logs"
         subtitle={`${total} entries · who, when, what, and the old and new values`}
+        actions={<a className="btn" href={`/admin/audit/export?${auditQuery(filters)}`}>Download CSV</a>}
       />
 
       <Callout tone="info" title="Coverage">
@@ -58,18 +56,21 @@ export default async function AuditPage({
         <form className="row gap-2 wrap" style={{ padding: 14, borderBottom: "1px solid var(--border)" }}>
           <select className="select" name="module" defaultValue={sp.module ?? ""} style={{ maxWidth: 180 }}>
             <option value="">All modules</option>
-            {["EMPLOYEE", "PAYROLL", "LEAVE", "ATTENDANCE", "ROLE", "AUTH", "FINANCE", "REPORT", "LIFECYCLE", "HELPDESK", "ANALYTICS", "ASSET", "PROJECTS", "SYSTEM"].map((m) => (
+            {AUDIT_MODULES.map((m) => (
               <option key={m} value={m}>{m.toLowerCase()}</option>
             ))}
           </select>
           <select className="select" name="action" defaultValue={sp.action ?? ""} style={{ maxWidth: 180 }}>
             <option value="">All actions</option>
-            {["CREATE", "UPDATE", "DELETE", "APPROVE", "REJECT", "LOCK", "UNLOCK", "EXPORT", "VIEW", "LOGIN", "LOGOUT"].map((a) => (
+            {AUDIT_ACTIONS.map((a) => (
               <option key={a} value={a}>{a.toLowerCase()}</option>
             ))}
           </select>
+          <input className="input" type="date" name="from" defaultValue={sp.from ?? ""} aria-label="From" style={{ maxWidth: 160 }} />
+          <input className="input" type="date" name="to" defaultValue={sp.to ?? ""} aria-label="To" style={{ maxWidth: 160 }} />
+          <input className="input" name="q" defaultValue={sp.q ?? ""} placeholder="Search summary or actor" style={{ maxWidth: 220 }} />
           <button className="btn" type="submit">Filter</button>
-          {sp.module || sp.action ? <Link className="btn ghost" href="/admin/audit">Clear</Link> : null}
+          {filtered ? <Link className="btn ghost" href="/admin/audit">Clear</Link> : null}
         </form>
 
         {logs.length === 0 ? (
@@ -102,8 +103,8 @@ export default async function AuditPage({
           <div className="card-foot row gap-2" style={{ justifyContent: "space-between" }}>
             <span className="text-sm muted">Page {page} of {totalPages}</span>
             <div className="row gap-2">
-              {page > 1 ? <Link className="btn sm" href={`/admin/audit?page=${page - 1}`}>Previous</Link> : null}
-              {page < totalPages ? <Link className="btn sm" href={`/admin/audit?page=${page + 1}`}>Next</Link> : null}
+              {page > 1 ? <Link className="btn sm" href={`/admin/audit?${auditQuery(filters, { page: page - 1 })}`}>Previous</Link> : null}
+              {page < totalPages ? <Link className="btn sm" href={`/admin/audit?${auditQuery(filters, { page: page + 1 })}`}>Next</Link> : null}
             </div>
           </div>
         ) : null}

@@ -9,8 +9,13 @@
  *   tsx scripts/jobs.ts probation             nightly; opens probation reviews, auto-confirms ended probations
  *   tsx scripts/jobs.ts accrue [YYYY-MM]      monthly; credits leave for the month
  *   tsx scripts/jobs.ts leave-year-end        nightly; closes ended leave years (carry forward, pay out, lapse)
+ *   tsx scripts/jobs.ts leave-auto-approve    nightly; approves chained leave left past its auto-approve window
+ *   tsx scripts/jobs.ts shift-allowance [YYYY-MM]  nightly; rebuilds the month's unpaid shift allowance from attendance
  *   tsx scripts/jobs.ts invoices              nightly; marks unpaid invoices past due as overdue
+ *   tsx scripts/jobs.ts timesheet-reminders   nightly; reminds and escalates unsubmitted timesheets (per the timesheet policy)
  *   tsx scripts/jobs.ts ledger-check          nightly; fails if any tenant's books do not balance
+ *   tsx scripts/jobs.ts job-changes           nightly; applies approved promotions/transfers whose effective date has come
+ *   tsx scripts/jobs.ts scheduled-reports     hourly (or nightly); emails the CSV of every scheduled report that is due
  *   tsx scripts/jobs.ts nightly               all of the nightly jobs (+ accrual on the 1st)
  *
  * Each run is recorded in job_runs and logged as one JSON line.
@@ -67,7 +72,32 @@ async function main() {
       for (const t of tenants) { const s = await svc.runLeaveYearEnd({ tenantId: t.id, apply: true }); closed += s.closed; paid += s.paid; expired += s.expired; }
       return { tenants: tenants.length, closed, payments: paid, expiredCarryForwards: expired };
     },
+    "leave-auto-approve": async () => {
+      let checked = 0, approved = 0;
+      for (const t of tenants) { const s = await svc.autoApproveStaleLeave(t.id); checked += s.checked; approved += s.approved; }
+      return { tenants: tenants.length, checked, approved };
+    },
+    "shift-allowance": async () => {
+      const m = /^(\d{4})-(\d{2})$/.exec(arg ?? "");
+      const now = new Date();
+      const year = m ? Number(m[1]) : now.getUTCFullYear(), month = m ? Number(m[2]) : now.getUTCMonth() + 1;
+      let entries = 0, amount = 0;
+      for (const t of tenants) { const s = await svc.generateShiftAllowances({ tenantId: t.id, year, month }); entries += s.entries; amount += s.amount; }
+      return { period: `${year}-${String(month).padStart(2, "0")}`, entries, amount };
+    },
     invoices: async () => ({ markedOverdue: await svc.markOverdueInvoices() }),
+    "job-changes": async () => svc.applyDueJobChanges(),
+    "scheduled-reports": async () => {
+      const { runScheduledReports } = await import("../apps/web/src/lib/scheduled-reports");
+      return runScheduledReports();
+    },
+    // Off unless a tenant's timesheet policy turns reminders or escalation on;
+    // each person and week is chased once, so reruns send nothing new.
+    "timesheet-reminders": async () => {
+      let reminded = 0, escalated = 0;
+      for (const t of tenants) { const s = await svc.runTimesheetReminders(t.id); reminded += s.reminded; escalated += s.escalated; }
+      return { tenants: tenants.length, reminded, escalated };
+    },
     // Debits must equal credits, and every cached balance must equal its
     // lines. A failure here is a bug to investigate, so it fails the job
     // rather than quietly repairing the numbers.
@@ -99,7 +129,7 @@ async function main() {
 
   let ok = true;
   if (cmd === "nightly") {
-    for (const name of ["process-attendance", "journeys", "probation", "leave-year-end", "invoices", "ledger-check", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
+    for (const name of ["process-attendance", "leave-auto-approve", "shift-allowance", "job-changes", "journeys", "probation", "leave-year-end", "invoices", "timesheet-reminders", "ledger-check", "scheduled-reports", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
     if (new Date().getUTCDate() === 1) ok = (await record("accrue", jobs.accrue)) && ok;
   } else if (cmd && jobs[cmd]) {
     ok = await record(cmd, jobs[cmd]);

@@ -1,10 +1,11 @@
 import { prisma } from "@keka/db";
 import { formatDate, formatINR } from "@keka/shared";
-import { noticeDaysFor } from "@keka/services";
+import { noticeDaysFor, exitSurveyFor, EXIT_SURVEY_STATUSES } from "@keka/services";
 import { requireViewer } from "@/lib/context";
 import { PageHead, Card, Badge, Callout, KeyValue } from "@/components/ui";
 import { ResignForm, WithdrawExitButton } from "../../_lifecycle/forms";
 import { JourneyChecklist } from "../../_lifecycle/journey-view";
+import { ExitSurveyForm } from "../../_lifecycle/core-hr-forms";
 
 const DAY = 86_400_000;
 
@@ -25,6 +26,9 @@ export default async function MyExitPage() {
   const reasons = live ? [] : await prisma.exitReason.findMany({ where: { tenantId: viewer.tenantId, isActive: true, kind: { not: "INVOLUNTARY" } }, orderBy: [{ displayOrder: "asc" }, { name: "asc" }] });
   const today = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
   const policyLwd = new Date(today.getTime() + notice.days * DAY).toISOString().slice(0, 10);
+  // The exit survey, once there is a live exit and the organisation has one.
+  const survey = live && (EXIT_SURVEY_STATUSES as readonly string[]).includes(exit!.status) ? await exitSurveyFor(exit!.id) : null;
+  const answered = survey ? await prisma.surveyResponse.findFirst({ where: { exitRecordId: exit!.id, surveyId: survey.id }, select: { submittedAt: true } }) : null;
 
   return (
     <>
@@ -51,6 +55,13 @@ export default async function MyExitPage() {
                 You resigned on {formatDate(exit!.noticeDate)}. You can withdraw until it is accepted.
                 <div style={{ marginTop: 8 }}><WithdrawExitButton exitId={exit!.id} /></div>
               </Callout>
+            ) : null}
+            {survey ? (
+              <Card title="Exit survey" description={answered ? undefined : "A few questions about your time here. It takes about three minutes."}>
+                {answered
+                  ? <div className="text-sm muted">You completed the exit survey on {formatDate(answered.submittedAt)}. Thank you.</div>
+                  : <ExitSurveyForm exitId={exit!.id} questions={survey.questions.map((q) => ({ id: q.id, prompt: q.prompt, type: q.type, options: q.options, required: q.required }))} />}
+              </Card>
             ) : null}
             {journey ? (
               <Card tight title="Your exit checklist" description="Tasks assigned to you can be marked done here.">

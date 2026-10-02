@@ -2,6 +2,7 @@ import "server-only";
 import type { Viewer } from "@/lib/context";
 import { timeSources } from "./time";
 import { coreSources } from "./sources";
+import { jobChangeSources } from "./job-changes";
 import type { SourceFactory, TakeSource } from "./types";
 
 /**
@@ -13,6 +14,7 @@ import type { SourceFactory, TakeSource } from "./types";
 export const SOURCE_FACTORIES: SourceFactory[] = [
   timeSources,
   coreSources,
+  jobChangeSources,
 ];
 
 export async function takeActionSources(viewer: Viewer): Promise<TakeSource[]> {

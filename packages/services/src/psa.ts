@@ -5,3 +5,4 @@ export * from "./psa-resourcing";
 export * from "./psa-finance";
 export * from "./psa-dashboard";
 export * from "./psa-planner";
+export * from "./psa-billing-ops";
