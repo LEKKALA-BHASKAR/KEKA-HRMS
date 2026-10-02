@@ -188,7 +188,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
               {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
             <button className="btn">Apply</button>
-            {dept ? <Link className="btn ghost" href="/analytics">Clear</Link> : null}
+            {dept ? <Link className="btn ghost" href="/analytics/summary">Clear</Link> : null}
           </form>
         }
       />

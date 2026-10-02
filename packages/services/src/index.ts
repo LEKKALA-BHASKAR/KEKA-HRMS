@@ -19,6 +19,7 @@ export * from "./profile";
 export * from "./engagement-math";
 export * from "./learning-math";
 export * from "./analytics-math";
+export * from "./retention-math";
 export * from "./time-requests";
 export * from "./learning";
 export * from "./probation-math";
