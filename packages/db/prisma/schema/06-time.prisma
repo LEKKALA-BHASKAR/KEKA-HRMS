@@ -126,6 +126,12 @@ model LeaveType {
   allowEncashmentRequest   Boolean  @default(false)
   encashmentMaxDaysPerYear Decimal? @db.Decimal(9, 2)
 
+  // --- Policy depth: approvals ---
+  /// Approval chain for this type, overriding the plan's. Null falls back to
+  /// the plan, then to a single decision by anyone allowed to approve.
+  /// { "levels": ["REPORTING_MANAGER", "HR"], "skipSamePerson": true, "autoApproveAfterDays": 3 }
+  approvalChain Json?
+
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -148,14 +154,16 @@ enum LeaveYearBasis {
 }
 
 model LeavePlan {
-  id          String         @id @default(cuid())
-  tenantId    String
-  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name        String
-  description String?
-  yearBasis   LeaveYearBasis @default(FINANCIAL_APR)
-  isDefault   Boolean        @default(false)
-  isActive    Boolean        @default(true)
+  id            String         @id @default(cuid())
+  tenantId      String
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  description   String?
+  yearBasis     LeaveYearBasis @default(FINANCIAL_APR)
+  isDefault     Boolean        @default(false)
+  isActive      Boolean        @default(true)
+  /// Default approval chain for every type in the plan (same shape as LeaveType.approvalChain).
+  approvalChain Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -271,6 +279,14 @@ model LeaveRequest {
 
   days LeaveRequestDay[]
 
+  /// The approval chain resolved when the request was raised, one entry per
+  /// level: [{ role, approverId, status, by, at, note }]. Null = single decision.
+  approvalSteps Json?
+  /// Index into approvalSteps of the level awaiting a decision.
+  approvalLevel Int       @default(0)
+  /// When the current level started waiting (drives auto-approval).
+  levelSince    DateTime?
+
   @@index([tenantId, employeeId, fromDate])
   @@index([status])
   @@map("leave_requests")
@@ -298,14 +314,16 @@ model LeaveRequestDay {
 // ---------------------------------------------------------------------------
 
 model HolidayCalendar {
-  id          String  @id @default(cuid())
-  tenantId    String
-  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name        String
-  year        Int
+  id                   String  @id @default(cuid())
+  tenantId             String
+  tenant               Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name                 String
+  year                 Int
   /// Locations this calendar applies to.
-  locationIds Json?
-  isDefault   Boolean @default(false)
+  locationIds          Json?
+  isDefault            Boolean @default(false)
+  /// Optional (restricted) holidays each employee may pick from this calendar.
+  optionalHolidayQuota Int     @default(0)
 
   createdAt DateTime  @default(now())
   holidays  Holiday[]
@@ -324,6 +342,8 @@ model Holiday {
   /// Optional/floating holidays are drawn against a floater leave type.
   isOptional  Boolean         @default(false)
   description String?
+
+  selections OptionalHolidaySelection[]
 
   @@unique([calendarId, date, name])
   @@index([calendarId, date])
@@ -355,6 +375,9 @@ model Shift {
   /// The shift ends on the following calendar day.
   crossesMidnight Boolean  @default(false)
   color           String?
+  /// Shift allowance earned per day worked on this shift (pay code + rate).
+  allowanceCode   String?
+  allowancePerDay Decimal? @db.Decimal(18, 2)
   isActive        Boolean  @default(true)
 
   createdAt   DateTime          @default(now())
@@ -481,6 +504,12 @@ model AttendanceRecord {
   isRegularised Boolean @default(false)
   remark        String?
 
+  /// An administrator's override of the day's status; processing keeps it.
+  manualStatus AttendanceStatus?
+  editedBy     String?
+  editedAt     DateTime?
+  editReason   String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -545,6 +574,8 @@ model LopAdjustment {
   amount           Decimal? @db.Decimal(18, 2)
   note             String?
   runId            String?
+  /// MANUAL (run screen) | IMPORT (CSV of LOP days per employee per month)
+  source           String  @default("MANUAL")
 
   createdAt DateTime @default(now())
   createdBy String?
@@ -578,19 +609,23 @@ model OvertimeEntry {
 
 /// Shift allowance earned in a pay period.
 model ShiftAllowanceEntry {
-  id          String  @id @default(cuid())
-  tenantId    String
-  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employeeId  String
-  year        Int
-  month       Int
-  shiftCode   String?
-  days        Decimal @default(0) @db.Decimal(9, 2)
-  amount      Decimal @db.Decimal(18, 2)
+  id            String  @id @default(cuid())
+  tenantId      String
+  tenant        Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId    String
+  year          Int
+  month         Int
+  shiftCode     String?
+  /// The shift's allowance pay code when generated from attendance.
+  allowanceCode String?
+  days          Decimal @default(0) @db.Decimal(9, 2)
+  amount        Decimal @db.Decimal(18, 2)
+  /// Created by the attendance step; regenerated rows replace these until paid.
+  isGenerated   Boolean @default(false)
   /// PAY | HOLD | VOID | PAID_OUTSIDE
-  payAction   String  @default("PAY")
-  runId       String?
-  isProcessed Boolean @default(false)
+  payAction     String  @default("PAY")
+  runId         String?
+  isProcessed   Boolean @default(false)
 
   createdAt DateTime @default(now())
 

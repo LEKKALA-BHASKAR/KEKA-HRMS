@@ -12,6 +12,7 @@ import { formatDate } from "@keka/shared";
 import { foreignReference } from "@/lib/ownership";
 import { saveFile, sniffUpload } from "@/lib/storage";
 import { requireAuth, requireViewer, can, type Viewer } from "@/lib/context";
+import { leaveActor } from "@/lib/time-decide";
 import {
   z, parseForm, toErrorState, writeAudit, actionDone as done, formList,
   zName, zOptional, zNumber, zRequiredNumber, zDate, zRequiredDate, zBool, zId, zOptionalId,
@@ -145,18 +146,20 @@ export async function decideLeaveAction(_prev: ActionState, formData: FormData):
   }
 
   try {
-    const res = await decideLeave({ requestId, decision, approverEmployeeId: viewer.employee?.id, note });
+    const res = await decideLeave({ requestId, decision, approverEmployeeId: viewer.employee?.id, note, actor: await leaveActor(viewer, request.employeeId) });
     if (!res.ok) return { ok: false, message: res.message };
     await writeAudit(viewer, {
       module: "LEAVE", action: decision === "APPROVE" ? "APPROVE" : "REJECT",
       entityType: "LeaveRequest", entityId: requestId,
       summary: `${decision === "APPROVE" ? "Approved" : "Rejected"} ${request.leaveType.name}, ${request.totalDays} day(s)`,
     });
-    await notifyTimeRequest({
-      tenantId: viewer.tenantId, employeeId: request.employeeId, kind: "LEAVE",
-      event: decision === "APPROVE" ? "APPROVED" : "REJECTED",
-      what: `${request.leaveType.name} ${between(request.fromDate, request.toDate)}`, note,
-    });
+    if (!res.pendingLevel) {
+      await notifyTimeRequest({
+        tenantId: viewer.tenantId, employeeId: request.employeeId, kind: "LEAVE",
+        event: decision === "APPROVE" ? "APPROVED" : "REJECTED",
+        what: `${request.leaveType.name} ${between(request.fromDate, request.toDate)}`, note,
+      });
+    }
     return done(["/leave", "/inbox", "/me/leave"], res.message);
   } catch (err) {
     return toErrorState(err);
@@ -272,6 +275,8 @@ const leaveTypeSchema = z.object({
   attachmentAboveDays: zNumber({ min: 0, max: 365 }),
   isHiddenFromEmployee: zBool(),
   maxConsecutiveDays: zNumber({ min: 0, max: 366 }),
+  maxDaysPerMonth: zNumber({ min: 0, max: 31 }),
+  minGapBetweenLeavesDays: zNumber({ min: 0, max: 365 }).transform((v) => (v == null ? null : Math.round(v))),
   yearEndAction: z.enum(["RESET", "PAY_ALL", "CARRY_FORWARD_ALL", "PAY_THEN_CARRY_FORWARD", "CARRY_FORWARD_THEN_PAY"]),
   carryForwardMax: zNumber({ min: 0, max: 999 }),
   encashmentEnabled: zBool(),

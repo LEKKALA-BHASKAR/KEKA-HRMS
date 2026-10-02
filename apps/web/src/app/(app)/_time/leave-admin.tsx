@@ -226,6 +226,7 @@ export async function TypesTab({ tenantId, edit }: { tenantId: string; edit?: st
       ...t, annualQuota: dec(t.annualQuota), maxDaysDuringProbation: dec(t.maxDaysDuringProbation),
       maxAccumulation: dec(t.maxAccumulation), maxNegativeDays: dec(t.maxNegativeDays),
       attachmentAboveDays: dec(t.attachmentAboveDays), maxConsecutiveDays: dec(t.maxConsecutiveDays),
+      maxDaysPerMonth: dec(t.maxDaysPerMonth),
       carryForwardMax: dec(t.carryForwardMax),
       sandwichWeeklyOff: !!sc.weeklyOff?.between, sandwichHoliday: !!sc.holiday?.between,
       sandwichEdges: !!(sc.weeklyOff?.before || sc.holiday?.before),

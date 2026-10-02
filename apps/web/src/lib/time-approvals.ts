@@ -2,7 +2,7 @@ import "server-only";
 import { prisma } from "@keka/db";
 import { PERMISSIONS, type Permission } from "@keka/rbac";
 import { formatDate, formatINR } from "@keka/shared";
-import { formatHhmm, type TimeEntity } from "@keka/services";
+import { formatHhmm, parseSteps, canActOnStep, APPROVAL_ROLE_LABEL, type TimeEntity, type ApprovalStep } from "@keka/services";
 import { can, type Viewer } from "./context";
 import { scopedEmployeeIds } from "./scope";
 
@@ -170,7 +170,11 @@ export async function listApprovals(viewer: Viewer, key: TimeCat, q: ApprovalQue
   const take = q.take ?? 200;
   const order = { createdAt: (q.status ?? "PENDING") === "PENDING" ? "asc" : "desc" } as const;
 
-  type Raw = Omit<ApprovalRow, "employee" | "lastActionBy" | "nextApprover" | "canDecide"> & { employeeId: string; deciderId: string | null };
+  type Raw = Omit<ApprovalRow, "employee" | "lastActionBy" | "nextApprover" | "canDecide"> & {
+    employeeId: string; deciderId: string | null;
+    /** A leave request on an approval chain: the level waiting. */
+    step?: ApprovalStep | null; stepOf?: string;
+  };
   let raw: Raw[] = [];
 
   if (key === "leave") {
@@ -178,7 +182,10 @@ export async function listApprovals(viewer: Viewer, key: TimeCat, q: ApprovalQue
     raw = rows.map((r) => {
       const days = Number(r.totalDays);
       const portion = r.fromDate.getTime() === r.toDate.getTime() && r.fromPortion !== "FULL_DAY" ? ` (${PORTION_LABEL[r.fromPortion]})` : "";
+      const steps = parseSteps(r.approvalSteps);
       return {
+        step: steps ? steps[r.approvalLevel] ?? null : undefined,
+        stepOf: steps && steps.length > 1 ? ` (level ${r.approvalLevel + 1} of ${steps.length})` : "",
         id: r.id, cat: key, entity: cat.entity, employeeId: r.employeeId, status: r.status, requestedOn: r.createdAt,
         summary: `${r.leaveType.name} · ${dayCount(days)} · ${range(r.fromDate, r.toDate)}`,
         cells: { type: r.leaveType.name, dates: `${range(r.fromDate, r.toDate)}${portion}`, days: dayCount(days), note: r.reason ?? "" },
@@ -261,7 +268,7 @@ export async function listApprovals(viewer: Viewer, key: TimeCat, q: ApprovalQue
 
   if (raw.length === 0) return [];
   const people = await prisma.employee.findMany({
-    where: { tenantId: viewer.tenantId, id: { in: [...new Set([...raw.map((r) => r.employeeId), ...raw.map((r) => r.deciderId).filter((x): x is string => !!x)])] } },
+    where: { tenantId: viewer.tenantId, id: { in: [...new Set([...raw.map((r) => r.employeeId), ...raw.map((r) => r.deciderId).filter((x): x is string => !!x), ...raw.map((r) => r.step?.approverId).filter((x): x is string => !!x)])] } },
     select: { id: true, displayName: true, firstName: true, lastName: true, employeeNumber: true, photoUrl: true, reportingManagerId: true, department: { select: { name: true } } },
   });
   const managerIds = [...new Set(people.map((p) => p.reportingManagerId).filter((x): x is string => !!x))];
@@ -272,18 +279,27 @@ export async function listApprovals(viewer: Viewer, key: TimeCat, q: ApprovalQue
   const byId = new Map(people.map((p) => [p.id, p]));
   const mgrName = new Map(managers.map((m) => [m.id, name(m)]));
   const mayDecide = can(viewer, cat.permission);
+  // Chained leave: HR may act at any level for the people they manage leave for.
+  const hrIds = raw.some((r) => r.step) && can(viewer, P.LEAVE_MANAGE) ? await scopedEmployeeIds(viewer, P.LEAVE_MANAGE) : [];
+  const isHrFor = (id: string) => hrIds === null || hrIds.includes(id);
 
   return raw.flatMap((r) => {
     const p = byId.get(r.employeeId);
     if (!p) return [];
     const decider = r.deciderId ? byId.get(r.deciderId) : null;
-    const { employeeId: _e, deciderId: _d, ...rest } = r;
+    const { employeeId: _e, deciderId: _d, step, stepOf, ...rest } = r;
+    const defaultNext = p.reportingManagerId ? mgrName.get(p.reportingManagerId) ?? "Reporting manager" : "HR";
+    const stepHolder = step?.approverId ? byId.get(step.approverId) : null;
+    const nextApprover = r.status !== "PENDING" ? null
+      : step ? `${stepHolder ? name(stepHolder) : step.role === "ANY" ? defaultNext : APPROVAL_ROLE_LABEL[step.role]}${stepOf ?? ""}`
+      : defaultNext;
+    const turn = !step || canActOnStep(step, { employeeId: viewer.employee?.id ?? null, isHr: isHrFor(r.employeeId), canApprove: true });
     return [{
       ...rest,
       employee: { id: p.id, name: name(p), number: p.employeeNumber, department: p.department?.name ?? null, photoUrl: p.photoUrl },
       lastActionBy: decider ? name(decider) : r.deciderId ? "—" : null,
-      nextApprover: r.status === "PENDING" ? (p.reportingManagerId ? mgrName.get(p.reportingManagerId) ?? "Reporting manager" : "HR") : null,
-      canDecide: mayDecide && r.status === "PENDING",
+      nextApprover,
+      canDecide: mayDecide && r.status === "PENDING" && turn,
     }];
   });
 }
