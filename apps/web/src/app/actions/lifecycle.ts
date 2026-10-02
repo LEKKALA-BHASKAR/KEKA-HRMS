@@ -5,7 +5,7 @@ import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import {
   initiateExit, decideExit, withdrawExit, draftSettlement, finalizeSettlement,
   startJourney, setJourneyTask, runAutoChecks,
-  updateTicket,
+  updateTicket, parsePeriod,
 } from "@keka/services";
 import * as hd from "./helpdesk";
 import { foreignReference } from "@/lib/ownership";
@@ -133,7 +133,9 @@ export async function draftSettlementAction(_prev: ActionState, formData: FormDa
   const employeeId = String(formData.get("employeeId"));
   if (!(await reaches(viewer, employeeId, P.FNF_MANAGE))) return { ok: false, message: "This employee is outside your scope." };
   try {
-    const res = await draftSettlement(employeeId, { waiveNoticeRecovery: formData.get("waiveNoticeRecovery") === "on" });
+    // The month it is booked in, when chosen; otherwise the draft keeps its own.
+    const period = parsePeriod(String(formData.get("period") ?? ""));
+    const res = await draftSettlement(employeeId, { waiveNoticeRecovery: formData.get("waiveNoticeRecovery") === "on", settlementYear: period?.year, settlementMonth: period?.month });
     if (!res.ok) return { ok: false, message: res.message };
     await writeAudit(viewer, { module: "PAYROLL", action: "UPDATE", entityType: "FnfSettlement", entityId: res.settlementId, summary: res.message });
     const exit = await prisma.exitRecord.findUnique({ where: { employeeId }, select: { id: true } });

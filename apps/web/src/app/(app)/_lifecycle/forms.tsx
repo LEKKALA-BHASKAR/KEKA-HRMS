@@ -114,10 +114,19 @@ export function WithdrawExitButton({ exitId }: { exitId: string }) {
     confirmLabel="Withdraw this exit? The employee becomes active again and the exit checklist is cancelled." />;
 }
 
-export function DraftSettlementForm({ employeeId, drafted, waived }: { employeeId: string; drafted: boolean; waived: boolean }) {
+export function DraftSettlementForm({ employeeId, drafted, waived, months = [], period }: { employeeId: string; drafted: boolean; waived: boolean; months?: Option[]; period?: string }) {
   return (
     <ActionForm action={draftSettlementAction} hidden={{ employeeId }} submitLabel={drafted ? "Recompute" : "Compute settlement"} compact>
-      {() => <CheckboxInput name="waiveNoticeRecovery" label="Waive any notice-period shortfall recovery" defaultChecked={waived} />}
+      {(state) => (
+        <>
+          {months.length ? (
+            <Field label="Settlement month" name="period" state={state} hint="The payroll month the settlement is booked and paid in.">
+              <SelectInput name="period" state={state} options={months} defaultValue={period ?? months[0]?.value} />
+            </Field>
+          ) : null}
+          <CheckboxInput name="waiveNoticeRecovery" label="Waive any notice-period shortfall recovery" defaultChecked={waived} />
+        </>
+      )}
     </ActionForm>
   );
 }

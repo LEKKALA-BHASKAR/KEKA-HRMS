@@ -326,6 +326,8 @@ model EmailOutbox {
   lastError   String?
   relatedType String?
   relatedId   String?
+  /// StoredFile ids sent as attachments (an F&F statement, for one).
+  attachmentFileIds String[] @default([])
   createdAt   DateTime     @default(now())
   sentAt      DateTime?
 

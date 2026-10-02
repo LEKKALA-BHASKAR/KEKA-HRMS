@@ -6,6 +6,7 @@ import {
 import { fyStartYear } from "@keka/shared";
 import { loadStatutoryTables, ageAtFyEnd, slabsFor } from "./payroll-run";
 import { recomputeBalance, leaveYearStart, trueUpExitAccrual } from "./time";
+import type { FnfEffects } from "./fnf-math";
 
 /**
  * The employee lifecycle beyond the payroll month: journeys that follow from
@@ -86,7 +87,8 @@ export async function usersWithPermission(tenantId: string, permission: string):
 }
 
 export interface OutboxTransport {
-  send(mail: { to: string; subject: string; text: string; html?: string | null }): Promise<void>;
+  /** attachmentFileIds are StoredFile ids; the transport reads and attaches them. */
+  send(mail: { to: string; subject: string; text: string; html?: string | null; attachmentFileIds?: string[] }): Promise<void>;
 }
 
 /**
@@ -101,7 +103,7 @@ export async function deliverOutbox(transport: OutboxTransport, opts: { limit?: 
   let sent = 0, failed = 0;
   for (const m of batch) {
     try {
-      await transport.send({ to: m.toAddress, subject: m.subject, text: m.textBody, html: m.htmlBody });
+      await transport.send({ to: m.toAddress, subject: m.subject, text: m.textBody, html: m.htmlBody, attachmentFileIds: m.attachmentFileIds });
       await prisma.emailOutbox.update({ where: { id: m.id }, data: { status: "SENT", sentAt: new Date(), attempts: { increment: 1 }, lastError: null } });
       sent++;
     } catch (err) {
@@ -662,7 +664,7 @@ export async function computeSettlement(employeeId: string, opts: { waiveNoticeR
 const sumOf = (lines: SettlementLine[], f: (l: SettlementLine) => boolean) => r2(lines.filter(f).reduce((s, l) => s + l.amount, 0));
 
 /** Compute and save as a draft for review. Refuses once finalised. */
-export async function draftSettlement(employeeId: string, opts: { waiveNoticeRecovery?: boolean } = {}): Promise<{ ok: boolean; message: string; settlementId?: string }> {
+export async function draftSettlement(employeeId: string, opts: { waiveNoticeRecovery?: boolean; settlementYear?: number; settlementMonth?: number } = {}): Promise<{ ok: boolean; message: string; settlementId?: string }> {
   const existing = await prisma.fnfSettlement.findUnique({ where: { employeeId } });
   if (existing && ["FINALIZED", "PAID", "ALREADY_PAID"].includes(existing.status)) {
     return { ok: false, message: "The settlement is already finalised." };
@@ -671,13 +673,22 @@ export async function draftSettlement(employeeId: string, opts: { waiveNoticeRec
   if (!exit || !["APPROVED", "IN_CLEARANCE", "SETTLED"].includes(exit.status)) {
     return { ok: false, message: "The exit must be approved before a settlement can be drafted." };
   }
+  // The month it is booked in: as chosen, else as chosen before, else the
+  // last working day's month.
+  const { validateSettlementMonth } = await import("./fnf-math");
+  const keep = existing?.status !== "VOIDED" && existing?.settlementYear && existing?.settlementMonth ? { year: existing.settlementYear, month: existing.settlementMonth } : null;
+  const period = opts.settlementYear && opts.settlementMonth ? { year: opts.settlementYear, month: opts.settlementMonth }
+    : keep && !validateSettlementMonth(exit.lastWorkingDay, keep.year, keep.month) ? keep
+    : { year: exit.lastWorkingDay.getUTCFullYear(), month: exit.lastWorkingDay.getUTCMonth() + 1 };
+  const bad = validateSettlementMonth(exit.lastWorkingDay, period.year, period.month);
+  if (bad) return { ok: false, message: bad };
   // Leave earned only to the last working day is what gets encashed.
   await trueUpExitAccrual(employeeId);
   const c = await computeSettlement(employeeId, opts);
   const L = c.lines;
   const data = {
     status: "IN_REVIEW" as const,
-    settlementYear: exit.lastWorkingDay.getUTCFullYear(), settlementMonth: exit.lastWorkingDay.getUTCMonth() + 1,
+    settlementYear: period.year, settlementMonth: period.month,
     leaveEncashment: sumOf(L, (l) => l.group === "Leave"),
     gratuity: sumOf(L, (l) => l.label === "Gratuity"),
     noticeBuyoutPay: sumOf(L, (l) => l.label === "Pay in lieu of notice"),
@@ -730,10 +741,22 @@ export async function finalizeSettlement(employeeId: string, byUserId: string, t
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.fnfSettlement.update({ where: { id: s.id }, data: { status: "FINALIZED", finalizedAt: new Date(), finalizedBy: byUserId } });
+    // Record exactly what finalising changes, so a void can put it back.
+    const open = await tx.loanInstallment.findMany({ where: { status: "SCHEDULED", loan: { employeeId, status: { in: ["DISBURSED", "ACTIVE"] } } } });
+    const effects: FnfEffects = {
+      installments: open.map((i) => ({ id: i.id, interestPart: Number(i.interestPart), totalAmount: Number(i.totalAmount) })),
+      loans: (await tx.loan.findMany({ where: { employeeId, status: { in: ["DISBURSED", "ACTIVE"] } }, select: { id: true, status: true } })).map((l) => ({ id: l.id, status: l.status })),
+      assetAssignmentIds: (await tx.assetAssignment.findMany({ where: { employeeId, returnedOn: { not: null }, damageCharge: { gt: 0 }, chargeRecovered: false }, select: { id: true } })).map((a) => a.id),
+      bonusIds: (await tx.employeeBonus.findMany({ where: { employeeId, isProcessed: false, payAction: "PAY" }, select: { id: true } })).map((b) => b.id),
+      claimIds: (await tx.componentClaim.findMany({ where: { employeeId, status: "APPROVED" }, select: { id: true } })).map((c) => c.id),
+      employeeStatus: s.employee.status, exitStatus: exit.status,
+    };
+    await tx.fnfSettlement.update({
+      where: { id: s.id },
+      data: { status: "FINALIZED", finalizedAt: new Date(), finalizedBy: byUserId, breakdown: { ...((s.breakdown ?? {}) as object), effects } as unknown as Prisma.InputJsonValue },
+    });
     // Recovered in the settlement: the rest of each schedule is prepaid,
     // principal only, as the settlement line was computed.
-    const open = await tx.loanInstallment.findMany({ where: { status: "SCHEDULED", loan: { employeeId, status: { in: ["DISBURSED", "ACTIVE"] } } } });
     for (const i of open) {
       await tx.loanInstallment.update({ where: { id: i.id }, data: { status: "PREPAID", interestPart: 0, totalAmount: i.principalPart, deductedAt: new Date() } });
     }
