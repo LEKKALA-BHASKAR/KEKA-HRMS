@@ -205,6 +205,7 @@ model Tenant {
   psaDashboardLayouts   PsaDashboardLayout[]
   psaInsightCaches      PsaInsightCache[]
   psaSetting            PsaSetting?
+  timesheetReminders    TimesheetReminder[]
 
   // --- Keka parity: Time requests (21-time-requests) ---
   shiftRequests           ShiftRequest[]

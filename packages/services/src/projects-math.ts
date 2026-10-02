@@ -1,7 +1,10 @@
 /**
- * Pure project arithmetic — no database: timesheet weeks and checks, GST on
- * invoices, project health and utilisation.
+ * Pure project arithmetic — no database: timesheet weeks and checks (the
+ * limits themselves come from the timesheet policy), GST on invoices,
+ * project health and utilisation.
  */
+
+import { DEFAULT_TIMESHEET_POLICY, policyIssues, type TimesheetPolicy } from "./timesheet-policy-math";
 
 const DAY = 86_400_000;
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -16,22 +19,21 @@ export function weekStart(d: Date): Date {
 export interface EntryInput { projectId: string; date: Date; hours: number }
 
 /**
- * Problems with a week's entries: impossible days, quarter-hour precision,
- * future days, and days outside the week.
+ * Problems with a week's entries: days outside the week, future days and
+ * hours that are not positive, then whatever the timesheet policy refuses —
+ * by default, time not in quarter hours and more than 24 hours on a day.
+ * The weekly floor and cap apply only on submission.
  */
-export function checkTimesheet(entries: EntryInput[], week: Date, today = new Date()): string[] {
+export function checkTimesheet(entries: EntryInput[], week: Date, today = new Date(), policy: TimesheetPolicy = DEFAULT_TIMESHEET_POLICY, opts: { submit?: boolean } = {}): string[] {
   const issues: string[] = [];
   const end = new Date(week.getTime() + 7 * DAY);
   const todayEnd = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()) + DAY;
-  const perDay = new Map<number, number>();
   for (const e of entries) {
     if (e.date < week || e.date >= end) issues.push(`${e.date.toISOString().slice(0, 10)} is outside this week.`);
     if (e.date.getTime() >= todayEnd) issues.push(`Time cannot be logged for ${e.date.toISOString().slice(0, 10)} yet.`);
     if (!(e.hours > 0)) issues.push("Hours must be more than zero.");
-    if (Math.abs(e.hours * 4 - Math.round(e.hours * 4)) > 1e-9) issues.push(`${e.hours} h — log in quarter hours.`);
-    perDay.set(e.date.getTime(), (perDay.get(e.date.getTime()) ?? 0) + e.hours);
   }
-  for (const [t, h] of perDay) if (h > 24) issues.push(`${new Date(t).toISOString().slice(0, 10)} has ${h} hours — a day has 24.`);
+  issues.push(...policyIssues(entries, policy, opts));
   return [...new Set(issues)];
 }
 

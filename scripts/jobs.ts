@@ -10,6 +10,7 @@
  *   tsx scripts/jobs.ts accrue [YYYY-MM]      monthly; credits leave for the month
  *   tsx scripts/jobs.ts leave-year-end        nightly; closes ended leave years (carry forward, pay out, lapse)
  *   tsx scripts/jobs.ts invoices              nightly; marks unpaid invoices past due as overdue
+ *   tsx scripts/jobs.ts timesheet-reminders   nightly; reminds and escalates unsubmitted timesheets (per the timesheet policy)
  *   tsx scripts/jobs.ts ledger-check          nightly; fails if any tenant's books do not balance
  *   tsx scripts/jobs.ts nightly               all of the nightly jobs (+ accrual on the 1st)
  *
@@ -68,6 +69,13 @@ async function main() {
       return { tenants: tenants.length, closed, payments: paid, expiredCarryForwards: expired };
     },
     invoices: async () => ({ markedOverdue: await svc.markOverdueInvoices() }),
+    // Off unless a tenant's timesheet policy turns reminders or escalation on;
+    // each person and week is chased once, so reruns send nothing new.
+    "timesheet-reminders": async () => {
+      let reminded = 0, escalated = 0;
+      for (const t of tenants) { const s = await svc.runTimesheetReminders(t.id); reminded += s.reminded; escalated += s.escalated; }
+      return { tenants: tenants.length, reminded, escalated };
+    },
     // Debits must equal credits, and every cached balance must equal its
     // lines. A failure here is a bug to investigate, so it fails the job
     // rather than quietly repairing the numbers.
@@ -99,7 +107,7 @@ async function main() {
 
   let ok = true;
   if (cmd === "nightly") {
-    for (const name of ["process-attendance", "journeys", "probation", "leave-year-end", "invoices", "ledger-check", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
+    for (const name of ["process-attendance", "journeys", "probation", "leave-year-end", "invoices", "timesheet-reminders", "ledger-check", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
     if (new Date().getUTCDate() === 1) ok = (await record("accrue", jobs.accrue)) && ok;
   } else if (cmd && jobs[cmd]) {
     ok = await record(cmd, jobs[cmd]);
