@@ -101,3 +101,29 @@ export async function destroySession(): Promise<void> {
 }
 
 export const SESSION_COOKIE_NAME = COOKIE_NAME;
+
+// --- A single sign-on round trip in flight ----------------------------------
+
+const SSO_COOKIE = "keka_sso";
+
+export interface SsoState { tenantId: string; state: string; nonce: string; verifier: string; redirectUri: string; next?: string }
+
+export async function setSsoState(p: SsoState): Promise<void> {
+  const token = await new SignJWT({ ...p, purpose: "sso" }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("10m").sign(secret());
+  const store = await cookies();
+  store.set(SSO_COOKIE, token, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/auth/sso", maxAge: 600 });
+}
+
+export async function takeSsoState(): Promise<SsoState | null> {
+  const store = await cookies();
+  const token = store.get(SSO_COOKIE)?.value;
+  store.delete({ name: SSO_COOKIE, path: "/auth/sso" });
+  if (!token) return null;
+  try {
+    const { payload } = await jwtVerify(token, secret());
+    if (payload.purpose !== "sso") return null;
+    return { tenantId: String(payload.tenantId), state: String(payload.state), nonce: String(payload.nonce), verifier: String(payload.verifier), redirectUri: String(payload.redirectUri), next: payload.next ? String(payload.next) : undefined };
+  } catch {
+    return null;
+  }
+}

@@ -227,7 +227,7 @@ async function ViewOrEditModal({ viewer, id, edit, closeHref, editHref, viewHref
       description: r.description ?? "", justification: r.justification ?? "", hiringManagerId: r.hiringManagerId ?? "", recruiterId: r.recruiterId ?? "",
     };
     // Backfilled people who have since left still show on the requisition.
-    for (const b of r.backfills) if (!options.employees.some((e) => e.id === b.employeeId)) options.employees.push({ id: b.employeeId, name: b.employee.displayName, number: "", title: null });
+    for (const b of r.backfills) if (!options.employees.some((e) => e.id === b.employeeId)) options.employees.push({ id: b.employeeId, name: b.employee.displayName ?? "", number: "", title: null });
     return (
       <UrlModal title="Edit Requisition" closeHref={viewHref} full>
         <RequisitionForm mode="edit" id={r.id} initial={initial} options={options} approverName={r.approverUserId ? names.get(r.approverUserId) ?? null : null}

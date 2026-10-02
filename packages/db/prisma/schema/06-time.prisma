@@ -373,12 +373,31 @@ model ShiftAssignment {
   shiftId       String
   shift         Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
   date          DateTime
-  /// WO = full day off, WOF = first half, WOS = second half.
+  /// WO = full day off, WOF = first half, WOS = second half, ON = a working
+  /// day even where the weekly-off pattern says off.
   weeklyOffCode String?
 
   @@unique([employeeId, date])
   @@index([shiftId, date])
   @@map("shift_assignments")
+}
+
+/// A repeating sequence of days for rostering rotating shifts, e.g. five
+/// mornings, two off, five nights, two off. Each step is a shift id, or null
+/// with off=true for a weekly off. Applying it writes ShiftAssignment rows.
+model RosterPattern {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  /// [{ "shiftId": "...", "off": false }, { "shiftId": null, "off": true }, ...]
+  steps     Json
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("roster_patterns")
 }
 
 model WeeklyOffPolicy {

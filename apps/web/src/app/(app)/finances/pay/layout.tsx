@@ -10,6 +10,7 @@ export default function MyPayLayout({ children }: { children: ReactNode }) {
         { label: "Pay Slips", href: "/finances/pay/payslips" },
         { label: "Income Tax", href: "/finances/pay/tax" },
         { label: "Component Claim", href: "/finances/pay/component-claims" },
+        { label: "Flexible Benefits", href: "/finances/pay/fbp" },
       ]} />
       {children}
     </>

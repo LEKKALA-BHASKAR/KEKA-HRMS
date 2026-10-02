@@ -2,25 +2,21 @@
 
 import { useState } from "react";
 import { useForm, FormBanner } from "@/components/form";
-import {
-  requestCompOffAction, cancelCompOffAction, requestEncashmentAction, cancelEncashmentAction,
-} from "@/app/actions/timeoff";
+import { raiseCompOffAction, raiseEncashmentAction, withdrawTimeRequestAction } from "@/app/actions/time-requests";
 
-/** Claim one worked off-day: full or half, with a reason. */
+/** Claim one worked off-day, with a note; the credit (half or full) comes from the hours worked. */
 export function CompOffClaim({ date, maxDays }: { date: string; maxDays: 1 | 0.5 }) {
-  const [state, action, pending] = useForm(requestCompOffAction);
+  const [state, action, pending] = useForm(raiseCompOffAction);
   const [open, setOpen] = useState(false);
   if (state.ok) return <span className="text-xs pos">{state.message}</span>;
   if (!open) return <button type="button" className="btn sm" onClick={() => setOpen(true)}>Claim</button>;
   return (
     <form action={action} className="stack gap-1" style={{ minWidth: 220 }}>
-      <input type="hidden" name="workedOn" value={date} />
-      <div className="row gap-1">
-        <select name="days" className="select" defaultValue={String(maxDays)} style={{ width: 96 }} aria-label="Days">
-          {maxDays === 1 ? <option value="1">Full day</option> : null}
-          <option value="0.5">Half day</option>
-        </select>
-        <input className="input" name="reason" placeholder="What did you work on?" required maxLength={500} />
+      <input type="hidden" name="fromDate" value={date} />
+      <input type="hidden" name="toDate" value={date} />
+      <div className="row gap-1" style={{ alignItems: "center" }}>
+        <span className="text-xs muted" style={{ whiteSpace: "nowrap" }}>{maxDays === 1 ? "Full day" : "Half day"}</span>
+        <input className="input" name="note" placeholder="What did you work on?" required maxLength={500} />
       </div>
       <div className="row gap-1">
         <button className="btn primary sm" disabled={pending}>{pending ? "…" : "Request"}</button>
@@ -32,10 +28,11 @@ export function CompOffClaim({ date, maxDays }: { date: string; maxDays: 1 | 0.5
 }
 
 export function WithdrawButton({ kind, requestId }: { kind: "compoff" | "encash"; requestId: string }) {
-  const [state, action, pending] = useForm(kind === "compoff" ? cancelCompOffAction : cancelEncashmentAction);
+  const [state, action, pending] = useForm(withdrawTimeRequestAction);
   return (
     <form action={action}>
       <input type="hidden" name="requestId" value={requestId} />
+      <input type="hidden" name="entity" value={kind === "compoff" ? "CompOffRequest" : "LeaveEncashmentRequest"} />
       <button className="btn ghost sm" disabled={pending}>{pending ? "…" : "Withdraw"}</button>
       {state.message && !state.ok ? <div className="text-xs neg">{state.message}</div> : null}
     </form>
@@ -43,7 +40,7 @@ export function WithdrawButton({ kind, requestId }: { kind: "compoff" | "encash"
 }
 
 export function EncashForm({ types }: { types: Array<{ id: string; name: string; encashable: number; perDay: number }> }) {
-  const [state, action, pending] = useForm(requestEncashmentAction);
+  const [state, action, pending] = useForm(raiseEncashmentAction);
   const [typeId, setTypeId] = useState(types[0]?.id ?? "");
   const [days, setDays] = useState("");
   const t = types.find((x) => x.id === typeId);
@@ -51,6 +48,7 @@ export function EncashForm({ types }: { types: Array<{ id: string; name: string;
   return (
     <form action={action} className="stack gap-2">
       <FormBanner state={state} />
+      <input type="hidden" name="mode" value="custom" />
       <div className="grid grid-2">
         <div className="field">
           <label className="label" htmlFor="leaveTypeId">Leave type</label>
@@ -66,8 +64,8 @@ export function EncashForm({ types }: { types: Array<{ id: string; name: string;
         </div>
       </div>
       <div className="field">
-        <label className="label" htmlFor="reason">Reason (optional)</label>
-        <input id="reason" name="reason" className="input" maxLength={500} />
+        <label className="label" htmlFor="note">Reason (optional)</label>
+        <input id="note" name="note" className="input" maxLength={500} />
       </div>
       <div className="row gap-3" style={{ alignItems: "center" }}>
         <button className="btn primary" disabled={pending || !t || t.encashable <= 0}>{pending ? "Requesting…" : "Request encashment"}</button>

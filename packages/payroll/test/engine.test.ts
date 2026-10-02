@@ -135,6 +135,30 @@ const baseInput = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("Payroll engine", () => {
+  test("a perquisite is shown and taxed but not paid", () => {
+    const plain = calculatePayroll(baseInput({ annualCtc: 2400000 }) as never);
+    const perk = calculatePayroll(baseInput({ annualCtc: 2400000, variablePay: { perquisites: [{ code: "CAR", name: "Company car", amount: 2400 }, { code: "CLUB", name: "Club", formula: "[BASIC] * 0.01" }] } }) as never);
+    const car = perk.lines.find((l) => l.code === "CAR");
+    assert.equal(car?.type, "PERK");
+    assert.ok(perk.lines.some((l) => l.code === "CLUB" && l.amount.toNumber() > 0));
+    assert.equal(perk.grossEarnings.toNumber(), plain.grossEarnings.toNumber());
+    assert.ok(perk.tds.greaterThan(plain.tds));
+    const borne = calculatePayroll(baseInput({ annualCtc: 2400000, variablePay: { perquisites: [{ code: "CAR", name: "Company car", amount: 2400, employerBearsTax: true }] } }) as never);
+    assert.equal(borne.tds.toNumber(), plain.tds.toNumber());
+  });
+
+  test("a flexible-benefit reimbursement shrinks the balance but is not paid monthly", () => {
+    const plain = calculatePayroll(baseInput() as never);
+    const fbp = calculatePayroll(baseInput({
+      structureComponents: [...STANDARD_STRUCTURE, {
+        code: "FUEL_REIMB", name: "Fuel", type: "REIMBURSEMENT", calculationType: "FIXED", fixedAmount: 2000,
+        isLopApplicable: false, affectsEsiGross: false, isPartOfFbp: true,
+      }],
+    }) as never);
+    assert.ok(!fbp.lines.some((l) => l.code === "FUEL_REIMB"));
+    assert.equal(plain.grossEarnings.minus(fbp.grossEarnings).toNumber(), 2000);
+  });
+
   test("full month, no LOP: gross, deductions and net all tie up", () => {
     const r = calculatePayroll(baseInput() as never);
 

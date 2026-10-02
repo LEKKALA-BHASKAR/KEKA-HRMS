@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { enps, ratingSummary, choiceTally, driverScores, canReveal, validateSubmission, participation, type QuestionDef } from "../src/engagement-math";
 import { gradeQuiz, courseProgress, courseScore, enrolmentStanding, formatMinutes } from "../src/learning-math";
 import { monthlySeries, annualAttrition, tenureBand, ageBand, tally, averageTenure, activeOn, pctChange, type WorkforceRow } from "../src/analytics-math";
-import { parseEncashmentFormula } from "../src/time-requests";
+import { encashmentFormulaParts as parseEncashmentFormula } from "../src/time-math";
 
 const utc = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d));
 

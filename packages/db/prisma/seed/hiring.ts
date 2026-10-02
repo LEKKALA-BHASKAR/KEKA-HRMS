@@ -59,7 +59,7 @@ export async function seedHiring(prisma: PrismaClient, ctx: { tenantId: string; 
         const at = new Date(Date.now() - (upto - i + 2) * 3 * DAY);
         const iv = await prisma.interview.create({ data: { applicationId: appId, round: prev === "Technical interview" ? 1 : 2, title: prev, scheduledAt: at, durationMinutes: 60, mode: "VIDEO", status: "SCHEDULED", panel: { create: panel.map((e, k) => ({ employeeId: e, isLead: k === 0, response: "ACCEPTED" })) } } });
         for (const p of panel) {
-          await svc.submitScorecard({ interviewId: iv.id, panelistEmployeeId: p, overallScore: first === "Kabir" ? 3 : 4, recommendation: first === "Kabir" ? "YES" : "STRONG_YES", strengths: "Clear thinking on consistency and idempotency; strong ownership.", concerns: first === "Kabir" ? "Light on testing practice." : null });
+          await svc.saveScorecard({ interviewId: iv.id, panelistEmployeeId: p, recommendation: first === "Kabir" ? "HIRE" : "MUST_HIRE", notes: `Clear thinking on consistency and idempotency; strong ownership.${first === "Kabir" ? " Light on testing practice." : ""}`, ratings: [], submit: true });
         }
         interviews++;
       }

@@ -55,7 +55,7 @@ export default async function EmployeesPage({
         location: { select: { name: true, stateCode: true } },
         reportingManager: { select: { displayName: true } },
         salaryRevisions: showFinancials
-          ? { orderBy: { effectiveFrom: "desc" }, take: 1, select: { annualCtc: true } }
+          ? { where: { status: "APPLIED" }, orderBy: { effectiveFrom: "desc" }, take: 1, select: { annualCtc: true } }
           : false,
       },
     }),

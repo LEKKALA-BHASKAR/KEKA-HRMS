@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { selectStructureForCtc } from "@keka/payroll";
-import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation } from "@keka/services";
+import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision } from "@keka/services";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
 import {
@@ -328,13 +328,19 @@ export async function createEmployee(_prev: ActionState, formData: FormData): Pr
     await enrolInMandatoryCourses(viewer.tenantId, employeeId, viewer.employee?.id ?? null);
     // ...and a joiner on probation starts the default probation policy's clock.
     const probation = d.status === "PROBATION" ? await startProbation({ employeeId }) : null;
+    // ...and ask them for the documents everyone must provide.
+    const docs = await requestMandatoryDocuments(employeeId);
+    await emitEvent(viewer.tenantId, "employee.created", {
+      employeeId, employeeNumber: created.employeeNumber, displayName: created.displayName, dateOfJoining: d.dateOfJoining.toISOString().slice(0, 10), status: d.status,
+    });
 
     return done(
       ["/employees", "/org", "/", "/onboarding"],
       `Created ${created.displayName} as ${created.employeeNumber}.` +
         (d.inviteToPortal ? " A login was created — send them a password reset to activate it." : "") +
         (journey.created ? ` Onboarding started with ${journey.tasks} task(s).` : "") +
-        (probation?.created ? ` ${probation.message}` : ""),
+        (probation?.created ? ` ${probation.message}` : "") +
+        (docs ? ` Requested ${docs} mandatory document(s).` : ""),
     );
   } catch (err) {
     return toErrorState(err);
@@ -594,7 +600,7 @@ export async function reviseSalary(_prev: ActionState, formData: FormData): Prom
     where: { id: d.employeeId },
     include: {
       payGroup: { select: { id: true } },
-      salaryRevisions: { orderBy: { effectiveFrom: "desc" }, take: 1 },
+      salaryRevisions: { where: { status: "APPLIED" }, orderBy: { effectiveFrom: "desc" }, take: 1 },
     },
   });
   if (!employee.payGroupId) {
@@ -629,70 +635,52 @@ export async function reviseSalary(_prev: ActionState, formData: FormData): Prom
       return { ok: false, message: "No salary structure covers that CTC. Add one to the pay group first." };
     }
 
-    // Is this back-dated relative to the last finalised run?
-    const lastFinalised = await prisma.payrollRun.findFirst({
-      where: { payGroupId: employee.payGroupId, status: "FINALIZED" },
-      orderBy: [{ year: "desc" }, { month: "desc" }],
-      select: { year: true, month: true, periodEnd: true },
-    });
-    const isBackdated = !!lastFinalised && d.effectiveFrom <= lastFinalised.periodEnd;
+    if (await prisma.salaryRevision.count({ where: { employeeId: d.employeeId, status: "PENDING_APPROVAL" } })) {
+      return { ok: false, message: "A salary change for this employee is already waiting for approval. Approve, reject or withdraw it first." };
+    }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.salaryRevision.create({
-        data: {
-          employeeId: d.employeeId,
-          structureId,
-          effectiveFrom: d.effectiveFrom,
-          annualCtc: d.annualCtc,
-          previousCtc,
-          remunerationType: previous?.remunerationType ?? "MONTHLY",
-          status: "APPLIED",
-          reason: d.reason,
-          arrearsProcessed: !isBackdated,
-          createdBy: viewer.user.id,
-        },
-      });
-
-      // A back-dated rise owes the difference for every closed month since.
-      if (isBackdated && previousCtc !== null && d.annualCtc > previousCtc) {
-        const monthlyDelta = (d.annualCtc - previousCtc) / 12;
-        const closedRuns = await tx.payrollRun.findMany({
-          where: {
-            payGroupId: employee.payGroupId!, status: "FINALIZED",
-            periodEnd: { gte: d.effectiveFrom },
-          },
-          select: { year: true, month: true },
-        });
-        for (const r of closedRuns) {
-          await tx.arrear.create({
-            data: {
-              employeeId: d.employeeId,
-              source: "BACKDATED_REVISION",
-              forYear: r.year, forMonth: r.month,
-              amount: Math.round(monthlyDelta),
-              note: `Back-dated revision effective ${d.effectiveFrom.toISOString().slice(0, 10)}`,
-            },
-          });
-        }
-      }
+    const revision = await prisma.salaryRevision.create({
+      data: {
+        employeeId: d.employeeId,
+        structureId,
+        effectiveFrom: d.effectiveFrom,
+        annualCtc: d.annualCtc,
+        previousCtc,
+        remunerationType: previous?.remunerationType ?? "MONTHLY",
+        status: "PENDING_APPROVAL",
+        reason: d.reason,
+        createdBy: viewer.user.id,
+      },
     });
 
     const pct = previousCtc && previousCtc > 0
       ? (((d.annualCtc - previousCtc) / previousCtc) * 100).toFixed(1)
       : null;
+    const summary = `Salary change for ${target.employeeNumber}: ${d.annualCtc.toLocaleString("en-IN")}${pct ? ` (${pct}%)` : ""} from ${d.effectiveFrom.toISOString().slice(0, 10)}`;
+
+    // Maker-checker: with a compensation-change rule on the pay group the
+    // revision waits for its approval chain; otherwise it applies now.
+    const approval = await openApproval({
+      tenantId: viewer.tenantId, payGroupId: employee.payGroupId, action: "COMPENSATION_CHANGE", requestedBy: viewer.user.id,
+      revisionId: revision.id, employeeId: d.employeeId, summary, link: "/payroll/approvals",
+    });
+    const pending = approval.required && approval.status === "PENDING";
+    const applied = pending ? null : await prisma.$transaction((tx) => applySalaryRevision(revision.id, tx));
 
     await writeAudit(viewer, {
       module: "PAYROLL", action: "UPDATE", entityType: "SalaryRevision", entityId: d.employeeId,
-      summary: `Revised ${target.employeeNumber} to ${d.annualCtc}${pct ? ` (${pct}%)` : ""}, effective ${d.effectiveFrom.toISOString().slice(0, 10)}${isBackdated ? " — arrears raised" : ""}`,
+      summary: `${pending ? "Requested" : "Revised"} ${target.employeeNumber} to ${d.annualCtc}${pct ? ` (${pct}%)` : ""}, effective ${d.effectiveFrom.toISOString().slice(0, 10)}${applied?.arrears ? " — arrears raised" : ""}${pending ? " — sent for approval" : ""}`,
       oldValue: { annualCtc: previousCtc },
       newValue: { annualCtc: d.annualCtc },
     });
 
     return done(
-      [`/employees/${d.employeeId}`, "/employees", "/payroll/runs"],
-      isBackdated
-        ? `Saved${pct ? ` (${pct}%)` : ""}. This is back-dated past a finalised run, so arrears were raised and will appear in step 5 of the next payroll.`
-        : `Saved${pct ? ` (${pct}%)` : ""}. It takes effect from the run covering ${d.effectiveFrom.toISOString().slice(0, 10)}.`,
+      [`/employees/${d.employeeId}`, "/employees", "/payroll/runs", "/payroll/approvals"],
+      pending
+        ? `Sent for approval${pct ? ` (${pct}%)` : ""}. It takes effect once every approver in the compensation-change chain signs off.`
+        : applied?.backdated
+          ? `Saved${pct ? ` (${pct}%)` : ""}. This is back-dated past a finalised run, so arrears were raised and will appear in step 5 of the next payroll.`
+          : `Saved${pct ? ` (${pct}%)` : ""}. It takes effect from the run covering ${d.effectiveFrom.toISOString().slice(0, 10)}.`,
     );
   } catch (err) {
     return toErrorState(err, parsed.data as never);

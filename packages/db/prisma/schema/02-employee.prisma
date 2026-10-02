@@ -148,9 +148,14 @@ model Employee {
   adhocTransactions AdhocTransaction[]
   bonuses           EmployeeBonus[]
   componentClaims   ComponentClaim[]
+  fbpDeclarations   FbpDeclaration[]
+  perks             EmployeePerk[]
   arrears           Arrear[]
   fnfSettlement     FnfSettlement?
   exitRecord        ExitRecord?
+  /// Notice rules for this person; null follows the tenant's default policy.
+  noticePeriodPolicyId String?
+  noticePeriodPolicy   NoticePeriodPolicy? @relation(fields: [noticePeriodPolicyId], references: [id], onDelete: SetNull)
 
   // --- Workplace (07) ---
   announcementReads  AnnouncementRead[]
@@ -175,6 +180,7 @@ model Employee {
   referredCandidates   Candidate[]         @relation("CandidateReferral")
   interviewPanels      InterviewPanelist[]
   bgvChecks            BgvCheck[]
+  compProposals        CompensationProposal[]
 
   // --- Performance (09) ---
   goals            Goal[]

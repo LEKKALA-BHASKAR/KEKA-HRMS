@@ -22,6 +22,10 @@ export default async function OnboardingPage({ searchParams }: { searchParams: P
     <>
       <PageHead title="Journeys" subtitle="Onboarding, confirmation, promotion and transfer — every task an event sets in motion" />
       <div className="tabs">
+        <Link className="tab active" href="/onboarding">Journeys</Link>
+        <Link className="tab" href="/onboarding/preboarding">Preboarding</Link>
+      </div>
+      <div className="tabs">
         <Link href="/onboarding" className={`tab${view === "active" ? " active" : ""}`}>In progress</Link>
         <Link href="/onboarding?tab=done" className={`tab${view === "done" ? " active" : ""}`}>Completed</Link>
         {manage ? <Link href="/onboarding?tab=templates" className={`tab${view === "templates" ? " active" : ""}`}>Templates</Link> : null}

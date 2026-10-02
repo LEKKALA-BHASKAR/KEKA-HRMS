@@ -9,6 +9,7 @@
     "@keka/payroll": "*",
     "@keka/shared": "*",
     "@keka/time": "*",
-    "@keka/documents": "*"
+    "@keka/documents": "*",
+    "jose": "^5.9.6"
   }
 }

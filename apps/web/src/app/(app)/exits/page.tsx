@@ -68,6 +68,8 @@ export default async function ExitsPage({ searchParams }: { searchParams: Promis
         <Card title="Initiate an exit" description="Resignations wait for approval; HR-recorded exits take effect immediately and start the exit checklist.">
           <Disclosure label="Initiate exit">
             <InitiateExitForm canRecordAll={can(viewer, P.EXIT_MANAGE)}
+              reasons={(await prisma.exitReason.findMany({ where: { tenantId: viewer.tenantId, isActive: true }, orderBy: [{ displayOrder: "asc" }, { name: "asc" }] }))
+                .map((r) => ({ value: r.id, label: `${r.name}${r.kind === "INVOLUNTARY" ? " (involuntary)" : ""}` }))}
               employees={candidates.map((e) => ({ value: e.id, label: `${e.employeeNumber} — ${e.displayName}` }))} />
           </Disclosure>
         </Card>

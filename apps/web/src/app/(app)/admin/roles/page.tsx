@@ -6,6 +6,7 @@ import {
 } from "@keka/rbac";
 import { requireAuth } from "@/lib/context";
 import { PageHead, Card, Badge, Empty, Callout, Person } from "@/components/ui";
+import { AssignRoleForm, RemoveAssignmentButton } from "./forms";
 
 const P = PERMISSIONS;
 
@@ -63,6 +64,11 @@ export default async function RolesPage({
     where: { tenantId: viewer.tenantId },
     select: { id: true, name: true },
   });
+  const people = await prisma.employee.findMany({
+    where: { tenantId: viewer.tenantId, userId: { not: null }, status: { not: "EXITED" } },
+    select: { id: true, displayName: true, employeeNumber: true },
+    orderBy: { displayName: "asc" },
+  });
   const deptName = new Map(departments.map((d) => [d.id, d.name]));
   const locName = new Map(locations.map((l) => [l.id, l.name]));
 
@@ -71,6 +77,7 @@ export default async function RolesPage({
       <PageHead
         title="Roles & permissions"
         subtitle="Two role families — explicit roles you assign, and implicit roles derived from position in the org tree"
+        actions={<Link className="btn primary" href="/admin/roles/new">New custom role</Link>}
       />
 
       <div className="tabs">
@@ -121,7 +128,7 @@ export default async function RolesPage({
                   {roles.map((r) => (
                     <tr key={r.id}>
                       <td>
-                        <div className="strong">{r.name}</div>
+                        <Link href={`/admin/roles/${r.id}`} className="strong">{r.name}</Link>
                         <div className="text-xs subtle" style={{ maxWidth: 560 }}>{r.description}</div>
                       </td>
                       <td className="mono text-xs">{r.key ?? <span className="subtle">custom</span>}</td>
@@ -183,6 +190,15 @@ export default async function RolesPage({
       ) : null}
 
       {tab === "assignments" ? (
+        <div className="stack gap-4">
+        <Card title="Grant or re-scope a role" description="Pick a person and a role. Tick departments or locations to limit whose records the role reaches." tight>
+          <AssignRoleForm
+            roles={roles.map((r) => ({ id: r.id, name: r.name }))}
+            people={people.map((p) => ({ id: p.id, label: `${p.displayName ?? p.employeeNumber} · ${p.employeeNumber}` }))}
+            departments={departments}
+            locations={locations}
+          />
+        </Card>
         <Card
           title={`Role assignments (${assignments.length})`}
           description="A grant is (user × role × scope). Scope filters cover department and location — legal entity is deliberately not available as a role scope."
@@ -192,7 +208,7 @@ export default async function RolesPage({
             <div className="table-wrap">
               <table className="data">
                 <thead>
-                  <tr><th>User</th><th>Role</th><th>Scope</th><th>Effective reach</th></tr>
+                  <tr><th>User</th><th>Role</th><th>Scope</th><th>Effective reach</th><th /></tr>
                 </thead>
                 <tbody>
                   {assignments.map((a) => (
@@ -234,6 +250,7 @@ export default async function RolesPage({
                           ? "Every employee in the tenant — the UNION rule overrides visibility restrictions"
                           : `Only employees matching ${a.scopes.length} scope filter(s)`}
                       </td>
+                      <td><RemoveAssignmentButton id={a.id} label={`${a.role.name} from ${a.user.employee?.displayName ?? a.user.email}`} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -241,6 +258,7 @@ export default async function RolesPage({
             </div>
           )}
         </Card>
+        </div>
       ) : null}
 
       {tab === "matrix" ? (

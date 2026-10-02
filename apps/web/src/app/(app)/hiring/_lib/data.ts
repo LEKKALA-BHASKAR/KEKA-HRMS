@@ -118,7 +118,7 @@ export async function requisitionRows(viewer: Viewer, view: View, f: Filters, op
     prisma.requisition.count({ where }),
     prisma.requisition.count({ where: { AND: [pendingWhere, scope] } }),
     prisma.requisition.findMany({
-      where, orderBy: [{ createdAt: "desc" }], ...(opts.all ? { take: 5000 } : { skip: (f.page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
+      where, orderBy: [{ createdAt: "desc" }], skip: opts.all ? 0 : (f.page - 1) * PAGE_SIZE, take: opts.all ? 5000 : PAGE_SIZE,
       include: { jobs: { select: { id: true, openings: true, status: true }, orderBy: { createdAt: "asc" } } },
     }),
   ]);
@@ -179,7 +179,7 @@ export async function requisitionOptions(viewer: Viewer) {
     departments: departments.map((d) => ({ value: d.id, label: d.name })),
     locations: locations.map((l) => ({ value: l.id, label: l.name })),
     jobTitles: jobTitles.map((j) => j.name),
-    employees: employees.map((e) => ({ id: e.id, name: e.displayName, number: e.employeeNumber, title: e.jobTitleName })),
+    employees: employees.map((e) => ({ id: e.id, name: e.displayName ?? "", number: e.employeeNumber, title: e.jobTitleName })),
     recruiters: recruiters.map((u) => ({ value: u.id, label: u.employee?.displayName ?? u.email })),
     templates,
   };

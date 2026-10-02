@@ -210,6 +210,7 @@ export function ShiftForm({ shift }: { shift?: ShiftValues }) {
 export interface PolicyValues {
   id?: string; name?: string; description?: string | null;
   allowWebClockIn?: boolean; requireClockInComment?: boolean; ipAllowList?: string;
+  requireGeofence?: boolean; requireSelfie?: boolean;
   fullDayThresholdPct?: number; halfDayThresholdPct?: number; graceMinutes?: number;
   lateExemptPerMonth?: number; latePenaltyDays?: number;
   missingPunchExemptPerMonth?: number; missingPunchPenaltyDays?: number;
@@ -235,6 +236,8 @@ export function AttendancePolicyForm({ policy }: { policy?: PolicyValues }) {
           <div className="grid grid-2">
             <CheckboxInput name="allowWebClockIn" label="Allow web clock-in" defaultChecked={p.allowWebClockIn ?? true} />
             <CheckboxInput name="requireClockInComment" label="Require a comment on clock-in" defaultChecked={p.requireClockInComment} />
+            <CheckboxInput name="requireGeofence" label="Web and mobile clock-in only inside the office geo-fence" defaultChecked={p.requireGeofence} hint="Set each location's coordinates and radius under Organisation" />
+            <CheckboxInput name="requireSelfie" label="Require a selfie with each clock-in" defaultChecked={p.requireSelfie} />
           </div>
           <Field label="Allowed IP addresses" name="ipAllowList" state={state} hint="Comma or space separated. Empty allows any network.">
             <TextInput name="ipAllowList" state={state} defaultValue={p.ipAllowList} placeholder="203.0.113.10, 203.0.113.11" />

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatDate } from "@keka/shared";
+import { REVIEWER_LABEL } from "@keka/services";
 import { can, type Viewer } from "@/lib/context";
 import { scopedEmployeeWhere } from "@/lib/scope";
 import { Card, Badge, Empty, Person, Progress } from "@/components/ui";
@@ -19,7 +20,7 @@ export async function Reviews({ viewer }: { viewer: V }) {
   if (!me) return <Card><Empty title="No employee record" /></Card>;
   const [toWrite, mine] = await Promise.all([
     prisma.reviewResponse.findMany({
-      where: { reviewerId: me, submittedAt: null, review: { cycle: { status: { in: ["IN_PROGRESS", "LAUNCHED"] } } } },
+      where: { reviewerId: me, submittedAt: null, status: "ACTIVE", review: { status: { in: ["SELF_PENDING", "MANAGER_PENDING", "PENDING_CALIBRATION", "NOT_STARTED"] }, cycle: { status: { in: ["IN_PROGRESS", "LAUNCHED"] } } } },
       include: { review: { include: { employee: { select: { displayName: true, employeeNumber: true } }, cycle: { select: { name: true, reviewClosesAt: true } } } } },
     }),
     prisma.employeeReview.findMany({ where: { employeeId: me }, include: { cycle: { select: { name: true, periodEnd: true } }, band: true }, orderBy: { createdAt: "desc" } }),
@@ -33,7 +34,7 @@ export async function Reviews({ viewer }: { viewer: V }) {
               <tr key={r.id}>
                 <td><Person name={r.review.employee.displayName ?? ""} meta={r.review.employee.employeeNumber} /></td>
                 <td className="text-sm">{r.review.cycle.name}</td>
-                <td><Badge tone={r.reviewerType === "SELF" ? "info" : "warning"}>{r.reviewerType === "SELF" ? "self review" : "as manager"}</Badge></td>
+                <td><Badge tone={r.reviewerType === "SELF" ? "info" : r.reviewerType === "MANAGER" ? "warning" : "neutral"}>{r.reviewerType === "SELF" ? "self review" : r.reviewerType === "MANAGER" ? "as manager" : `${(REVIEWER_LABEL[r.reviewerType] ?? "").toLowerCase()} feedback`}</Badge></td>
                 <td className="text-sm muted">{r.review.cycle.reviewClosesAt ? `closes ${formatDate(r.review.cycle.reviewClosesAt)}` : ""}</td>
                 <td className="right"><Link className="btn sm primary" href={`/performance/reviews/${r.reviewId}`}>Write</Link></td>
               </tr>

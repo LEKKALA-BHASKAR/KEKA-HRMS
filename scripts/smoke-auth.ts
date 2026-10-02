@@ -39,6 +39,8 @@ async function main() {
     for (let i = 0; i < 5; i++) await signIn("meera.krishnan@acme.test", "wrong-password");
     const lockedReal = await signIn("meera.krishnan@acme.test", PASSWORD);
     check("Five wrong passwords lock the account, even against the right one", /Too many failed attempts/.test(lockedReal.error ?? ""), lockedReal.error);
+    const stillLocked = await signIn("meera.krishnan@acme.test", PASSWORD);
+    check("…and attempts refused while locked do not reopen it", /Too many failed attempts/.test(stillLocked.error ?? ""), stillLocked.error);
     for (let i = 0; i < 5; i++) await signIn("ghost.user@acme.test", "wrong-password");
     const lockedGhost = await signIn("ghost.user@acme.test", "anything");
     check("An address with no account locks identically — lockout reveals nothing", /Too many failed attempts/.test(lockedGhost.error ?? ""), lockedGhost.error);

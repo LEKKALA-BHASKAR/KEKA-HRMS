@@ -256,7 +256,7 @@ export function RemindForm({ action, toolbarRight, children }: { action: Act; to
   const recount = () => setCount(formRef.current?.querySelectorAll('input[name="ids"]:checked').length ?? 0);
   return (
     <form ref={formRef} onSubmit={submit} onChange={(e) => {
-      const t = e.target as HTMLInputElement;
+      const t = e.target as unknown as HTMLInputElement;
       if (t.dataset.all !== undefined) formRef.current?.querySelectorAll<HTMLInputElement>('input[name="ids"]').forEach((c) => { c.checked = t.checked; });
       recount();
     }}>

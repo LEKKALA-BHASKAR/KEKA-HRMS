@@ -5,6 +5,7 @@ import { ActionForm, Field, TextInput, SelectInput, TextArea, FormBanner, useFor
 import {
   saveGoalAction, checkInAction, setGoalStatusAction, createCycleAction, cycleOpAction, publishDraftGoalAction,
   submitReviewAction, calibrateAction, acknowledgeAction, createPipAction, closePipAction,
+  nominatePeersAction, decideNominationAction,
 } from "@/app/actions/performance";
 
 export interface Option { value: string; label: string }
@@ -109,6 +110,11 @@ export function CycleForm() {
           <Field label="Reviews close" name="reviewClosesAt" state={state}><TextInput name="reviewClosesAt" type="date" state={state} /></Field>
           <Field label="Self-review weight %" name="selfWeight" state={state} required><TextInput name="selfWeight" type="number" state={state} defaultValue={20} required /></Field>
           <Field label="Manager weight %" name="managerWeight" state={state} required><TextInput name="managerWeight" type="number" state={state} defaultValue={80} required /></Field>
+          <Field label="Skip-level manager weight %" name="skipLevelWeight" state={state} hint="0 leaves them out"><TextInput name="skipLevelWeight" type="number" state={state} defaultValue={0} /></Field>
+          <Field label="Peer weight %" name="peerWeight" state={state} hint="Peers are chosen by the employee, approved by their manager"><TextInput name="peerWeight" type="number" state={state} defaultValue={0} /></Field>
+          <Field label="Direct report weight %" name="subordinateWeight" state={state} hint="Up to eight direct reports"><TextInput name="subordinateWeight" type="number" state={state} defaultValue={0} /></Field>
+          <Field label="Peers per employee" name="maxPeers" state={state}><TextInput name="maxPeers" type="number" state={state} defaultValue={3} min={1} max={10} /></Field>
+          <Field label="Peer and report feedback" name="anonymity" state={state}><SelectInput name="anonymity" state={state} defaultValue="anonymous" options={[{ value: "anonymous", label: "Anonymous" }, { value: "named", label: "Shown with names" }]} /></Field>
         </div>
       )}
     </ActionForm>
@@ -127,7 +133,7 @@ export function CycleOps({ cycleId, status }: { cycleId: string; status: string 
   );
 }
 
-export function ReviewForm({ reviewId, reviewerType, indicators }: { reviewId: string; reviewerType: "SELF" | "MANAGER"; indicators: Array<{ id: string; name: string; category: string }> }) {
+export function ReviewForm({ reviewId, reviewerType, indicators }: { reviewId: string; reviewerType: string; indicators: Array<{ id: string; name: string; category: string }> }) {
   const [state, action, pending] = useForm(submitReviewAction);
   if (state.ok) return <div className="callout success"><div>{state.message}</div></div>;
   return (
@@ -153,10 +159,10 @@ export function ReviewForm({ reviewId, reviewerType, indicators }: { reviewId: s
           ))}
         </div>
       </Field>
-      <Field label={reviewerType === "SELF" ? "What went well" : "Strengths"} name="strengths" state={state} required={reviewerType === "MANAGER"}>
+      <Field label={reviewerType === "SELF" ? "What went well" : reviewerType === "MANAGER" ? "Strengths" : "What they do well"} name="strengths" state={state} required={reviewerType === "MANAGER"}>
         <TextArea name="strengths" state={state} rows={4} />
       </Field>
-      <Field label={reviewerType === "SELF" ? "What you would do differently" : "Areas to improve"} name="improvements" state={state} required={reviewerType === "MANAGER"}>
+      <Field label={reviewerType === "SELF" ? "What you would do differently" : reviewerType === "MANAGER" ? "Areas to improve" : "What they could do better"} name="improvements" state={state} required={reviewerType === "MANAGER"}>
         <TextArea name="improvements" state={state} rows={4} />
       </Field>
       <button className="btn primary" disabled={pending}>{pending ? "Submitting…" : "Submit — this cannot be edited afterwards"}</button>
@@ -222,6 +228,45 @@ export function ClosePip({ id }: { id: string }) {
         <button className="btn sm danger" name="outcome" value="UNSUCCESSFUL" disabled={pending}>Unsuccessful</button>
       </div>
       {state.message ? <div className={`text-xs ${state.ok ? "pos" : "neg"}`}>{state.message}</div> : null}
+    </form>
+  );
+}
+
+export function NominatePeers({ reviewId, options, remaining, byManager }: { reviewId: string; options: Option[]; remaining: number; byManager: boolean }) {
+  const [state, action, pending] = useForm(nominatePeersAction);
+  const [picked, setPicked] = useState<string[]>([]);
+  if (state.ok) return <div className="callout success"><div>{state.message}</div></div>;
+  return (
+    <form action={action} className="stack gap-2">
+      <FormBanner state={state} />
+      <input type="hidden" name="reviewId" value={reviewId} />
+      {picked.map((id) => <input key={id} type="hidden" name="peerIds" value={id} />)}
+      <div className="row gap-2">
+        <select className="select" value="" aria-label="Add a peer" onChange={(e) => { const v = e.target.value; if (v && !picked.includes(v) && picked.length < remaining) setPicked([...picked, v]); }}>
+          <option value="">{picked.length < remaining ? "Add a peer…" : `Up to ${remaining} more`}</option>
+          {options.filter((o) => !picked.includes(o.value)).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <button className="btn primary" disabled={pending || picked.length === 0}>{byManager ? "Ask for feedback" : "Send to my manager"}</button>
+      </div>
+      {picked.length ? (
+        <div className="row gap-1 wrap">
+          {picked.map((id) => <button key={id} type="button" className="btn ghost sm" title="Remove" onClick={() => setPicked(picked.filter((p) => p !== id))}>{options.find((o) => o.value === id)?.label} ×</button>)}
+        </div>
+      ) : null}
+    </form>
+  );
+}
+
+export function DecideNomination({ reviewId, responseId }: { reviewId: string; responseId: string }) {
+  const [state, action, pending] = useForm(decideNominationAction);
+  if (state.ok) return <span className="text-xs pos">{state.message}</span>;
+  return (
+    <form action={action} className="row gap-1">
+      <input type="hidden" name="reviewId" value={reviewId} />
+      <input type="hidden" name="responseId" value={responseId} />
+      <button className="btn sm primary" name="decision" value="approve" disabled={pending}>Approve</button>
+      <button className="btn sm ghost" name="decision" value="decline" disabled={pending}>Decline</button>
+      {state.message ? <span className="text-xs neg">{state.message}</span> : null}
     </form>
   );
 }

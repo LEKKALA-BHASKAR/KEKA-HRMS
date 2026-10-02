@@ -333,14 +333,14 @@ export async function seedEngageLearn(prisma: PrismaClient, ctx: { tenantId: str
   // ---------------------------------------------------------------------
   await prisma.compOffRequest.create({
     data: {
-      tenantId, employeeId: id("ACM0010"), workedOn: utc(2026, 9, 26), days: 1, dayType: "Weekly off",
-      reason: "Production hotfix for the payments outage on Saturday.", expiresOn: utc(2026, 12, 25), createdAt: utc(2026, 9, 28),
+      tenantId, employeeId: id("ACM0010"), fromDate: utc(2026, 9, 26), toDate: utc(2026, 9, 26), days: 1,
+      note: "Production hotfix for the payments outage on Saturday.", createdAt: utc(2026, 9, 28),
     },
   });
   await prisma.compOffRequest.create({
     data: {
-      tenantId, employeeId: id("ACM0011"), workedOn: utc(2026, 9, 20), days: 0.5, dayType: "Weekly off", status: "REJECTED",
-      reason: "Regression run before release.", decidedBy: id("ACM0005"), decidedAt: utc(2026, 9, 22),
+      tenantId, employeeId: id("ACM0011"), fromDate: utc(2026, 9, 20), toDate: utc(2026, 9, 20), days: 0.5, status: "REJECTED",
+      note: "Regression run before release.", decidedBy: id("ACM0005"), decidedAt: utc(2026, 9, 22),
       decisionNote: "Only 2 hours recorded — please log your time next time and claim again.", createdAt: utc(2026, 9, 21),
     },
   });
@@ -348,7 +348,7 @@ export async function seedEngageLearn(prisma: PrismaClient, ctx: { tenantId: str
   const el = await prisma.leaveType.findFirst({ where: { tenantId, code: "EL" } });
   let encash = 0;
   if (el) {
-    const r = await svc.raiseEncashment({ employeeId: id("ACM0008"), leaveTypeId: el.id, days: 3, reason: "Family wedding expenses." });
+    const r = await svc.raiseEncashmentRequest({ employeeId: id("ACM0008"), leaveTypeId: el.id, days: 3, note: "Family wedding expenses." });
     if (r.ok) encash++;
   }
 

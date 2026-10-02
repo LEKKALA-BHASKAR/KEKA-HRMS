@@ -15,6 +15,9 @@ import {
   AddressForm, IdentityForm, BankForm, EducationForm, ExperienceForm,
   DependentForm, EmergencyForm, RemoveSubRecord, AccessControls,
 } from "./forms";
+import { CustomFieldsForm } from "./custom-fields";
+import { NoticePolicyPicker } from "./notice";
+import { displayCustomValue, type CustomFieldKind } from "@keka/services";
 
 const P = PERMISSIONS;
 
@@ -83,13 +86,35 @@ export default async function EmployeePage({
   const showFinancials = isSelf || canAccessEmployee(viewer, target, P.EMPLOYEE_VIEW_FINANCIALS);
 
   const name = employee.displayName ?? `${employee.firstName} ${employee.lastName}`;
-  const currentSalary = employee.salaryRevisions[0] ?? null;
+  const currentSalary = employee.salaryRevisions.find((r) => r.status === "APPLIED") ?? null;
   const pan = employee.identityDocs.find((d) => d.type === "PAN")?.number ?? null;
 
   const canEdit = canAccessEmployee(viewer, target, P.EMPLOYEE_UPDATE);
   const canEditFinancials = canAccessEmployee(viewer, target, P.EMPLOYEE_MANAGE_FINANCIALS);
   const canRevise = can(viewer, P.SALARY_REVISE) && showFinancials;
   const canManageAccess = can(viewer, P.EMPLOYEE_DISABLE_LOGIN) || can(viewer, P.EMPLOYEE_INVITE);
+
+  // Custom fields the organisation added under Settings; inactive ones stay hidden but keep their values.
+  const customDefs = tab === "profile"
+    ? await prisma.customFieldDefinition.findMany({
+        where: { tenantId: viewer.tenantId, entity: "EMPLOYEE", isActive: true },
+        orderBy: [{ displayOrder: "asc" }, { label: "asc" }],
+        include: { values: { where: { ownerId: employee.id } } },
+      })
+    : [];
+  const customFields = customDefs.map((d) => ({
+    id: d.id, label: d.label, section: d.section ?? "Additional details", type: d.type,
+    options: (d.options as string[] | null) ?? [], isMandatory: d.isMandatory, value: d.values[0]?.value ?? null,
+  }));
+  const customSections = [...new Set(customFields.map((f) => f.section))];
+
+  const noticePolicies = tab === "job"
+    ? await prisma.noticePeriodPolicy.findMany({ where: { tenantId: viewer.tenantId, isActive: true }, orderBy: [{ isDefault: "desc" }, { name: "asc" }] })
+    : [];
+  const noticeOwn = noticePolicies.find((p) => p.id === employee.noticePeriodPolicyId) ?? null;
+  // The same fallback noticeDaysFor uses: the default, else the oldest active policy.
+  const noticeDefault = noticePolicies.find((p) => p.isDefault) ?? [...noticePolicies].sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime())[0] ?? null;
+  const noticeLabel = (p: { name: string; resignationDays: number; probationDays: number }) => `${p.name}: ${p.resignationDays} days, ${p.probationDays} in probation`;
 
   // Option lists for the edit forms. Only loaded when an edit form will render.
   const needsJobOptions = canEdit && tab === "job";
@@ -376,6 +401,29 @@ export default async function EmployeePage({
         </div>
       ) : null}
 
+      {tab === "profile" && customFields.length ? (
+        <div style={{ marginTop: 16 }}>
+          <Card title="Additional details" description={customSections.length > 1 ? customSections.join(" · ") : undefined}>
+            <div className="stack gap-4">
+              {customSections.map((section) => (
+                <div key={section}>
+                  {customSections.length > 1 ? <div className="text-xs strong subtle" style={{ marginBottom: 6 }}>{section.toUpperCase()}</div> : null}
+                  <KeyValue items={customFields.filter((f) => f.section === section).map((f) => [
+                    <>{f.label}{f.isMandatory && !f.value ? <Badge tone="warning">missing</Badge> : null}</>,
+                    f.value ? displayCustomValue(f.type as CustomFieldKind, f.value) : <span className="subtle">—</span>,
+                  ])} />
+                </div>
+              ))}
+              {canEdit ? (
+                <EditToggle label="Edit details">
+                  <CustomFieldsForm employeeId={employee.id} fields={customFields} />
+                </EditToggle>
+              ) : null}
+            </div>
+          </Card>
+        </div>
+      ) : null}
+
       {/* ---------------------------------------------------------------- */}
       {tab === "job" ? (
         <div className="stack gap-4">
@@ -396,6 +444,14 @@ export default async function EmployeePage({
             </EditToggle>
           </Card>
         ) : null}
+        <Card title="Notice period" description="What this person must serve on resignation. Used when an exit is raised.">
+          {canEdit && noticePolicies.length ? (
+            <NoticePolicyPicker employeeId={employee.id} current={noticeOwn?.id ?? null} defaultName={noticeDefault ? noticeLabel(noticeDefault) : "none set"}
+              options={noticePolicies.map((p) => ({ value: p.id, label: noticeLabel(p) }))} />
+          ) : (
+            <div className="text-sm">{noticeOwn ? noticeLabel(noticeOwn) : noticeDefault ? `Organisation default — ${noticeLabel(noticeDefault)}` : "No notice policy set up: 60 days on resignation."}</div>
+          )}
+        </Card>
         <Card
           title="Job history"
           description="Effective-dated. There is no separate transfer or promotion module — position changes are made here with an effective date and the full history is retained."
@@ -608,10 +664,8 @@ export default async function EmployeePage({
                   </thead>
                   <tbody>
                     {employee.salaryRevisions.map((r, i) => {
-                      const prev = employee.salaryRevisions[i + 1];
-                      const delta = prev
-                        ? ((Number(r.annualCtc) - Number(prev.annualCtc)) / Number(prev.annualCtc)) * 100
-                        : null;
+                      const prevCtc = r.previousCtc ? Number(r.previousCtc) : Number(employee.salaryRevisions.slice(i + 1).find((p) => p.status === "APPLIED")?.annualCtc ?? 0);
+                      const delta = prevCtc ? ((Number(r.annualCtc) - prevCtc) / prevCtc) * 100 : null;
                       return (
                         <tr key={r.id}>
                           <td className="nowrap">{formatDate(r.effectiveFrom)}</td>
@@ -621,7 +675,11 @@ export default async function EmployeePage({
                           </td>
                           <td className="text-sm">{r.structure?.name ?? "—"}</td>
                           <td className="text-sm muted">{r.reason ?? "—"}</td>
-                          <td><Badge tone={r.status === "APPLIED" ? "success" : "warning"}>{r.status.toLowerCase()}</Badge></td>
+                          <td>
+                            {r.status === "PENDING_APPROVAL"
+                              ? <Link href="/payroll/approvals"><Badge tone="warning">awaiting approval</Badge></Link>
+                              : <Badge tone={r.status === "APPLIED" ? "success" : r.status === "REJECTED" ? "danger" : "warning"}>{r.status.toLowerCase().replace(/_/g, " ")}</Badge>}
+                          </td>
                         </tr>
                       );
                     })}

@@ -30,7 +30,7 @@ const initial: SignInState = {};
  * not the account exists (lockout included). Two-factor still redirects to
  * /signin/verify from inside the action.
  */
-export function SignInForm({ product = "Keka", next }: { product?: string; next?: string }) {
+export function SignInForm({ product = "Keka", next, sso, ssoError }: { product?: string; next?: string; sso?: { name: string; required: boolean } | null; ssoError?: string | null }) {
   const [state, formAction, pending] = useActionState(signIn, initial);
   const [step, setStep] = useState<"email" | "password">("email");
   const [email, setEmail] = useState("");
@@ -83,6 +83,18 @@ export function SignInForm({ product = "Keka", next }: { product?: string; next?
         {step === "password" ? `Enter the password for ${email}.` : ""}
       </p>
 
+      {ssoError ? <div className={s.error} role="alert" style={{ marginBottom: 14 }}>{ssoError}</div> : null}
+      {sso ? (
+        <div style={{ marginBottom: 18 }}>
+          <a className={s.submit} style={{ display: "block", textAlign: "center", textDecoration: "none" }}
+            href={`/auth/sso/start?${new URLSearchParams({ ...(next ? { next } : {}), ...(email ? { email } : {}) }).toString()}`}>
+            Sign in with {sso.name}
+          </a>
+          <div className="text-xs" style={{ textAlign: "center", marginTop: 10, color: "var(--text-subtle)" }}>
+            {sso.required ? "Your company signs in through its identity provider. Passwords work only for administrators." : "or use your password"}
+          </div>
+        </div>
+      ) : null}
       {step === "email" ? (
         <form onSubmit={toPassword}>
           <div className={s.field}>

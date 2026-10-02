@@ -343,7 +343,11 @@ const locationSchema = z.object({
   postalCode: zOptional(12),
   countryCode: z.string().min(2).max(2).default("IN"),
   timezone: z.string().default("Asia/Kolkata"),
-});
+  latitude: zNumber({ min: -90, max: 90 }),
+  longitude: zNumber({ min: -180, max: 180 }),
+  geofenceRadiusM: zNumber({ min: 10, max: 50_000 }),
+}).refine((v) => (v.latitude === null) === (v.longitude === null), { message: "Give both latitude and longitude, or neither", path: ["longitude"] })
+  .refine((v) => v.geofenceRadiusM === null || v.latitude !== null, { message: "Set the coordinates for a geo-fence", path: ["latitude"] });
 
 export async function saveLocation(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const viewer = await requireAuth(P.ORG_MANAGE);

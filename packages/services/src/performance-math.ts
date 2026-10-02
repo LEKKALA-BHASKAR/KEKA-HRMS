@@ -46,6 +46,12 @@ export function rollupProgress(children: Array<{ progress: number; weight: numbe
 }
 
 export interface ReviewerWeight { type: string; weight: number }
+/** Who can give input on a review, in the order they are shown. */
+export const REVIEWER_TYPES = ["SELF", "MANAGER", "SKIP_LEVEL", "PEER", "SUBORDINATE"] as const;
+export type ReviewerType = (typeof REVIEWER_TYPES)[number];
+export const REVIEWER_LABEL: Record<string, string> = { SELF: "Self", MANAGER: "Manager", SKIP_LEVEL: "Skip-level manager", PEER: "Peer", SUBORDINATE: "Direct report" };
+/** Types whose input is shown without names when the cycle is anonymous. */
+export const FEEDBACK_TYPES = ["SKIP_LEVEL", "PEER", "SUBORDINATE"];
 export const DEFAULT_REVIEWERS: ReviewerWeight[] = [{ type: "SELF", weight: 0 }, { type: "MANAGER", weight: 100 }];
 
 /**
@@ -54,7 +60,11 @@ export const DEFAULT_REVIEWERS: ReviewerWeight[] = [{ type: "SELF", weight: 0 },
  * remaining weights rescale, rather than dragging the score to zero.
  */
 export function weightedRating(responses: Array<{ type: string; rating: number | null }>, weights: ReviewerWeight[]): number | null {
-  const parts = responses.filter((r) => r.rating !== null).map((r) => ({ rating: r.rating!, weight: weights.find((w) => w.type === r.type)?.weight ?? 0 }));
+  // Several people of one type (peers, reports) share that type's weight:
+  // average them first, so three peers do not count three times.
+  const byType = new Map<string, number[]>();
+  for (const r of responses) if (r.rating !== null) byType.set(r.type, [...(byType.get(r.type) ?? []), r.rating]);
+  const parts = [...byType].map(([type, rs]) => ({ rating: rs.reduce((a, b) => a + b, 0) / rs.length, weight: weights.find((w) => w.type === type)?.weight ?? 0 }));
   const total = parts.reduce((s, p) => s + p.weight, 0);
   if (total === 0) return null;
   return r2(parts.reduce((s, p) => s + p.rating * p.weight, 0) / total);

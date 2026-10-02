@@ -40,11 +40,11 @@ export async function finalizePayrollRun(runId: string, actorUserId: string): Pr
     });
     // Mirror exactly what calculateRun selected for these people this month.
     await tx.adhocTransaction.updateMany({
-      where: { employeeId: { in: ids }, year: run.year, month: run.month, isPaidOutside: false, isProcessed: false },
+      where: { employeeId: { in: ids }, year: run.year, month: run.month, isPaidOutside: false, isProcessed: false, OR: [{ runId: null }, { runId }] },
       data: { isProcessed: true, runId },
     });
     await tx.employeeBonus.updateMany({
-      where: { employeeId: { in: ids }, payoutYear: run.year, payoutMonth: run.month, isProcessed: false, payAction: { in: ["PAY", "PARTIALLY_PAY"] } },
+      where: { employeeId: { in: ids }, payoutYear: run.year, payoutMonth: run.month, isProcessed: false, payAction: { in: ["PAY", "PARTIALLY_PAY"] }, OR: [{ runId: null }, { runId }] },
       data: { isProcessed: true, runId },
     });
     // Only what the calculation deducted: active loans of processed people.
@@ -56,6 +56,14 @@ export async function finalizePayrollRun(runId: string, actorUserId: string): Pr
       where: { employeeId: { in: ids }, payoutYear: run.year, payoutMonth: run.month, status: "APPROVED" },
       data: { status: "PAID", runId },
     });
+    await tx.overtimeEntry.updateMany({
+      where: { employeeId: { in: ids }, year: run.year, month: run.month, payAction: "PAY", isProcessed: false },
+      data: { isProcessed: true, runId },
+    });
+    await tx.shiftAllowanceEntry.updateMany({
+      where: { employeeId: { in: ids }, year: run.year, month: run.month, payAction: "PAY", isProcessed: false },
+      data: { isProcessed: true, runId },
+    });
   }, { timeout: 60_000 });
 
   await syncLoansForRun(runId, run.year, run.month, run.payGroupId);
@@ -64,6 +72,8 @@ export async function finalizePayrollRun(runId: string, actorUserId: string): Pr
   // The month reaches the books as one accrual. A ledger problem (a closed
   // period, say) does not undo a finalised payroll; it is reported instead.
   const ledger = await postPayrollRun(runId, actorUserId);
+  const { emitEvent } = await import("./webhooks");
+  await emitEvent(run.tenantId, "payroll.finalized", { runId: run.id, year: run.year, month: run.month, type: run.type, payslips: processed.length });
   return { ok: true, message: `Finalised: ${processed.length} payslip(s) generated.${ledger.ok ? ` ${ledger.message}` : ` Not posted to the ledger: ${ledger.message}`}`, payslips: processed.length };
 }
 
@@ -86,6 +96,8 @@ export async function rollbackPayrollRun(runId: string, reason: string): Promise
     where: { payGroupId: run.payGroupId, status: "FINALIZED", rolledBackAt: null, OR: [{ year: { gt: run.year } }, { year: run.year, month: { gt: run.month } }] },
   });
   if (later) return { ok: false, message: `Roll back ${later.month}/${later.year} first — it was finalised on top of this month.` };
+  const offCycle = await prisma.payrollRun.findFirst({ where: { baseRunId: runId, status: "FINALIZED", rolledBackAt: null } });
+  if (offCycle) return { ok: false, message: "An off-cycle payroll was finalised on top of this month. Roll that back first." };
 
   await prisma.$transaction(async (tx) => {
     await tx.payslip.deleteMany({ where: { runId } });
@@ -94,6 +106,8 @@ export async function rollbackPayrollRun(runId: string, reason: string): Promise
     await tx.employeeBonus.updateMany({ where: { runId }, data: { isProcessed: false, runId: null } });
     await tx.loanInstallment.updateMany({ where: { runId }, data: { status: "SCHEDULED", runId: null, deductedAt: null } });
     await tx.componentClaim.updateMany({ where: { runId, status: "PAID" }, data: { status: "APPROVED", runId: null } });
+    await tx.overtimeEntry.updateMany({ where: { runId }, data: { isProcessed: false, runId: null } });
+    await tx.shiftAllowanceEntry.updateMany({ where: { runId }, data: { isProcessed: false, runId: null } });
     // Journal vouchers are never deleted after export, only archived.
     await tx.journalVoucher.updateMany({ where: { runId }, data: { status: "ARCHIVED" } });
     await tx.payrollRun.update({

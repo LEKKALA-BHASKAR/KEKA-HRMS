@@ -23,7 +23,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 //  EXITS
 // ---------------------------------------------------------------------------
 
-export function InitiateExitForm({ employees, canRecordAll }: { employees: Option[]; canRecordAll: boolean }) {
+export function InitiateExitForm({ employees, canRecordAll, reasons = [] }: { employees: Option[]; canRecordAll: boolean; reasons?: Option[] }) {
   const types = canRecordAll
     ? ["RESIGNATION", "TERMINATION", "RETIREMENT", "END_OF_CONTRACT", "ABSCONDING", "DEATH"] as const
     : ["RESIGNATION"] as const;
@@ -45,7 +45,12 @@ export function InitiateExitForm({ employees, canRecordAll }: { employees: Optio
               <TextInput name="lastWorkingDay" type="date" state={state} />
             </Field>
           </div>
-          <Field label="Reason" name="reason" state={state}>
+          {reasons.length ? (
+            <Field label="Reason" name="reasonId" state={state}>
+              <SelectInput name="reasonId" state={state} options={reasons} placeholder="Select…" />
+            </Field>
+          ) : null}
+          <Field label={reasons.length ? "Comments" : "Reason"} name="reason" state={state}>
             <TextArea name="reason" state={state} rows={2} />
           </Field>
         </>
@@ -54,7 +59,7 @@ export function InitiateExitForm({ employees, canRecordAll }: { employees: Optio
   );
 }
 
-export function ResignForm({ policyLwd, noticeDays }: { policyLwd: string; noticeDays: number }) {
+export function ResignForm({ policyLwd, noticeDays, reasons = [] }: { policyLwd: string; noticeDays: number; reasons?: Option[] }) {
   return (
     <ActionForm action={resignAction} submitLabel="Submit resignation">
       {(state) => (
@@ -63,8 +68,13 @@ export function ResignForm({ policyLwd, noticeDays }: { policyLwd: string; notic
             hint={`Your notice period is ${noticeDays} days, ending ${policyLwd}. An earlier date may mean a notice recovery.`}>
             <TextInput name="lastWorkingDay" type="date" state={state} defaultValue={policyLwd} />
           </Field>
-          <Field label="Reason" name="reason" state={state} required>
-            <TextArea name="reason" state={state} rows={3} required />
+          {reasons.length ? (
+            <Field label="Main reason" name="reasonId" state={state} required>
+              <SelectInput name="reasonId" state={state} options={reasons} placeholder="Select…" required />
+            </Field>
+          ) : null}
+          <Field label={reasons.length ? "Anything you'd like to add" : "Reason"} name="reason" state={state} required={!reasons.length}>
+            <TextArea name="reason" state={state} rows={3} required={!reasons.length} />
           </Field>
         </>
       )}

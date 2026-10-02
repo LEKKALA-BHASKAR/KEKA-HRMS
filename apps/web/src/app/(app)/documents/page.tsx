@@ -4,17 +4,21 @@ import { PERMISSIONS, employeeScopeFilter } from "@keka/rbac";
 import { formatDate } from "@keka/shared";
 import { requireAuth, can } from "@/lib/context";
 import { PageHead, Card, Badge, Empty, Person, Stat, Callout, Progress } from "@/components/ui";
-import { verifyDocument, acknowledgeOrgDocument, generateLetter } from "@/app/actions/workplace";
+import { verifyDocument, acknowledgeOrgDocument } from "@/app/actions/workplace";
+import { EMPLOYEE_VISIBLE, LETTER_STATUS_LABEL, LETTER_WORKFLOWS } from "@keka/services";
+import { GenerateLetter } from "./letters/forms";
+import { LETTER_TONE } from "./letters/tone";
 import { UploadDocument } from "./upload";
 
 const P = PERMISSIONS;
 
-const TABS = ["pending", "expiring", "policies", "templates", "mine"] as const;
+const TABS = ["pending", "expiring", "policies", "letters", "templates", "mine"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABEL: Record<Tab, string> = {
   pending: "Pending verification",
   expiring: "Expiring",
   policies: "Company policies",
+  letters: "Letters",
   templates: "Letter templates",
   mine: "My documents",
 };
@@ -36,12 +40,32 @@ export default async function DocumentsPage({
   const canVerify = can(viewer, P.DOCUMENT_VERIFY);
   const canManage = can(viewer, P.DOCUMENT_MANAGE);
   const canGenerate = can(viewer, P.LETTER_GENERATE);
+  const canTemplates = can(viewer, P.DOCUMENT_TEMPLATE_MANAGE);
   const myId = viewer.employee?.id;
   const defaultTab: Tab = canVerify ? "pending" : "mine";
   const tab = (TABS.includes(sp.tab as Tab) ? sp.tab : defaultTab) as Tab;
 
   const scopeFilter = employeeScopeFilter(viewer, P.DOCUMENT_VIEW);
   const soon = new Date(Date.now() + 90 * 86400000);
+
+  const letterScope = employeeScopeFilter(viewer, P.LETTER_GENERATE);
+  const [letters, myLetters] = await Promise.all([
+    canGenerate
+      ? prisma.generatedDocument.findMany({
+          where: { employee: { tenantId: viewer.tenantId, ...(letterScope ? (letterScope as object) : {}) } },
+          orderBy: { issuedOn: "desc" }, take: 200,
+          include: { template: { select: { name: true } }, employee: { select: { id: true, displayName: true, employeeNumber: true } } },
+        })
+      : Promise.resolve([]),
+    myId
+      ? prisma.generatedDocument.findMany({
+          where: { employeeId: myId, status: { in: EMPLOYEE_VISIBLE } },
+          orderBy: { issuedOn: "desc" },
+          include: { template: { select: { name: true } } },
+        })
+      : Promise.resolve([]),
+  ]);
+  const myOpenLetters = myLetters.filter((l) => l.status === "PENDING_SIGNATURE" || l.status === "PENDING_ACKNOWLEDGEMENT");
 
   const [pending, expiring, policies, templates, myDocs, myPolicyAcks, employees, headcount, statusCounts] =
     await Promise.all([
@@ -91,8 +115,8 @@ export default async function DocumentsPage({
       }),
       canGenerate
         ? prisma.documentTemplate.findMany({
-            where: { tenantId: viewer.tenantId, isArchived: false },
-            orderBy: { category: "asc" },
+            where: { tenantId: viewer.tenantId, ...(canTemplates ? {} : { isArchived: false }) },
+            orderBy: [{ isArchived: "asc" }, { category: "asc" }],
             include: { _count: { select: { generated: true } } },
           })
         : Promise.resolve([]),
@@ -111,7 +135,7 @@ export default async function DocumentsPage({
         : Promise.resolve([]),
       canGenerate
         ? prisma.employee.findMany({
-            where: { tenantId: viewer.tenantId },
+            where: { tenantId: viewer.tenantId, ...(letterScope ? (letterScope as object) : {}) },
             select: { id: true, displayName: true, employeeNumber: true },
             orderBy: { firstName: "asc" },
           })
@@ -132,7 +156,7 @@ export default async function DocumentsPage({
 
   const visibleTabs = TABS.filter((t) => {
     if (t === "mine") return !!myId;
-    if (t === "templates") return canGenerate;
+    if (t === "templates" || t === "letters") return canGenerate;
     if (t === "pending" || t === "expiring") return canVerify;
     return true;
   });
@@ -147,6 +171,20 @@ export default async function DocumentsPage({
             : "Your documents and the company policies you need to acknowledge"
         }
       />
+
+      {myOpenLetters.length > 0 ? (
+        <div style={{ marginBottom: 16 }}>
+          <Callout tone="warning" title={`${myOpenLetters.length} letter${myOpenLetters.length === 1 ? "" : "s"} waiting for you`}>
+            <div className="row gap-2 wrap" style={{ marginTop: 8 }}>
+              {myOpenLetters.map((l) => (
+                <Link key={l.id} className="btn primary sm" href={`/documents/letters/${l.id}`}>
+                  {l.status === "PENDING_SIGNATURE" ? "Sign" : "Acknowledge"} {l.template.name}
+                </Link>
+              ))}
+            </div>
+          </Callout>
+        </div>
+      ) : null}
 
       {myPendingPolicies.length > 0 ? (
         <div style={{ marginBottom: 16 }}>
@@ -356,49 +394,84 @@ export default async function DocumentsPage({
             emitted as a visible marker rather than silently left blank.
           </Callout>
 
-          <Card title={`Letter templates (${templates.length})`} tight>
+          <Card title={`Letter templates (${templates.length})`} tight action={canTemplates ? <Link className="btn sm primary" href="/documents/templates/new">New template</Link> : null}>
+            {templates.length === 0 ? <Empty title="No letter templates yet" /> : (
             <div className="table-wrap">
               <table className="data">
                 <thead>
                   <tr>
                     <th>Template</th><th>Category</th><th>Workflow</th>
-                    <th className="num">Placeholders</th><th className="num">Issued</th><th>Generate</th>
+                    <th className="num">Issued</th><th>Generate</th>
                   </tr>
                 </thead>
                 <tbody>
                   {templates.map((t) => (
                     <tr key={t.id}>
-                      <td className="strong">{t.name}</td>
-                      <td><Badge tone="neutral">{t.category.toLowerCase()}</Badge></td>
-                      <td className="text-sm">
-                        {t.workflow
-                          ? <Badge tone="info">{t.workflow.toLowerCase()}</Badge>
-                          : <span className="subtle">none</span>}
-                      </td>
-                      <td className="num">{Array.isArray(t.placeholders) ? t.placeholders.length : 0}</td>
-                      <td className="num">{t._count.generated}</td>
                       <td>
-                        <form action={generateLetter} className="row gap-1">
-                          <input type="hidden" name="templateId" value={t.id} />
-                          <select className="select" name="employeeId" required style={{ width: 172, padding: "3px 6px", fontSize: 12 }}>
-                            <option value="">For…</option>
-                            {employees.map((e) => (
-                              <option key={e.id} value={e.id}>{e.employeeNumber} {e.displayName}</option>
-                            ))}
-                          </select>
-                          <button className="btn sm" type="submit">Generate</button>
-                        </form>
+                        {canTemplates ? <Link className="strong" href={`/documents/templates/${t.id}`}>{t.name}</Link> : <span className="strong">{t.name}</span>}
+                        {t.isArchived ? <> <Badge tone="neutral">archived</Badge></> : null}
                       </td>
+                      <td><Badge tone="neutral">{t.category.toLowerCase().replace(/_/g, " ")}</Badge></td>
+                      <td className="text-sm">{LETTER_WORKFLOWS[(t.workflow ?? "") as keyof typeof LETTER_WORKFLOWS] ?? t.workflow}</td>
+                      <td className="num">{t._count.generated}</td>
+                      <td>{t.isArchived ? null : <GenerateLetter templateId={t.id} employees={employees.map((e) => ({ value: e.id, label: `${e.employeeNumber} ${e.displayName}` }))} />}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            )}
+          </Card>
+        </div>
+      ) : null}
+
+      {tab === "letters" && canGenerate ? (
+        <Card title={`Letters (${letters.length})`} tight>
+          {letters.length === 0 ? <Empty title="No letters generated yet">Generate one from the letter templates tab.</Empty> : (
+            <div className="table-wrap">
+              <table className="data">
+                <thead><tr><th>Letter</th><th>Employee</th><th>Generated</th><th>Status</th><th /></tr></thead>
+                <tbody>
+                  {letters.map((l) => (
+                    <tr key={l.id}>
+                      <td className="strong">{l.template.name}</td>
+                      <td><Link href={`/employees/${l.employee.id}`}>{l.employee.displayName}</Link> <span className="subtle text-xs">{l.employee.employeeNumber}</span></td>
+                      <td className="text-sm nowrap">{formatDate(l.issuedOn)}</td>
+                      <td>
+                        <Badge tone={LETTER_TONE[l.status] ?? "neutral"}>{LETTER_STATUS_LABEL[l.status] ?? l.status.toLowerCase()}</Badge>
+                        {l.signedAt ? <div className="text-xs subtle">signed {formatDate(l.signedAt)}</div> : l.acknowledgedAt ? <div className="text-xs subtle">acknowledged {formatDate(l.acknowledgedAt)}</div> : null}
+                      </td>
+                      <td className="right"><Link className="btn sm ghost" href={`/documents/letters/${l.id}`}>Open</Link></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      ) : null}
+
+      {tab === "mine" && myId ? (
+        <div className="stack gap-4">
+        {myLetters.length > 0 ? (
+          <Card title={`My letters (${myLetters.length})`} tight>
+            <div className="table-wrap">
+              <table className="data">
+                <thead><tr><th>Letter</th><th>Issued</th><th>Status</th><th /></tr></thead>
+                <tbody>
+                  {myLetters.map((l) => (
+                    <tr key={l.id}>
+                      <td className="strong">{l.template.name}</td>
+                      <td className="text-sm nowrap">{formatDate(l.issuedOn)}</td>
+                      <td><Badge tone={LETTER_TONE[l.status] ?? "neutral"}>{LETTER_STATUS_LABEL[l.status] ?? l.status.toLowerCase()}</Badge></td>
+                      <td className="right"><Link className="btn sm ghost" href={`/documents/letters/${l.id}`}>{l.status === "PENDING_SIGNATURE" ? "Sign" : l.status === "PENDING_ACKNOWLEDGEMENT" ? "Acknowledge" : "View"}</Link></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           </Card>
-        </div>
-      ) : null}
-
-      {tab === "mine" && myId ? (
+        ) : null}
         <Card title={`My documents (${myDocs.length})`} tight>
           {myDocs.length === 0 ? <Empty title="No documents on your record" /> : (
             <div className="table-wrap">
@@ -442,6 +515,7 @@ export default async function DocumentsPage({
             </div>
           )}
         </Card>
+        </div>
       ) : null}
     </>
   );

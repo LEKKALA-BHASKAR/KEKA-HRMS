@@ -1,6 +1,6 @@
 "use server";
 
-import { prisma } from "@keka/db";
+import { prisma, Prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { safeLinkUrl } from "@keka/services";
 import { requireViewer, can, type Viewer } from "@/lib/context";
@@ -27,7 +27,7 @@ async function materialise(viewer: Viewer) {
   await prisma.dashboardWidget.createMany({
     data: slots.map((s, i) => ({
       tenantId: viewer.tenantId, type: s.type, position: i, color: s.color,
-      config: s.type === "QUICK_LINKS" ? { links: s.links } : undefined, updatedBy: viewer.user.id,
+      config: s.type === "QUICK_LINKS" ? ({ links: s.links } as unknown as Prisma.InputJsonValue) : undefined, updatedBy: viewer.user.id,
     })),
     skipDuplicates: true,
   });

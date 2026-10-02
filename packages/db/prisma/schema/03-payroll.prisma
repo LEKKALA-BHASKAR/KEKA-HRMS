@@ -165,6 +165,7 @@ model SalaryComponent {
   structureLines SalaryStructureComponent[]
   payslipLines   PayslipLine[]
   claims         ComponentClaim[]
+  fbpLines       FbpDeclarationLine[]
   perkDetail     Perk?
 
   @@unique([tenantId, code])

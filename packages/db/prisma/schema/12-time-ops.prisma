@@ -54,6 +54,11 @@ model AttendancePolicy {
   // --- Keka parity (time-inbox) ---
   allowRemoteClockIn         Boolean @default(false)
   remoteClockInNeedsApproval Boolean @default(true)
+  /// Web and mobile punches must come from inside the work location's
+  /// geo-fence (when the location has coordinates set).
+  requireGeofence            Boolean @default(false)
+  /// Every web, mobile or remote punch must carry a selfie.
+  requireSelfie              Boolean @default(false)
   allowHalfDayRemoteWork     Boolean @default(true)
   allowHourlyRemoteWork      Boolean @default(false)
   overtimeNeedsRequest       Boolean @default(true)

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@keka/db";
-import { leaveYearStart, localDateKey, tzOffsetMinutes, encashmentQuote, resolveTimePolicy, classifyDay, COMP_OFF_CLAIM_WINDOW_DAYS } from "@keka/services";
+import { leaveYearStart, localDateKey, tzOffsetMinutes, compOffEligibleDays, encashableTypes } from "@keka/services";
 import { requireViewer } from "@/lib/context";
 import { SubTabs } from "@/components/subtabs";
 import { Ring, Donut, Bars, EmptyState } from "@/components/keka";
@@ -228,21 +228,21 @@ export default async function MyLeavePage({ searchParams }: { searchParams: Prom
 
   // --- Modal data --------------------------------------------------------------
   const detailType = sp.details ? types.find((x) => x.t.id === sp.details) : undefined;
-  const compOffDays = sp.compoff
-    ? await prisma.attendanceRecord.findMany({
-        where: { tenantId, employeeId, date: { gte: ys, lt: new Date(Math.min(ye.getTime() + 86_400_000, today.getTime())) }, status: { in: ["WEEKLY_OFF", "HOLIDAY"] }, effectiveHours: { gt: 0 } },
-        orderBy: { date: "desc" }, select: { date: true, status: true, effectiveHours: true },
-      })
-    : [];
+  // Eligible days come from the comp-off rules in services: worked off days inside the request window, not yet claimed.
+  const compOffDays = sp.compoff ? await compOffEligibleDays(employeeId, { today }) : [];
+  const compOffHours = sp.compoff && compOffDays.length
+    ? new Map((await prisma.attendanceRecord.findMany({
+        where: { tenantId, employeeId, date: { in: compOffDays.map((d) => d.date) } }, select: { date: true, status: true, effectiveHours: true },
+      })).map((r) => [r.date.getTime(), r]))
+    : new Map<number, { status: string; effectiveHours: unknown }>();
   const compOffHistory = sp.compoff
-    ? await prisma.compOffRequest.findMany({ where: { tenantId, employeeId }, orderBy: { workedOn: "desc" }, take: 20 })
+    ? await prisma.compOffRequest.findMany({ where: { tenantId, employeeId }, orderBy: { fromDate: "desc" }, take: 20 })
     : [];
-  const timePolicy = sp.compoff ? await resolveTimePolicy(employeeId, today) : null;
   const encashTypes = sp.encash
-    ? (await Promise.all(types.filter((x) => x.t.encashmentEnabled).map(async (x) => {
-        const q = await encashmentQuote(employeeId, x.t.id, now);
-        return q ? { id: x.t.id, name: x.t.name, encashable: q.encashable, perDay: q.perDayRate, formula: x.t.encashmentFormula } : null;
-      }))).filter((x): x is NonNullable<typeof x> => !!x)
+    ? (await encashableTypes(employeeId, now)).filter((q) => q.allowed).map((q) => ({
+        id: q.leaveTypeId, name: q.name, encashable: q.encashable, perDay: q.ratePerDay,
+        formula: types.find((x) => x.t.id === q.leaveTypeId)?.t.encashmentFormula ?? null,
+      }))
     : [];
   const encashHistory = sp.encash
     ? await prisma.leaveEncashmentRequest.findMany({ where: { tenantId, employeeId }, orderBy: { createdAt: "desc" }, take: 20 })
@@ -436,15 +436,13 @@ export default async function MyLeavePage({ searchParams }: { searchParams: Prom
           <CompOffInfo
             hasCompOff={applicable.some((x) => x.t.category === "COMP_OFF")}
             worked={compOffDays.map((d) => {
-              const claim = compOffHistory.find((c) => c.workedOn.getTime() === d.date.getTime() && c.status !== "CANCELLED" && c.status !== "REJECTED");
-              const half = timePolicy ? classifyDay(d.date, timePolicy.calendar) === "HALF_WEEKLY_OFF" : false;
+              const rec = compOffHours.get(d.date.getTime());
               return {
-                date: d.date, key: d.date.toISOString().slice(0, 10), status: d.status, hours: num(d.effectiveHours),
-                claimed: claim?.status ?? null, maxDays: (half ? 0.5 : 1) as 1 | 0.5,
-                claimable: today.getTime() - d.date.getTime() <= COMP_OFF_CLAIM_WINDOW_DAYS * 86_400_000,
+                date: d.date, key: d.key, status: rec?.status ?? "WEEKLY_OFF", hours: num(rec?.effectiveHours as never),
+                claimed: null, maxDays: (d.credit >= 1 ? 1 : 0.5) as 1 | 0.5, claimable: true,
               };
             })}
-            history={compOffHistory.map((h) => ({ id: h.id, workedOn: h.workedOn, days: num(h.days), status: h.status, dayType: h.dayType, expiresOn: h.expiresOn, note: h.decisionNote }))}
+            history={compOffHistory.map((h) => ({ id: h.id, workedOn: h.fromDate, days: num(h.days), status: h.status, dayType: "", expiresOn: null, note: h.decisionNote }))}
           />
         </UrlModal>
       ) : null}

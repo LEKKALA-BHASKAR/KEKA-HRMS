@@ -6,10 +6,11 @@ import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import {
   applyLeave, previewLeave, decideLeave, cancelLeave, adjustBalance, runAccrual,
   recordPunch, raiseAttendanceRequest, decideAttendanceRequest, processAttendance,
-  notifyTimeRequest, lapseExpiredCompOffs,
+  notifyTimeRequest, lapseExpiredCompOffs, runLeaveYearEnd,
 } from "@keka/services";
 import { formatDate } from "@keka/shared";
 import { foreignReference } from "@/lib/ownership";
+import { saveFile, sniffUpload } from "@/lib/storage";
 import { requireAuth, requireViewer, can, type Viewer } from "@/lib/context";
 import {
   z, parseForm, toErrorState, writeAudit, actionDone as done, formList,
@@ -485,19 +486,41 @@ export async function clockAction(_prev: ActionState, formData: FormData): Promi
   if (!viewer.employee) return { ok: false, message: "No employee record linked to this login." };
   const direction = String(formData.get("direction")) === "out" ? 1 : 0;
   const comment = String(formData.get("comment") ?? "").trim().slice(0, 1024) || null;
-  const remote = String(formData.get("mode") ?? "") === "remote";
+  const mode = String(formData.get("mode") ?? "");
+  const source = mode === "remote" ? "REMOTE" : mode === "mobile" ? "MOBILE" : "WEB";
   const h = await headers();
   const ip = (h.get("x-forwarded-for") ?? "").split(",")[0].trim() || h.get("x-real-ip") || null;
   // A location is only kept when it is a real coordinate.
   const lat = Number(formData.get("latitude")), lng = Number(formData.get("longitude"));
-  const located = remote && formData.get("latitude") && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+  const located = !!formData.get("latitude") && !!formData.get("longitude") && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+  const accuracy = Number(formData.get("accuracy"));
+
+  // A selfie, when one was taken: an image, checked by its bytes, kept with
+  // the employee's files so attendance reviewers can open it.
+  let selfie: { id: string } | null = null;
+  const file = formData.get("selfie");
+  if (file && typeof file === "object" && "arrayBuffer" in file && file.size > 0) {
+    if (file.size > 5 * 1024 * 1024) return { ok: false, message: "The selfie is larger than 5 MB. Retake it at a lower resolution." };
+    const data = Buffer.from(await file.arrayBuffer());
+    const sniff = sniffUpload(data, file.type);
+    if (!sniff.ok || sniff.mimeType === "application/pdf") return { ok: false, message: "The selfie must be a JPEG or PNG photo." };
+    selfie = await saveFile({
+      tenantId: viewer.tenantId, filename: `selfie-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.${sniff.mimeType === "image/png" ? "png" : "jpg"}`,
+      mimeType: sniff.mimeType, data, relatedType: "AttendanceSelfie", employeeId: viewer.employee.id, uploadedBy: viewer.user.id,
+    });
+  }
 
   const res = await recordPunch({
-    employeeId: viewer.employee.id, direction: direction as 0 | 1, source: remote ? "REMOTE" : "WEB",
+    employeeId: viewer.employee.id, direction: direction as 0 | 1, source,
     ipAddress: ip, comment,
     latitude: located ? lat : null, longitude: located ? lng : null,
+    accuracyM: Number.isFinite(accuracy) ? accuracy : null,
+    selfieUrl: selfie ? `/files/${selfie.id}` : null,
   });
-  if (!res.ok) return { ok: false, message: res.message };
+  if (!res.ok) {
+    if (selfie) await prisma.storedFile.delete({ where: { id: selfie.id } }).catch(() => undefined);
+    return { ok: false, message: res.message };
+  }
   if (res.pendingApproval && res.requestId) {
     await writeAudit(viewer, {
       module: "ATTENDANCE", action: "CREATE", entityType: "AttendanceRequest", entityId: res.requestId,
@@ -693,6 +716,7 @@ export async function saveShift(_prev: ActionState, formData: FormData): Promise
 const policySchema = z.object({
   id: zOptionalId(), name: zName(80), description: zOptional(300),
   allowWebClockIn: zBool(), requireClockInComment: zBool(),
+  requireGeofence: zBool(), requireSelfie: zBool(),
   ipAllowList: zOptional(1000),
   fullDayThresholdPct: zRequiredNumber({ min: 1, max: 100 }),
   halfDayThresholdPct: zRequiredNumber({ min: 1, max: 100 }),
@@ -767,4 +791,19 @@ export async function assignTimePolicy(_prev: ActionState, formData: FormData): 
     summary: `Assigned a time policy to ${employeeIds.length} employee(s) from ${effectiveFrom.toISOString().slice(0, 10)}`,
   });
   return done(["/attendance"], `Assigned to ${employeeIds.length} employee(s) from ${effectiveFrom.toISOString().slice(0, 10)}.`);
+}
+
+/** Close every ended leave year now: carry forward, pay out or lapse, per each type's year-end rule. */
+export async function runLeaveYearEndAction(_prev: ActionState, _formData: FormData): Promise<ActionState> {
+  const viewer = await requireAuth(P.LEAVE_MANAGE);
+  const r = await runLeaveYearEnd({ tenantId: viewer.tenantId, apply: true, byUserId: viewer.user.id });
+  const carried = r.rows.reduce((s, x) => s + Math.max(0, x.carry), 0);
+  const paid = r.rows.reduce((s, x) => s + x.pay, 0);
+  const lapsed = r.rows.reduce((s, x) => s + x.lapse, 0) + r.expiredDays;
+  if (r.closed === 0 && r.expired === 0) return { ok: true, message: "Nothing to close — every ended leave year is already settled." };
+  await writeAudit(viewer, {
+    module: "LEAVE", action: "UPDATE", entityType: "LeaveYearEnd",
+    summary: `Closed ${r.closed} leave balance(s): ${carried} day(s) carried forward, ${paid} paid out, ${Math.round(lapsed * 100) / 100} lapsed`,
+  });
+  return done(["/leave", "/me/leave"], `Closed ${r.closed} balance(s): ${carried} day(s) carried forward, ${paid} paid out (${r.paid} payment(s) added to payroll), ${Math.round(lapsed * 100) / 100} lapsed.`);
 }

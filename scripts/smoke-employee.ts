@@ -15,6 +15,19 @@ const iso = (d: Date) => d.toISOString().slice(0, 10);
 async function main() {
   await signInAs("vikram.menon@acme.test");
   const employee = await import("../apps/web/src/app/actions/employee");
+  const approvals = await import("../apps/web/src/app/actions/payroll-approvals");
+  // Salary changes go through the pay group's approval chain (HR Manager, then
+  // Global Admin, which the requester holds and so is skipped). Priya signs off.
+  const approveRevisionOf = async (employeeId: string) => {
+    const req = await prisma.payrollApprovalRequest.findFirst({
+      where: { action: "COMPENSATION_CHANGE", status: "PENDING", payload: { path: ["employeeId"], equals: employeeId } },
+      orderBy: { requestedAt: "desc" },
+    });
+    await signInAs("priya.sharma@acme.test");
+    const res = req ? await approvals.decideApprovalAction({}, fd({ requestId: req.id, decision: "approve" })) : { ok: false, message: "no request" };
+    await signInAs("vikram.menon@acme.test");
+    return res;
+  };
   const { createRun, calculateRun } = await import("@keka/services");
 
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { subdomain: "acme" } });
@@ -243,6 +256,11 @@ async function main() {
     annualCtc: "1650000", reason: "Promotion to Senior",
   }));
   check("Forward-dated revision saved", forward.ok === true, forward.message);
+  check("It went to the approval chain first", /approval/i.test(forward.message ?? ""), forward.message);
+  check("It is not live until approved",
+    (await prisma.salaryRevision.findFirst({ where: { employeeId: emp!.id, annualCtc: 1650000 } }))?.status === "PENDING_APPROVAL");
+  const fwdApproved = await approveRevisionOf(emp!.id);
+  check("The HR Manager approved it and it applied", fwdApproved.ok === true, fwdApproved.message);
   const rev = await prisma.salaryRevision.findFirst({
     where: { employeeId: emp!.id }, orderBy: { effectiveFrom: "desc" },
   });
@@ -276,8 +294,9 @@ async function main() {
     annualCtc: String(currentCtc + 120000), reason: "Back-dated correction",
   }));
   check("Back-dated revision saved", backdated.ok === true, backdated.message);
-  check("It warned that arrears were raised",
-    /arrear/i.test(backdated.message ?? ""), backdated.message);
+  const backApproved = await approveRevisionOf(existing.id);
+  check("Once approved, it said arrears were raised",
+    /arrear/i.test(backApproved.message ?? ""), backApproved.message);
   const arrearsAfter = await prisma.arrear.count({ where: { employeeId: existing.id } });
   check("Arrears were actually created", arrearsAfter > arrearsBefore,
     `${arrearsBefore} -> ${arrearsAfter}`);

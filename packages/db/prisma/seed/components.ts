@@ -168,6 +168,8 @@ export interface StructureSeed {
   minAnnualCtc: number | null;
   maxAnnualCtc: number | null;
   isDefault?: boolean;
+  /** Employees on it may declare a flexible benefit plan. */
+  isPartOfFbp?: boolean;
   basicPercent: number;
   components: Array<{
     code: string;
@@ -210,6 +212,7 @@ export const SALARY_STRUCTURES: StructureSeed[] = [
   {
     name: "Class A — above 20L",
     type: "RANGE_BASED", minAnnualCtc: 2000001, maxAnnualCtc: null,
+    isPartOfFbp: true,
     basicPercent: 0.35, components: standardLines(0.35),
   },
 ];

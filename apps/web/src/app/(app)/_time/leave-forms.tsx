@@ -6,7 +6,7 @@ import {
   FormBanner, useForm,
 } from "@/components/form";
 import {
-  applyLeaveAction, decideLeaveAction, cancelLeaveAction, adjustBalanceAction, runAccrualAction,
+  applyLeaveAction, decideLeaveAction, cancelLeaveAction, adjustBalanceAction, runAccrualAction, runLeaveYearEndAction,
   saveLeaveType, deleteLeaveType, saveLeavePlan, assignLeavePlan,
   addHoliday, deleteHoliday, addHolidayCalendar,
   decideAttendanceRequestAction as decideAttendanceAction,
@@ -144,6 +144,14 @@ export function AdjustBalanceForm({ employeeId, types }: { employeeId: string; t
         </>
       )}
     </InlineForm>
+  );
+}
+
+export function YearEndButton({ pending: count }: { pending: number }) {
+  return (
+    <ActionForm action={runLeaveYearEndAction} submitLabel={count ? `Close ${count} balance(s) now` : "Run year-end now"} compact>
+      {() => <div className="text-sm muted">Runs every night by itself; use this after correcting a balance or changing a rule.</div>}
+    </ActionForm>
   );
 }
 

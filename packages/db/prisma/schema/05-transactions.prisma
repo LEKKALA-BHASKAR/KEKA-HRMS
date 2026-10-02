@@ -189,6 +189,39 @@ model ComponentClaim {
   @@map("component_claims")
 }
 
+/// How an employee splits their flexible benefit amount across the plan's
+/// reimbursement components for a year. The declared total is carved out of
+/// the balancing component (Special Allowance) each month and becomes
+/// claimable instead; whatever is left unclaimed is paid as taxable salary in
+/// the last month of the year. Locked once submitted until payroll reopens it.
+model FbpDeclaration {
+  id          String   @id @default(cuid())
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  fyStartYear Int
+  totalAmount Decimal  @db.Decimal(18, 2)
+  isLocked    Boolean  @default(true)
+  submittedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lines FbpDeclarationLine[]
+
+  @@unique([employeeId, fyStartYear])
+  @@map("fbp_declarations")
+}
+
+model FbpDeclarationLine {
+  id            String          @id @default(cuid())
+  declarationId String
+  declaration   FbpDeclaration  @relation(fields: [declarationId], references: [id], onDelete: Cascade)
+  componentId   String
+  component     SalaryComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
+  annualAmount  Decimal         @db.Decimal(18, 2)
+
+  @@unique([declarationId, componentId])
+  @@map("fbp_declaration_lines")
+}
+
 enum PerkValuationMethod {
   /// One fixed amount for all employees.
   FIXED_FOR_ALL
@@ -217,7 +250,30 @@ model Perk {
 
   createdAt DateTime @default(now())
 
+  assignments EmployeePerk[]
+
   @@map("perks")
+}
+
+/// A perquisite given to one employee from a date. Its monthly value counts
+/// as taxable salary for TDS (unless the employer bears the tax) but is not
+/// paid in cash.
+model EmployeePerk {
+  id           String    @id @default(cuid())
+  employeeId   String
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  perkId       String
+  perk         Perk      @relation(fields: [perkId], references: [id], onDelete: Cascade)
+  /// The value a month, for perks valued per employee.
+  monthlyValue Decimal?  @db.Decimal(18, 2)
+  startDate    DateTime  @db.Date
+  endDate      DateTime? @db.Date
+  note         String?
+  createdAt    DateTime  @default(now())
+
+  @@index([employeeId])
+  @@index([perkId])
+  @@map("employee_perks")
 }
 
 // ---------------------------------------------------------------------------
@@ -561,6 +617,8 @@ model NoticePeriodPolicy {
   isActive        Boolean @default(true)
 
   createdAt DateTime @default(now())
+
+  employees Employee[]
 
   @@unique([tenantId, name])
   @@index([tenantId])

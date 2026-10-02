@@ -34,7 +34,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
   return (
     <>
-      <PageHead title="Reports" subtitle="Each report shows only the people your role covers, on screen and in the download" />
+      <PageHead title="Reports" subtitle="Each report shows only the people your role covers, on screen and in the download" actions={<Link className="btn" href="/reports/builder">Custom reports</Link>} />
       <div className="grid grid-2" style={{ gridTemplateColumns: "250px minmax(0, 1fr)", alignItems: "start" }}>
         <Card tight>
           <div className="stack" style={{ padding: 6 }}>

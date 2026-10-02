@@ -14,6 +14,7 @@ import {
   rollbackRun, withdrawApproval, approveLock,
 } from "@/app/actions/payroll";
 import { Step1, Step2, Step3, Step4, Step5, Step6 } from "./steps";
+import { OffCycleView } from "./off-cycle-view";
 
 const P = PERMISSIONS;
 
@@ -52,6 +53,7 @@ export default async function PayrollRunPage({
     },
   });
   if (!run) notFound();
+  if (run.type === "OFF_CYCLE") return <OffCycleView runId={run.id} viewer={viewer} />;
 
   const step = Math.min(6, Math.max(1, Number(sp.step ?? run.currentStep)));
   const editable = run.status !== "FINALIZED" && run.status !== "PENDING_APPROVAL";
@@ -241,7 +243,7 @@ export default async function PayrollRunPage({
       {step === 1 ? <Step1 run={run} lines={lines} editable={editable && canRun} /> : null}
       {step === 2 ? <Step2 run={run} lines={lines} editable={editable && canRun} /> : null}
       {step === 3 ? <Step3 run={run} lines={lines} editable={editable && canRun} /> : null}
-      {step === 4 ? <Step4 run={run} lines={lines} editable={editable && canRun} /> : null}
+      {step === 4 ? <Step4 run={run} lines={lines} editable={editable && canRun} viewer={viewer} /> : null}
       {step === 5 ? <Step5 run={run} lines={lines} editable={editable && canRun} /> : null}
       {step === 6 ? <Step6 run={run} lines={lines} editable={editable && canRun} viewer={viewer} /> : null}
 

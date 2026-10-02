@@ -1,0 +1,119 @@
+// ============================================================================
+//  KEKA — Integrations: API keys and attendance devices
+// ============================================================================
+//  ApiKey authenticates machine clients of /api/v1 (biometric bridges, payroll
+//  exports, HRIS syncs). Only a SHA-256 hash of the secret is stored; the full
+//  key is shown once when created. Scopes limit what a key may call.
+//  AttendanceDevice registers a biometric or kiosk device by serial number so
+//  punches it pushes can be attributed and switched off with the device.
+// ============================================================================
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  /// The non-secret lookup part shown in lists, e.g. "kk_3f9a1c2b".
+  prefix     String    @unique
+  keyHash    String
+  /// e.g. ["attendance:write"].
+  scopes     String[]
+  createdBy  String?
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([tenantId])
+  @@map("api_keys")
+}
+
+model AttendanceDevice {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  serialNumber String
+  locationId   String?
+  location     Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  isActive     Boolean   @default(true)
+  lastSeenAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@unique([tenantId, serialNumber])
+  @@index([tenantId])
+  @@map("attendance_devices")
+}
+
+/// An HTTPS endpoint that receives signed event notifications.
+model WebhookEndpoint {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  url         String
+  description String?
+  /// e.g. ["employee.created", "leave.approved"].
+  events      String[]
+  /// Shared secret for the X-Keka-Signature HMAC; shown once at creation.
+  secret      String
+  isActive    Boolean   @default(true)
+  /// Consecutive failed deliveries; the endpoint is paused at the limit.
+  failureCount Int      @default(0)
+  lastSuccessAt DateTime?
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+
+  deliveries WebhookDelivery[]
+
+  @@index([tenantId])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id         String          @id @default(cuid())
+  endpointId String
+  endpoint   WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  event      String
+  payload    Json
+  /// PENDING | DELIVERED | FAILED
+  status     String          @default("PENDING")
+  attempts   Int             @default(0)
+  nextAttemptAt DateTime     @default(now())
+  responseStatus Int?
+  error      String?
+  createdAt  DateTime        @default(now())
+  deliveredAt DateTime?
+
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
+  @@map("webhook_deliveries")
+}
+
+/// Single sign-on through the company's identity provider (OpenID Connect,
+/// authorization code with PKCE). People are matched to existing logins by
+/// verified email; SSO never creates accounts. When enforced, password
+/// sign-in is refused except for people who manage authentication, so a
+/// broken IdP can always be fixed.
+model SsoConnection {
+  id              String    @id @default(cuid())
+  tenantId        String    @unique
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Shown on the sign-in button: "Okta", "Microsoft Entra ID", "Google".
+  providerName    String
+  issuer          String
+  clientId        String
+  /// AES-256-GCM sealed with a key derived from AUTH_SECRET.
+  clientSecretEnc String
+  scopes          String    @default("openid email profile")
+  /// Lower-case email domains allowed to sign in; empty allows any.
+  allowedDomains  String[]  @default([])
+  enabled         Boolean   @default(false)
+  enforced        Boolean   @default(false)
+  lastTestedAt    DateTime?
+  lastTestResult  String?
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("sso_connections")
+}

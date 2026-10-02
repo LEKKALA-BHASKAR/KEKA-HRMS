@@ -288,6 +288,7 @@ export function LocationForm({
     id: string; name: string; code: string | null; addressLine1: string | null;
     addressLine2: string | null; city: string | null; state: string | null;
     stateCode: string | null; postalCode: string | null;
+    latitude?: string | null; longitude?: string | null; geofenceRadiusM?: number | null;
   };
 }) {
   return (
@@ -331,6 +332,18 @@ export function LocationForm({
             </Field>
             <Field label="Address line 2" name="addressLine2" state={state}>
               <TextInput name="addressLine2" state={state} defaultValue={location?.addressLine2} />
+            </Field>
+          </div>
+          <div className="text-xs strong subtle" style={{ margin: "4px 0 8px" }}>GEO-FENCE FOR CLOCK-IN</div>
+          <div className="grid grid-3">
+            <Field label="Latitude" name="latitude" state={state} hint="e.g. 12.9352">
+              <TextInput name="latitude" type="number" step="0.0000001" state={state} defaultValue={location?.latitude ?? ""} />
+            </Field>
+            <Field label="Longitude" name="longitude" state={state} hint="e.g. 77.6245">
+              <TextInput name="longitude" type="number" step="0.0000001" state={state} defaultValue={location?.longitude ?? ""} />
+            </Field>
+            <Field label="Radius (metres)" name="geofenceRadiusM" state={state} hint="Used when a policy requires the geo-fence">
+              <TextInput name="geofenceRadiusM" type="number" state={state} defaultValue={location?.geofenceRadiusM ?? ""} />
             </Field>
           </div>
         </>

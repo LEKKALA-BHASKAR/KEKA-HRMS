@@ -6,7 +6,8 @@ import {
 } from "@keka/payroll";
 import { daysInMonth, fyStartYear, endOfMonth, startOfMonth } from "@keka/shared";
 import { cappedDeductions } from "./declarations";
-import { previousIncomeApplies } from "./finances-math";
+import { claimEntitlement, previousIncomeApplies } from "./finances-math";
+import { fbpCarveSpecs, unclaimedFbp } from "./fbp-math";
 
 /**
  * The bridge between the database and the pure payroll engine.
@@ -207,6 +208,12 @@ export async function eligibleEmployees(payGroupId: string, periodStart: Date, p
   });
 }
 
+function byEmployeeId<T extends { employeeId: string }>(rows: T[]): Map<string, T[]> {
+  const m = new Map<string, T[]>();
+  for (const r of rows) m.set(r.employeeId, [...(m.get(r.employeeId) ?? []), r]);
+  return m;
+}
+
 type EligibleEmployee = Awaited<ReturnType<typeof eligibleEmployees>>[number];
 
 function toStructureSpecs(
@@ -280,6 +287,41 @@ export async function calculateRun(runId: string): Promise<{
   });
   const declarationOf = new Map(declarations.map((d) => [d.employeeId, d]));
 
+  // Flexible benefit declarations: carved out of salary each month, claimed
+  // back against bills, and what is left unclaimed paid in the year's last month.
+  const fbpDeclarations = await prisma.fbpDeclaration.findMany({
+    where: { employeeId: { in: employeeIds }, fyStartYear: fyStart },
+    include: { lines: { include: { component: { select: { code: true, name: true } } } } },
+  });
+  const fbpOf = new Map(fbpDeclarations.map((d) => [d.employeeId, d]));
+
+  // Perquisites active in the period, and those already taxed earlier in the
+  // year (their payslip lines), which count towards year-to-date income.
+  const [perkAssignments, taxablePerks, priorPerkLines] = await Promise.all([
+    prisma.employeePerk.findMany({
+      where: { employeeId: { in: employeeIds }, startDate: { lte: run.periodEnd }, OR: [{ endDate: null }, { endDate: { gte: run.periodStart } }] },
+      include: { perk: { include: { component: { select: { code: true, name: true, isActive: true } } } } },
+      orderBy: { startDate: "asc" },
+    }),
+    prisma.perk.findMany({ where: { component: { tenantId: run.tenantId }, isTaxable: true, taxBorneByEmployer: false }, select: { component: { select: { code: true } } } }),
+    prisma.payslipLine.findMany({
+      where: {
+        type: "PERK",
+        runEmployee: { employeeId: { in: employeeIds }, run: { payGroupId: payGroup.id, status: "FINALIZED", periodEnd: { lt: run.periodStart, gte: startOfMonth(fyStart, 4) } } },
+      },
+      select: { code: true, amount: true, runEmployee: { select: { employeeId: true } } },
+    }),
+  ]);
+  const taxablePerkCodes = new Set(taxablePerks.map((p) => p.component.code));
+  const perksByEmp = byEmployeeId(perkAssignments.filter((a) => a.perk.component.isActive));
+  const lastMonthOfFy = run.month === 3;
+  const fbpClaimed = lastMonthOfFy && fbpDeclarations.length
+    ? await prisma.componentClaim.findMany({
+        where: { employeeId: { in: fbpDeclarations.map((d) => d.employeeId) }, fyStartYear: fyStart, status: { in: ["APPROVED", "PAID"] } },
+        select: { employeeId: true, componentId: true, payableAmount: true, claimedAmount: true },
+      })
+    : [];
+
   const [lopAdjustments, arrears, bonuses, adhoc, claims, loanInstallments, overtime, shiftAllowances, priorRuns] =
     await Promise.all([
       prisma.lopAdjustment.findMany({
@@ -288,11 +330,13 @@ export async function calculateRun(runId: string): Promise<{
       prisma.arrear.findMany({
         where: { employeeId: { in: employeeIds }, isProcessed: false },
       }),
+      // Items pulled into an off-cycle run (runId set to it) belong to that run.
       prisma.employeeBonus.findMany({
         where: {
           employeeId: { in: employeeIds },
           payoutYear: run.year, payoutMonth: run.month,
           payAction: { in: ["PAY", "PARTIALLY_PAY"] },
+          OR: [{ runId: null }, { runId: run.id }],
         },
       }),
       prisma.adhocTransaction.findMany({
@@ -300,6 +344,7 @@ export async function calculateRun(runId: string): Promise<{
           employeeId: { in: employeeIds },
           year: run.year, month: run.month,
           isPaidOutside: false,
+          OR: [{ runId: null }, { runId: run.id }],
         },
       }),
       prisma.componentClaim.findMany({
@@ -379,6 +424,12 @@ export async function calculateRun(runId: string): Promise<{
     cur.pt += Number(row.professionalTax);
     ytdByEmp.set(row.employeeId, cur);
   }
+  for (const line of priorPerkLines) {
+    if (!taxablePerkCodes.has(line.code)) continue;
+    const cur = ytdByEmp.get(line.runEmployee.employeeId) ?? { gross: 0, tds: 0, pt: 0 };
+    cur.gross += Number(line.amount);
+    ytdByEmp.set(line.runEmployee.employeeId, cur);
+  }
 
   // Attendance-driven LOP for the period.
   const attendance = await prisma.attendanceRecord.groupBy({
@@ -436,7 +487,23 @@ export async function calculateRun(runId: string): Promise<{
     }
 
     const revision = emp.salaryRevisions[0];
-    const specs = toStructureSpecs(revision);
+    const fbp = revision?.structure?.isPartOfFbp ? fbpOf.get(emp.id) : undefined;
+    const specs = fbp
+      ? [
+          ...toStructureSpecs(revision).filter((sc) => !(sc.type === "REIMBURSEMENT" && sc.isPartOfFbp)),
+          ...fbpCarveSpecs(fbp.lines.map((l) => ({ code: l.component.code, name: l.component.name, annual: Number(l.annualAmount) }))),
+        ]
+      : toStructureSpecs(revision);
+    let fbpUnclaimed = 0;
+    if (fbp && lastMonthOfFy) {
+      fbpUnclaimed = unclaimedFbp(fbp.lines.map((l) => {
+        const claimed = fbpClaimed
+          .filter((c) => c.employeeId === emp.id && c.componentId === l.componentId)
+          .reduce((t, c) => t + Number(c.payableAmount ?? c.claimedAmount), 0);
+        const ent = claimEntitlement({ annualLimit: Number(l.annualAmount), joinedOn: emp.dateOfJoining, lastWorkingDay: emp.lastWorkingDay, fy: fyStart, fyStartMonth: 4, today: run.periodEnd });
+        return { accrued: ent.accrued, claimed };
+      }));
+    }
     if (specs.length === 0) {
       allWarnings.push(`${emp.employeeNumber} ${emp.firstName} ${emp.lastName}: no salary structure assigned`);
     }
@@ -482,9 +549,12 @@ export async function calculateRun(runId: string): Promise<{
           (s, b) => s + Number(b.paidAmount ?? b.amount), 0),
         overtimeAmount: (otByEmp.get(emp.id) ?? []).reduce((s, o) => s + Number(o.amount), 0),
         shiftAllowance: (shiftByEmp.get(emp.id) ?? []).reduce((s, o) => s + Number(o.amount), 0),
-        adhocPayments: (adhocByEmp.get(emp.id) ?? [])
-          .filter((a) => a.type === "PAYMENT")
-          .map((a) => ({ name: a.name, amount: Number(a.amount), isTaxable: a.taxTreatment !== "NON_TAXABLE" })),
+        adhocPayments: [
+          ...(adhocByEmp.get(emp.id) ?? [])
+            .filter((a) => a.type === "PAYMENT")
+            .map((a) => ({ name: a.name, amount: Number(a.amount), isTaxable: a.taxTreatment !== "NON_TAXABLE" })),
+          ...(fbpUnclaimed > 0 ? [{ name: "Unclaimed flexible benefits", amount: fbpUnclaimed, isTaxable: true }] : []),
+        ],
         adhocDeductions: (adhocByEmp.get(emp.id) ?? [])
           .filter((a) => a.type === "DEDUCTION")
           .map((a) => ({ name: a.name, amount: Number(a.amount) })),
@@ -493,6 +563,14 @@ export async function calculateRun(runId: string): Promise<{
           name: c.component.name,
           amount: Number(c.payableAmount ?? c.claimedAmount),
           isTaxable: c.component.taxTreatment === "FULLY_TAXABLE",
+        })),
+        perquisites: (perksByEmp.get(emp.id) ?? []).map((a) => ({
+          code: a.perk.component.code,
+          name: a.perk.component.name,
+          amount: a.perk.valuationMethod === "PER_EMPLOYEE" ? Number(a.monthlyValue ?? 0) : a.perk.valuationMethod === "FIXED_FOR_ALL" ? Number(a.perk.fixedAmount ?? 0) : null,
+          formula: a.perk.valuationMethod === "FORMULA" ? a.perk.formula : null,
+          employerBearsTax: a.perk.taxBorneByEmployer,
+          isTaxable: a.perk.isTaxable,
         })),
         loanEmis: (emiByEmp.get(emp.id) ?? []).map((i) => ({
           name: `${i.loan.category.name} EMI`,

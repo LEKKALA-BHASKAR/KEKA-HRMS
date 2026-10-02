@@ -27,7 +27,7 @@ export default async function CalibrationPage({ params }: { params: Promise<{ id
   return (
     <>
       <PageHead title={`Calibrate — ${cycle.name}`} subtitle={`${reviews.length} review(s) in your scope · ${cycle.status.replace(/_/g, " ").toLowerCase()}`}
-        actions={<div className="row gap-2">{can(viewer, PERMISSIONS.PERFORMANCE_MANAGE) ? <CycleOps cycleId={cycle.id} status={cycle.status} /> : null}<Link className="btn" href="/performance?tab=cycles">Back</Link></div>} />
+        actions={<div className="row gap-2">{can(viewer, PERMISSIONS.PERFORMANCE_MANAGE) ? <CycleOps cycleId={cycle.id} status={cycle.status} /> : null}{can(viewer, PERMISSIONS.SALARY_REVISE) ? <Link className="btn" href={`/performance/cycles/${cycle.id}/pay`}>Review to pay</Link> : null}<Link className="btn" href="/performance?tab=cycles">Back</Link></div>} />
       <Card title="Distribution against target" description={`${rated.length} rated. Bars show the share in each band; the marker is the target.`}>
         <div className="stack gap-3">
           {dist.map((d) => (

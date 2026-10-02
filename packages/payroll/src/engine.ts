@@ -2,6 +2,7 @@ import {
   Decimal, money, nonNegative, roundRupees, divide,
   daysInMonth, monthsRemainingInFy, fyStartYear, type Numeric,
 } from "@keka/shared";
+import { evaluateFormula } from "./formula";
 import { resolveStructure, type ResolvedStructure, type StructureComponentSpec, type ResolvedComponent } from "./structure";
 import { calculatePf, type PfConfig, type PfResult } from "./statutory/pf";
 import { calculateEsi, type EsiConfig, type EsiResult } from "./statutory/esi";
@@ -56,6 +57,13 @@ export interface VariablePayInput {
   adhocDeductions?: Array<{ name: string; amount: Numeric }>;
   /** Loan EMIs falling due this month. */
   loanEmis?: Array<{ name: string; amount: Numeric }>;
+  /**
+   * Perquisites: non-cash benefits whose monthly value is taxable salary.
+   * Valued at a fixed amount or by a formula over the structure (e.g.
+   * "[BASIC] * 0.1"). When the employer bears the tax, the value is shown
+   * but kept out of the employee's taxable income.
+   */
+  perquisites?: Array<{ code: string; name: string; amount?: Numeric | null; formula?: string | null; employerBearsTax?: boolean; isTaxable?: boolean }>;
 }
 
 export interface StatutoryInput {
@@ -260,7 +268,11 @@ export function calculatePayroll(input: CalculatePayrollInput): CalculatePayroll
 
     proratedByCode.set(c.code, amount);
 
-    if (!isStatutoryEmployerRow) {
+    // A flexible-benefit reimbursement is carved out of the CTC but paid
+    // only when claimed (as a component claim), never as a monthly line.
+    const isClaimOnly = c.type === "REIMBURSEMENT" && c.isPartOfFbp;
+
+    if (!isStatutoryEmployerRow && !isClaimOnly) {
       lines.push({
         code: c.code,
         name: c.name,
@@ -323,6 +335,21 @@ export function calculatePayroll(input: CalculatePayrollInput): CalculatePayroll
       showOnPayslip: true,
       sequence: 930 + i,
     });
+  }
+
+  // Perquisites: shown, taxed, never paid in cash.
+  let taxablePerquisites = new Decimal(0);
+  if (vp.perquisites?.length) {
+    const values: Record<string, Decimal> = { CTC: structure.annualCtc, CTC_ANNUAL: structure.annualCtc, CTC_MONTHLY: structure.annualCtc.dividedBy(12) };
+    for (const c of structure.components) { values[c.code] = c.monthly; values[`${c.code}_ANNUAL`] = c.annual; }
+    for (const [i, p] of vp.perquisites.entries()) {
+      const value = roundRupees(nonNegative(p.formula ? evaluateFormula(p.formula, { values }) : money(p.amount ?? 0)));
+      if (value.isZero()) continue;
+      lines.push({ code: p.code || `PERK_${i + 1}`, name: p.name, type: "PERK", fullAmount: value, amount: value, showOnPayslip: true, sequence: 950 + i });
+      if (p.isTaxable === false) continue;
+      if (p.employerBearsTax) notes.push(`${p.name}: tax on the perquisite is borne by the employer`);
+      else taxablePerquisites = taxablePerquisites.plus(value);
+    }
   }
 
   // --- 5. Statutory ------------------------------------------------------
@@ -407,7 +434,8 @@ export function calculatePayroll(input: CalculatePayrollInput): CalculatePayroll
   // --- 6. Income tax -----------------------------------------------------
   const taxableThisMonth = lines
     .filter((l) => l.type === "EARNING")
-    .reduce((s, l) => s.plus(l.amount), new Decimal(0));
+    .reduce((s, l) => s.plus(l.amount), new Decimal(0))
+    .plus(taxablePerquisites);
 
   let annualTax: AnnualTaxResult | null = null;
   let tdsAmount = ZERO;
@@ -421,9 +449,11 @@ export function calculatePayroll(input: CalculatePayrollInput): CalculatePayroll
     // Project the full-year figure: what has actually been drawn, plus this
     // month, plus the regular monthly gross for every month still to come.
     const ytdTaxable = nonNegative(input.tax.ytdTaxableIncome);
+    // Perquisites recur, so they are projected forward like salary.
     const regularMonthlyGross = structure.components
       .filter((c) => c.type === "EARNING")
-      .reduce((s, c) => s.plus(c.monthly), new Decimal(0));
+      .reduce((s, c) => s.plus(c.monthly), new Decimal(0))
+      .plus(taxablePerquisites);
     const projectedRemaining = regularMonthlyGross.times(Math.max(0, remaining - 1));
     const projectedAnnualGross = ytdTaxable.plus(taxableThisMonth).plus(projectedRemaining);
 

@@ -86,7 +86,7 @@ export default async function ApplicationPage({ params, searchParams }: { params
   const employees = recruiter && can(viewer, P.INTERVIEW_MANAGE)
     ? await prisma.employee.findMany({ where: { tenantId: viewer.tenantId, status: { notIn: ["EXITED", "PREBOARDING"] } }, select: { id: true, displayName: true }, orderBy: { displayName: "asc" } })
     : [];
-  const opt = employees.map((e) => ({ value: e.id, label: e.displayName }));
+  const opt = employees.map((e) => ({ value: e.id, label: e.displayName ?? "" }));
 
   return (
     <>
@@ -170,8 +170,8 @@ export default async function ApplicationPage({ params, searchParams }: { params
               ["Notice period", c.noticePeriodDays ? `${c.noticePeriodDays} days` : "—"],
               ["City", c.city ?? "—"],
               ["Source", `${sourceLabel}${c.referredBy ? ` — ${c.referredBy.displayName}` : ""}`],
-              ["Applied on", kDate(app.appliedAt)],
-              ["Average score", app.averageScore ? `${Number(app.averageScore).toFixed(1)} / 5` : "—"],
+              ["Applied on", kDate(app!.appliedAt)],
+              ["Average score", app!.averageScore ? `${Number(app!.averageScore).toFixed(1)} / 5` : "—"],
             ]} />
           </div>
           <OfferCard />
@@ -325,7 +325,7 @@ export default async function ApplicationPage({ params, searchParams }: { params
                               const ratings = visible ? parseRatings(card!.ratings) : [];
                               return (
                                 <tr key={p.id}>
-                                  <td><span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}><span className={s.face} style={{ background: colour(p.employee.displayName) }}>{initials(p.employee.displayName)}</span>{p.employee.displayName}</span></td>
+                                  <td><span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}><span className={s.face} style={{ background: colour(p.employee.displayName ?? "") }}>{initials(p.employee.displayName ?? "")}</span>{p.employee.displayName}</span></td>
                                   <td>{visible ? decisionLabel(card!.recommendation) : done ? "Submitted" : "Feedback not submitted yet"}</td>
                                   <td>{visible && card!.overallScore !== null ? `${Number(card!.overallScore).toFixed(1)}/5` : visible ? "—" : ""}</td>
                                   <td>

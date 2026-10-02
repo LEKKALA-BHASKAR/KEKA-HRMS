@@ -42,7 +42,7 @@ export async function componentClaimSummary(employeeId: string, fy: number, toda
     select: { tenantId: true, dateOfJoining: true, lastWorkingDay: true, payGroupId: true, tenant: { select: { fyStartMonth: true } } },
   });
   const fyStartMonth = emp.tenant.fyStartMonth;
-  const [components, claims] = await Promise.all([
+  const [components0, claims, fbp] = await Promise.all([
     emp.payGroupId
       ? prisma.salaryComponent.findMany({
           where: {
@@ -58,7 +58,14 @@ export async function componentClaimSummary(employeeId: string, fy: number, toda
       include: { component: { select: { name: true, code: true } } },
       orderBy: { createdAt: "desc" },
     }),
+    prisma.fbpDeclaration.findUnique({ where: { employeeId_fyStartYear: { employeeId, fyStartYear: fy } }, include: { lines: true } }),
   ]);
+  // Under a flexible benefit declaration only the declared components can be
+  // claimed, each up to what was declared for it.
+  const declared = new Map((fbp?.lines ?? []).map((l) => [l.componentId, n(l.annualAmount)]));
+  const components = fbp
+    ? components0.filter((c) => declared.has(c.id)).map((c) => ({ ...c, annualExemptLimit: declared.get(c.id)! }))
+    : components0;
   const rows: ClaimSummaryRow[] = components.map((c) => {
     const ent = claimEntitlement({ annualLimit: n(c.annualExemptLimit), joinedOn: emp.dateOfJoining, lastWorkingDay: emp.lastWorkingDay, fy, fyStartMonth, today });
     const mine = claims.filter((x) => x.componentId === c.id);
@@ -73,6 +80,7 @@ export async function componentClaimSummary(employeeId: string, fy: number, toda
   return {
     fyStartMonth,
     rows,
+    underFbp: !!fbp,
     pending: claims.filter((c) => c.status === "SUBMITTED"),
     processed: claims.filter((c) => c.status === "APPROVED" || c.status === "PAID" || c.status === "REJECTED"),
   };
@@ -174,6 +182,9 @@ function specsOf(rev: RevisionWithStructure): StructureComponentSpec[] {
     showOnPayslip: sc.component.showOnPayslip, isPartOfFbp: sc.component.isPartOfFbp,
   }));
 }
+
+/** A salary revision's structure rows, as the payroll engine reads them. */
+export const revisionSpecs = (rev: RevisionWithStructure) => specsOf(rev);
 
 /**
  * A year of full months at this revision's salary, run through the payroll
