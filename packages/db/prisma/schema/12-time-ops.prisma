@@ -78,6 +78,31 @@ model AttendancePolicy {
   /// Overtime minutes are rounded down to this block (0 = exact).
   overtimeRoundingMinutes  Int     @default(0)
 
+  // --- Time & leave depth (26-time-leave-depth) ---
+  /// EFFECTIVE (punched in-out pairs) or GROSS (first in to last out) hours
+  /// judge the day against the full/half-day thresholds.
+  hoursBasis                 String  @default("EFFECTIVE")
+  /// Absent without leave: this many consecutive working days with no
+  /// attendance and no leave are each marked absent and full loss of pay.
+  awolEnabled                Boolean @default(false)
+  awolAfterDays              Int     @default(3)
+  /// The first days after joining carry no late or missing-punch penalties.
+  newJoinerGraceDays         Int     @default(0)
+  regularisationMonthlyLimit Int?
+  /// Day of the next month after which a month's days can no longer be corrected.
+  regularisationCutoffDay    Int?
+  // Remote work (WFH / on duty)
+  wfhMonthlyLimit            Int?
+  odMonthlyLimit             Int?
+  remoteNoticeDays           Int?
+  remoteAllowedOnHolidays    Boolean @default(false)
+  remoteAllowedOnWeeklyOffs  Boolean @default(false)
+  remoteAttachmentRequired   Boolean @default(false)
+  /// Approved overtime is credited as comp-off instead of being paid.
+  overtimeToCompOff          Boolean @default(false)
+  /// Overtime hours that make one day of comp-off.
+  overtimeCompOffHoursPerDay Decimal @default(8) @db.Decimal(5, 2)
+
   isDefault Boolean  @default(false)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())

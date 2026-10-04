@@ -230,7 +230,10 @@ async function BalancesTab({
           {manage ? (
             <Disclosure label="Apply leave on their behalf" variant="default">
               <ApplyLeaveForm
-                types={allTypes.filter((t) => t.isActive).map((t) => ({ value: t.id, label: t.name, allowHalfDay: t.allowHalfDay }))}
+                types={allTypes.filter((t) => t.isActive).map((t) => ({
+                  value: t.id, label: t.unit === "HOURS" ? `${t.name} (hours)` : t.name, allowHalfDay: t.allowHalfDay,
+                  unit: t.unit, maxHours: t.maxHoursPerDay === null ? null : Number(t.maxHoursPerDay), stepMinutes: t.hourIncrementMinutes,
+                }))}
                 employees={[{ value: selected.id, label: selected.displayName ?? selected.employeeNumber }]}
                 defaultEmployeeId={selected.id}
               />

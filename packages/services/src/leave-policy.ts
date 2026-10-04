@@ -4,7 +4,7 @@ import {
   planFor, leaveYearStart, recomputeBalance, reprocessRange, resolveTimePolicy, employeeHolidayCalendarIds,
 } from "./time";
 import { notify } from "./lifecycle";
-import { compOffCreditFor } from "./time-math";
+import { compOffCreditFromHours } from "@keka/time";
 import {
   type ApprovalChainConfig, type ApprovalStep, type LeaveApprovalActor, type EditableStatus, type LopImportRow,
   effectiveChain, resolveApprovalSteps, parseSteps, usageLimitIssues, optionalHolidayPickIssue,
@@ -316,7 +316,7 @@ export async function autoCreditCompOffDays(input: {
     const periodKey = `COMPOFF-AUTO:${dayKey(d.date)}`;
     if (doneKeys.has(periodKey)) continue;
     if (claimed.some((c) => c.fromDate.getTime() <= d.date.getTime() && c.toDate.getTime() >= d.date.getTime())) continue;
-    const credit = compOffCreditFor(d.effectiveHours, d.requiredHours, input.fullPct, input.halfPct);
+    const credit = compOffCreditFromHours({ hours: d.effectiveHours, requiredHours: d.requiredHours, fullPct: input.fullPct, halfPct: input.halfPct, halfDayMinHours: type.compOffHalfDayMinHours == null ? null : Number(type.compOffHalfDayMinHours), fullDayMinHours: type.compOffFullDayMinHours == null ? null : Number(type.compOffFullDayMinHours) });
     if (credit <= 0) continue;
     const yearStart = await leaveYearFor(input.employeeId, d.date);
     await tx.leaveLedgerEntry.create({

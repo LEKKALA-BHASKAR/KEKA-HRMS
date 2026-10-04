@@ -1,11 +1,11 @@
 import { prisma, type Prisma } from "@keka/db";
 import { resolveStructure, type StructureComponentSpec } from "@keka/payroll";
-import { dayKey, eachDayUtc } from "@keka/time";
+import { dayKey, eachDayUtc, compOffCreditFromHours, overtimeToCompOffDays, encashmentWindowIssue, encashableUnderPolicy } from "@keka/time";
 import { resolveTimePolicy, reprocessRange, recomputeBalance, leaveYearStart } from "./time";
 import { notify } from "./lifecycle";
 import { roundOvertimeMinutes } from "./leave-policy-math";
 import {
-  formatHhmm, overtimeRate, overtimeAmount, encashmentFormulaParts, encashmentEstimate, encashableDays, compOffCreditFor,
+  formatHhmm, overtimeRate, overtimeAmount, encashmentFormulaParts, encashmentEstimate,
 } from "./time-math";
 
 export * from "./time-math";
@@ -319,6 +319,32 @@ export async function decideOvertimeRequest(opts: {
   if (minutes <= 0) {
     return { ok: false, message: `After rounding down to ${policy.overtimeRoundingMinutes}-minute blocks there is no overtime to pay. Reject it instead.` };
   }
+
+  // The policy may convert overtime to comp-off instead of paying it.
+  if (policy.overtimeToCompOff) {
+    const type = await compOffType(req.tenantId);
+    if (!type) return { ok: false, message: "The overtime policy converts overtime to comp-off, but there is no compensatory-off leave type." };
+    const credit = overtimeToCompOffDays(minutes, policy.overtimeCompOffHoursPerDay);
+    if (credit <= 0) {
+      return { ok: false, message: `${formatHhmm(minutes)} hrs is less than half of the ${policy.overtimeCompOffHoursPerDay} hours that make a comp-off day. Reject it instead.` };
+    }
+    const today = utcMidnight(opts.today ?? new Date());
+    const yearStart = await leaveYearFor(req.employeeId, today);
+    const expiresOn = type.expiryDaysAfterCredit ? new Date(today.getTime() + type.expiryDaysAfterCredit * DAY) : null;
+    await prisma.$transaction(async (tx) => {
+      await tx.leaveLedgerEntry.create({
+        data: {
+          tenantId: req.tenantId, employeeId: req.employeeId, leaveTypeId: type.id, yearStart,
+          kind: "COMP_OFF_CREDIT", days: credit, periodKey: `COMPOFF-OT:${req.id}`,
+          note: `Overtime ${formatHhmm(minutes)} hrs, ${dayKey(req.fromDate)}${req.toDate.getTime() !== req.fromDate.getTime() ? ` to ${dayKey(req.toDate)}` : ""}`,
+          expiresOn, createdBy: opts.deciderEmployeeId ?? null,
+        },
+      });
+      await recomputeBalance(req.employeeId, type.id, yearStart, tx);
+      await tx.overtimeRequest.update({ where: { id: req.id }, data: { status: "APPROVED", ...decided } });
+    });
+    return { ok: true, message: `Approved — ${formatHhmm(minutes)} hrs converted to ${credit} day(s) of ${type.name}${expiresOn ? `, expiring ${dayKey(expiresOn)}` : ""}.` };
+  }
   const rate = Math.round(overtimeRate((wages?.basic ?? 0) * 12) * (multiplier > 0 ? multiplier : 1) * 10_000) / 10_000;
   const hours = r2(minutes / 60);
   const amount = overtimeAmount(minutes, rate);
@@ -404,7 +430,12 @@ export async function compOffEligibleDays(employeeId: string, opts: { today?: Da
   const isClaimed = (d: Date) => claimed.some((c) => c.fromDate.getTime() <= d.getTime() && c.toDate.getTime() >= d.getTime());
   return records.flatMap((r) => {
     if (isClaimed(r.date) || autoCredited.has(dayKey(r.date))) return [];
-    const credit = compOffCreditFor(Number(r.effectiveHours), required, policy.rules.fullDayThresholdPct, policy.rules.halfDayThresholdPct);
+    const credit = compOffCreditFromHours({
+      hours: Number(r.effectiveHours), requiredHours: required,
+      fullPct: policy.rules.fullDayThresholdPct, halfPct: policy.rules.halfDayThresholdPct,
+      halfDayMinHours: type?.compOffHalfDayMinHours == null ? null : Number(type.compOffHalfDayMinHours),
+      fullDayMinHours: type?.compOffFullDayMinHours == null ? null : Number(type.compOffFullDayMinHours),
+    });
     if (credit === 0) return [];
     return [{
       key: dayKey(r.date), date: r.date, credit,
@@ -528,8 +559,12 @@ async function pendingLeaveDays(employeeId: string, leaveTypeId: string): Promis
   return Number(agg._sum.totalDays ?? 0);
 }
 
-/** Every leave type in the employee's plan, with whether and how much they may encash. */
-export async function encashableTypes(employeeId: string, today: Date = new Date()): Promise<EncashableType[]> {
+/**
+ * Every leave type in the employee's plan, with whether and how much they may
+ * encash. HR or a manager raising it on someone's behalf may encash any type
+ * whose policy allows encashment, whether or not employees may ask for it.
+ */
+export async function encashableTypes(employeeId: string, today: Date = new Date(), opts: { onBehalf?: boolean } = {}): Promise<EncashableType[]> {
   const at = utcMidnight(today);
   const emp = await prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { tenantId: true } });
   const plan = await prisma.leavePlanAssignment.findFirst({
@@ -548,13 +583,22 @@ export async function encashableTypes(employeeId: string, today: Date = new Date
       where: { employeeId, leaveTypeId: t.id, yearStart, status: "PENDING" }, _sum: { days: true },
     });
     const free = r2(balance - await pendingLeaveDays(employeeId, t.id) - Number(pendingEncash._sum.days ?? 0));
-    const allowed = t.allowEncashmentRequest;
-    const encashable = allowed ? encashableDays({ freeBalance: free, maxPerYear: t.encashmentMaxDaysPerYear === null ? null : Number(t.encashmentMaxDaysPerYear), encashedThisYear: already }) : 0;
+    const allowed = t.allowEncashmentRequest || (!!opts.onBehalf && t.encashmentEnabled);
+    const windowIssue = encashmentWindowIssue(t.encashmentMonths, at.getUTCMonth() + 1);
+    const encashable = allowed && !windowIssue ? encashableUnderPolicy({
+      freeBalance: free, minBalance: t.encashmentMinBalance === null ? null : Number(t.encashmentMinBalance),
+      maxPerYear: t.encashmentMaxDaysPerYear === null ? null : Number(t.encashmentMaxDaysPerYear), encashedThisYear: already,
+    }) : 0;
     const { code, divisor } = encashmentFormulaParts(t.encashmentFormula);
     const wage = code === "GROSS" ? wages?.gross ?? 0 : (wages?.byCode(code) || wages?.basic) ?? 0;
     out.push({
       leaveTypeId: t.id, name: t.name, allowed,
-      reason: allowed ? (encashable <= 0 ? "No balance left to encash this year" : null) : "You are not allowed to apply for leave encashment",
+      reason: !allowed ? (opts.onBehalf ? "Encashment is not enabled for this leave type" : "You are not allowed to apply for leave encashment")
+        : windowIssue ? windowIssue
+        : encashable <= 0 ? (t.encashmentMinBalance !== null && Number(t.encashmentMinBalance) > 0
+          ? `Nothing above the ${Number(t.encashmentMinBalance)} day(s) that must stay in the balance`
+          : "No balance left to encash this year")
+        : null,
       balance, encashable, ratePerDay: divisor > 0 ? r2(wage / divisor) : 0,
     });
   }
@@ -563,13 +607,16 @@ export async function encashableTypes(employeeId: string, today: Date = new Date
 
 export async function raiseEncashmentRequest(input: {
   employeeId: string; leaveTypeId: string; days?: number | null; all?: boolean; note?: string | null; today?: Date;
+  /** HR or a manager raising it for the employee (their employee id). */
+  requestedByEmployeeId?: string | null;
 }): Promise<Result> {
   const emp = await prisma.employee.findUniqueOrThrow({ where: { id: input.employeeId }, select: { tenantId: true } });
-  const options = await encashableTypes(input.employeeId, input.today);
+  const onBehalf = !!input.requestedByEmployeeId && input.requestedByEmployeeId !== input.employeeId;
+  const options = await encashableTypes(input.employeeId, input.today, { onBehalf });
   const t = options.find((o) => o.leaveTypeId === input.leaveTypeId);
-  if (!t) return { ok: false, message: "That leave type is not in your plan." };
-  if (!t.allowed) return { ok: false, message: `${t.name}: you are not allowed to apply for leave encashment.` };
-  if (t.encashable <= 0) return { ok: false, message: `${t.name} has no balance left to encash this year.` };
+  if (!t) return { ok: false, message: onBehalf ? "That leave type is not in the employee's plan." : "That leave type is not in your plan." };
+  if (!t.allowed) return { ok: false, message: `${t.name}: ${(t.reason ?? "encashment is not allowed").replace(/\.$/, "")}.` };
+  if (t.encashable <= 0) return { ok: false, message: `${t.name}: ${(t.reason ?? "no balance left to encash this year").replace(/\.$/, "")}.` };
   const want = input.all ? t.encashable : Number(input.days ?? 0);
   if (!Number.isFinite(want) || want <= 0) return { ok: false, message: "Enter how many days to encash." };
   if (Math.round(want * 2) !== want * 2) return { ok: false, message: "Encash whole or half days." };
@@ -579,6 +626,7 @@ export async function raiseEncashmentRequest(input: {
     data: {
       tenantId: emp.tenantId, employeeId: input.employeeId, leaveTypeId: t.leaveTypeId, yearStart,
       days: want, encashAll: !!input.all, amount: Math.round(t.ratePerDay * want), note: input.note?.trim() || null,
+      requestedBy: onBehalf ? input.requestedByEmployeeId : null,
     },
   });
   return { ok: true, message: `Requested encashment of ${want} day(s) of ${t.name}.`, requestId: req.id };

@@ -247,6 +247,10 @@ model Employee {
   // --- Keka parity: Analytics (22-analytics) ---
   attritionRiskScores AttritionRiskScore[]
 
+  // --- Time & leave depth (26-time-leave-depth) ---
+  kioskPin     KioskPin?
+  workLogWeeks WorkLogWeek[]
+
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
   @@index([tenantId, departmentId])

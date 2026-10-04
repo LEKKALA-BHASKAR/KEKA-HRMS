@@ -40,11 +40,14 @@ const applySchema = z.object({
   employeeId: zOptionalId(),
   leaveTypeId: zId(),
   fromDate: zRequiredDate(),
-  toDate: zRequiredDate(),
+  toDate: zDate(),
   fromPortion: z.enum(PORTIONS).default("FULL_DAY"),
   toPortion: z.enum(PORTIONS).default("FULL_DAY"),
   reason: zOptional(500),
   intent: z.enum(["preview", "apply"]).default("apply"),
+  /** Hourly leave types: hours on the date and when they start. */
+  hours: zNumber({ min: 0.25, max: 24 }),
+  startTime: z.string().max(5).optional().transform((v) => (v ? v : null)),
 });
 
 /** Colleagues copied on a request ("Notify"), kept to real people in the tenant. */
@@ -61,6 +64,7 @@ export async function applyLeaveAction(_prev: ActionState, formData: FormData): 
   const parsed = parseForm(applySchema, formData);
   if (parsed.state) return parsed.state;
   const d = parsed.data;
+  const toDate = d.toDate ?? d.fromDate;
 
   // Applying for yourself needs nothing; applying for someone else needs
   // leave management over them.
@@ -75,21 +79,24 @@ export async function applyLeaveAction(_prev: ActionState, formData: FormData): 
   if (!type) return { ok: false, message: "Leave type not found." };
 
   const input = {
-    employeeId, leaveTypeId: d.leaveTypeId, from: d.fromDate, to: d.toDate,
-    fromPortion: d.fromPortion, toPortion: d.toDate.getTime() === d.fromDate.getTime() ? d.fromPortion : d.toPortion,
+    employeeId, leaveTypeId: d.leaveTypeId, from: d.fromDate, to: toDate,
+    fromPortion: d.fromPortion, toPortion: toDate.getTime() === d.fromDate.getTime() ? d.fromPortion : d.toPortion,
     reason: d.reason, onBehalf, requestedByEmployeeId: onBehalf ? viewer.employee?.id ?? null : null,
+    hours: type.unit === "HOURS" ? d.hours : null, startTime: type.unit === "HOURS" ? d.startTime : null,
   };
+  const unitWord = type.unit === "HOURS" ? "hour(s)" : "day(s)";
   const values = Object.fromEntries([...formData.entries()].map(([k, v]) => [k, String(v)]));
 
   try {
     if (d.intent === "preview") {
       const p = await previewLeave(input);
       const summary =
-        `${p.count.totalDays} day(s)` +
+        `${p.count.totalDays} ${unitWord}` +
         (p.count.sandwichDays > 0 ? `, including ${p.count.sandwichDays} sandwiched weekly-off/holiday day(s)` : "") +
         (type.isPaid && !type.isUnlimited && type.category !== "INCIDENT"
           ? `. Available ${p.available}, leaving ${Math.round((p.available - p.count.totalDays) * 100) / 100}.`
-          : type.isPaid ? "." : ". Unpaid — these days will be loss of pay.");
+          : type.isPaid ? "." : ". Unpaid — these days will be loss of pay.") +
+        (p.advanceDays > 0 ? ` ${p.advanceDays} ${unitWord} of this are taken in advance and recovered from your next accruals.` : "");
       if (p.issues.length > 0) {
         return {
           ok: false, message: `${summary} ${p.issues.map((i) => i.message).join(" ")}`,
@@ -108,18 +115,18 @@ export async function applyLeaveAction(_prev: ActionState, formData: FormData): 
     }
     await writeAudit(viewer, {
       module: "LEAVE", action: "CREATE", entityType: "LeaveRequest", entityId: res.requestId,
-      summary: `${onBehalf ? "Applied on behalf" : "Applied"}: ${type.name}, ${res.totalDays} day(s)`,
+      summary: `${onBehalf ? "Applied on behalf" : "Applied"}: ${type.name}, ${res.totalDays} ${unitWord}${res.advanceDays ? ` (${res.advanceDays} in advance)` : ""}`,
     });
     const copied = await copiedIds(viewer, formData, employeeId);
     if (copied.length) await prisma.leaveRequest.update({ where: { id: res.requestId! }, data: { notifyEmployeeIds: copied } });
     if (!onBehalf) {
       await notifyTimeRequest({
         tenantId: viewer.tenantId, employeeId, kind: "LEAVE", event: "RAISED",
-        what: `${type.name} ${between(d.fromDate, d.toDate)}`, notifyEmployeeIds: copied, note: d.reason,
+        what: `${type.name} ${between(d.fromDate, toDate)}`, notifyEmployeeIds: copied, note: d.reason,
       });
     }
     return done(["/me/leave", "/leave", "/inbox"],
-      `Submitted ${res.totalDays} day(s) of ${type.name}${res.sandwichDays ? ` (${res.sandwichDays} sandwiched)` : ""}. It is now awaiting approval.`);
+      `Submitted ${res.totalDays} ${unitWord} of ${type.name}${res.sandwichDays ? ` (${res.sandwichDays} sandwiched)` : ""}${res.advanceDays ? `, ${res.advanceDays} of them in advance of accrual` : ""}. It is now awaiting approval.`);
   } catch (err) {
     return toErrorState(err, values);
   }
@@ -587,6 +594,20 @@ export async function raiseAttendanceRequestAction(_prev: ActionState, formData:
   const hourly = remoteWork && d.hourly;
   const copied = await copiedIds(viewer, formData, viewer.employee.id);
 
+  // A supporting document (the policy may require one for WFH / on duty).
+  let attachment: { id: string } | null = null;
+  const file = formData.get("attachment");
+  if (file && typeof file === "object" && "arrayBuffer" in file && file.size > 0) {
+    if (file.size > 5 * 1024 * 1024) return { ok: false, message: "The document is larger than 5 MB." };
+    const data = Buffer.from(await file.arrayBuffer());
+    const sniff = sniffUpload(data, file.type);
+    if (!sniff.ok) return { ok: false, message: "Attach a PDF, JPEG or PNG." };
+    attachment = await saveFile({
+      tenantId: viewer.tenantId, filename: file.name || "attachment", mimeType: sniff.mimeType, data,
+      relatedType: "AttendanceRequest", employeeId: viewer.employee.id, uploadedBy: viewer.user.id,
+    });
+  }
+
   const res = await raiseAttendanceRequest({
     employeeId: viewer.employee.id, type: d.type,
     from: d.fromDate, to,
@@ -597,9 +618,13 @@ export async function raiseAttendanceRequestAction(_prev: ActionState, formData:
     portion: remoteWork && !hourly ? d.portion ?? "FULL_DAY" : null,
     isHourly: hourly,
     notifyEmployeeIds: copied,
+    attachmentFileId: attachment?.id ?? null,
     reason: d.reason,
   });
-  if (!res.ok) return { ok: false, message: res.message };
+  if (!res.ok) {
+    if (attachment) await prisma.storedFile.delete({ where: { id: attachment.id } }).catch(() => undefined);
+    return { ok: false, message: res.message };
+  }
   const label = { ADJUSTMENT: "an attendance adjustment", REGULARISATION: "regularization", PARTIAL_DAY: "a partial day", WORK_FROM_HOME: "work from home", ON_DUTY: "on duty" }[d.type];
   await writeAudit(viewer, {
     module: "ATTENDANCE", action: "CREATE", entityType: "AttendanceRequest", entityId: res.requestId,
@@ -686,7 +711,26 @@ const shiftSchema = z.object({
   requiredHours: zNumber({ min: 1, max: 16 }),
   crossesMidnight: zBool(),
   color: zOptional(9),
+  /** Auto clock-out: a slot left open this long is closed by the nightly job. */
+  maxSlotMinutes: zNumber({ min: 60, max: 1440 }),
 });
+
+const SHIFT_DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as const;
+/** Per-weekday timings from day_<DAY>_start / _end / _break, only where both times are given. */
+function dayScheduleFrom(formData: FormData): { schedule: Record<string, { startTime: string; endTime: string; breakMinutes?: number }> | null; error?: string } {
+  const out: Record<string, { startTime: string; endTime: string; breakMinutes?: number }> = {};
+  for (const d of SHIFT_DAYS) {
+    const s = String(formData.get(`day_${d}_start`) ?? "").trim();
+    const e = String(formData.get(`day_${d}_end`) ?? "").trim();
+    const b = String(formData.get(`day_${d}_break`) ?? "").trim();
+    if (!s && !e) continue;
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(s) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(e)) return { schedule: null, error: `${d}: give both times as HH:MM.` };
+    const br = b ? Number(b) : undefined;
+    if (br !== undefined && (!Number.isFinite(br) || br < 0 || br > 240)) return { schedule: null, error: `${d}: the break is 0 to 240 minutes.` };
+    out[d] = { startTime: s, endTime: e, ...(br !== undefined ? { breakMinutes: Math.round(br) } : {}) };
+  }
+  return { schedule: Object.keys(out).length ? out : null };
+}
 
 export async function saveShift(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const viewer = await requireAuth(P.SHIFT_MANAGE);
@@ -705,12 +749,18 @@ export async function saveShift(_prev: ActionState, formData: FormData): Promise
   if (d.breakMinutes >= spanMin) {
     return { ok: false, message: "The break is as long as the shift.", errors: { breakMinutes: "Too long" } };
   }
+  const days = dayScheduleFrom(formData);
+  if (days.error) return { ok: false, message: days.error };
+  if (d.maxSlotMinutes && d.maxSlotMinutes < spanMin) {
+    return { ok: false, message: "Auto clock-out must come after the shift's length.", errors: { maxSlotMinutes: "Shorter than the shift" } };
+  }
+  const data = { ...d, maxSlotMinutes: d.maxSlotMinutes == null ? null : Math.round(d.maxSlotMinutes), daySchedule: days.schedule ?? Prisma.DbNull };
   try {
     if (id) {
-      const u = await prisma.shift.updateMany({ where: { id, tenantId: viewer.tenantId }, data: d });
+      const u = await prisma.shift.updateMany({ where: { id, tenantId: viewer.tenantId }, data });
       if (u.count === 0) return { ok: false, message: "Shift not found." };
     } else {
-      await prisma.shift.create({ data: { ...d, tenantId: viewer.tenantId } });
+      await prisma.shift.create({ data: { ...data, tenantId: viewer.tenantId } });
     }
     return done(["/attendance"], `Saved ${d.name}.`);
   } catch (err) {

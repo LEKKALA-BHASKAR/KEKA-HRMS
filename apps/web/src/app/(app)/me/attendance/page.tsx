@@ -18,11 +18,12 @@ import { LogTable, type RequestOption } from "./_parts/log";
 import { MonthCalendar } from "./_parts/calendar";
 import { RequestsPanel, type RequestRow } from "./_parts/requests";
 import { PolicyDetails } from "./_parts/policy";
+import { KioskPinForm } from "../../_time/depth-forms";
 import s from "./attendance.module.css";
 
 export const metadata = { title: "My Attendance — BooS-HR" };
 
-type Params = { view?: string; range?: string; month?: string; type?: string; request?: string; date?: string; policy?: string };
+type Params = { view?: string; range?: string; month?: string; type?: string; request?: string; date?: string; policy?: string; kiosk?: string };
 
 const REQUEST_ALIASES: Record<string, string> = {
   WFH: "WORK_FROM_HOME", WORK_FROM_HOME: "WORK_FROM_HOME",
@@ -303,6 +304,14 @@ export default async function MyAttendancePage({ searchParams }: { searchParams:
                   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z" /><path d="M9 11h7M9 15h7M9 7h3" /></svg>
                   Attendance Policy
                 </Link>
+                <Link href={href({ kiosk: "1" })} scroll={false} className={s.link}>
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
+                  Kiosk PIN
+                </Link>
+                <Link href="/me/work-log" className={s.link}>
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+                  Work Log
+                </Link>
               </nav>
             </div>
           </div>
@@ -381,6 +390,12 @@ export default async function MyAttendancePage({ searchParams }: { searchParams:
       {sp.policy ? (
         <UrlModal title="Attendance Policy" subtitle="The rules your attendance is judged against" closeHref={href({ policy: null })} width={760}>
           <PolicyDetails tenantId={tenantId} employeeId={employeeId} policy={policy} shift={sh} year={today.getUTCFullYear()} />
+        </UrlModal>
+      ) : null}
+
+      {sp.kiosk ? (
+        <UrlModal title="Kiosk PIN" subtitle="Clock in at an office kiosk with your employee number and this PIN" closeHref={href({ kiosk: null })} width={480}>
+          <KioskPinForm hasPin={!!(await prisma.kioskPin.findUnique({ where: { employeeId }, select: { id: true } }))} />
         </UrlModal>
       ) : null}
     </>

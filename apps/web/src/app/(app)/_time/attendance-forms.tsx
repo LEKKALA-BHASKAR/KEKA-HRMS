@@ -147,6 +147,11 @@ export function AttendanceRequestForm({ defaultDate, defaultType }: {
           <Field label="Reason" name="reason" state={state} required>
             <TextArea name="reason" state={state} rows={2} required />
           </Field>
+          {type === "WORK_FROM_HOME" || type === "ON_DUTY" ? (
+            <Field label="Supporting document" name="attachment" state={state} hint="PDF, JPEG or PNG up to 5 MB — your policy may require one">
+              <input type="file" name="attachment" className="input" accept="application/pdf,image/jpeg,image/png" />
+            </Field>
+          ) : null}
         </>
       )}
     </ActionForm>
@@ -166,7 +171,13 @@ export interface ShiftValues {
   id?: string; name?: string; code?: string; startTime?: string; endTime?: string;
   breakMinutes?: number; isFlexible?: boolean; requiredHours?: number | null;
   crossesMidnight?: boolean; color?: string | null;
+  /** Auto clock-out after this many minutes in one slot. */
+  maxSlotMinutes?: number | null;
+  /** Per-weekday timings: { MON: { startTime, endTime, breakMinutes } } */
+  daySchedule?: Record<string, { startTime: string; endTime: string; breakMinutes?: number }> | null;
 }
+
+const SHIFT_WEEKDAYS = [["MON", "Monday"], ["TUE", "Tuesday"], ["WED", "Wednesday"], ["THU", "Thursday"], ["FRI", "Friday"], ["SAT", "Saturday"], ["SUN", "Sunday"]] as const;
 
 export function ShiftForm({ shift }: { shift?: ShiftValues }) {
   const s = shift ?? {};
@@ -200,6 +211,31 @@ export function ShiftForm({ shift }: { shift?: ShiftValues }) {
           <div className="grid grid-2">
             <CheckboxInput name="isFlexible" label="Flexible — count hours, not in/out times" defaultChecked={s.isFlexible} />
             <CheckboxInput name="crossesMidnight" label="Crosses midnight (night shift)" defaultChecked={s.crossesMidnight} />
+          </div>
+          <div className="text-xs strong subtle" style={{ margin: "10px 0 8px" }}>AUTO CLOCK-OUT</div>
+          <Field label="Close a punch left open after (minutes)" name="maxSlotMinutes" state={state}
+            hint="The nightly job writes the clock-out at clock-in + these minutes. Empty leaves open punches as missing punches.">
+            <TextInput name="maxSlotMinutes" type="number" state={state} defaultValue={s.maxSlotMinutes ?? ""} placeholder="e.g. 720" />
+          </Field>
+          <div className="text-xs strong subtle" style={{ margin: "10px 0 4px" }}>TIMINGS BY DAY</div>
+          <div className="hint" style={{ marginBottom: 8 }}>Leave a day blank to use the timings above, e.g. a shorter Saturday.</div>
+          <div className="table-wrap">
+            <table className="data">
+              <thead><tr><th>Day</th><th>Starts</th><th>Ends</th><th>Break (min)</th></tr></thead>
+              <tbody>
+                {SHIFT_WEEKDAYS.map(([d, label]) => {
+                  const v = s.daySchedule?.[d];
+                  return (
+                    <tr key={d}>
+                      <td className="text-sm">{label}</td>
+                      <td><input className="input" type="time" name={`day_${d}_start`} defaultValue={state.values?.[`day_${d}_start`] ?? v?.startTime ?? ""} aria-label={`${label} start`} /></td>
+                      <td><input className="input" type="time" name={`day_${d}_end`} defaultValue={state.values?.[`day_${d}_end`] ?? v?.endTime ?? ""} aria-label={`${label} end`} /></td>
+                      <td><input className="input num" type="number" min={0} max={240} name={`day_${d}_break`} defaultValue={state.values?.[`day_${d}_break`] ?? v?.breakMinutes ?? ""} aria-label={`${label} break`} style={{ maxWidth: 100 }} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </>
       )}

@@ -4,6 +4,7 @@
  *
  *   tsx scripts/jobs.ts deliver-mail          every few minutes
  *   tsx scripts/jobs.ts deliver-webhooks      every minute or two; retries back off on their own
+ *   tsx scripts/jobs.ts auto-clock-out        nightly (before process-attendance); closes punches left open past the shift's auto clock-out
  *   tsx scripts/jobs.ts process-attendance    nightly; re-evaluates the last 3 days
  *   tsx scripts/jobs.ts journeys              nightly; closes tasks the system can verify
  *   tsx scripts/jobs.ts probation             nightly; opens probation reviews, auto-confirms ended probations
@@ -50,6 +51,11 @@ async function main() {
   const jobs: Record<string, Job> = {
     "deliver-mail": async () => svc.deliverOutbox(fileTransport, { limit: 500 }),
     "deliver-webhooks": async () => svc.deliverWebhooks({ limit: 500 }),
+    "auto-clock-out": async () => {
+      let checked = 0, closed = 0;
+      for (const t of tenants) { const s = await svc.runAutoClockOut(t.id); checked += s.checked; closed += s.closed; }
+      return { tenants: tenants.length, openPunches: checked, closed };
+    },
     "process-attendance": async () => {
       const to = new Date(), from = new Date(to.getTime() - 3 * 86_400_000);
       let days = 0, lop = 0;
@@ -129,7 +135,7 @@ async function main() {
 
   let ok = true;
   if (cmd === "nightly") {
-    for (const name of ["process-attendance", "leave-auto-approve", "shift-allowance", "job-changes", "journeys", "probation", "leave-year-end", "invoices", "timesheet-reminders", "ledger-check", "scheduled-reports", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
+    for (const name of ["auto-clock-out", "process-attendance", "leave-auto-approve", "shift-allowance", "job-changes", "journeys", "probation", "leave-year-end", "invoices", "timesheet-reminders", "ledger-check", "scheduled-reports", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
     if (new Date().getUTCDate() === 1) ok = (await record("accrue", jobs.accrue)) && ok;
   } else if (cmd && jobs[cmd]) {
     ok = await record(cmd, jobs[cmd]);

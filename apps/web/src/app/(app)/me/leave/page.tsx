@@ -414,6 +414,7 @@ export default async function MyLeavePage({ searchParams }: { searchParams: Prom
                 : x.incident ? `${x.t.name} · up to ${x.quota} per event`
                 : `${x.t.name} · ${isCurrentYear ? r2(x.available ?? 0) : "—"} available`,
               allowHalfDay: x.t.allowHalfDay,
+              unit: x.t.unit, maxHours: x.t.maxHoursPerDay === null ? null : Number(x.t.maxHoursPerDay), stepMinutes: x.t.hourIncrementMinutes,
             }))} />
           )}
         </UrlModal>

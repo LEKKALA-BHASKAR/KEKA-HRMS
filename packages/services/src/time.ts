@@ -4,6 +4,8 @@ import {
   type AttendanceRules, type ShiftSpec, type DayResult,
   DEFAULT_WEEKLY_OFF, DEFAULT_RULES, dayKey, eachDayUtc, classifyDay,
   countLeave, validateLeave, accrueFor, evaluateDay, applyMonthlyPenalties,
+  hourlyLeaveIssues, hoursToDayValue, portionForDayValue, advanceAllowance, advancePortion, advanceRecovered,
+  shiftForDate, awolKeys, remoteWorkIssues, regularisationIssue,
 } from "@keka/time";
 import { type LeaveApprovalActor, manualDayValues } from "./leave-policy-math";
 
@@ -78,6 +80,22 @@ export interface ResolvedTimePolicy {
   overtimeMultiplier: number;
   overtimeOffDayMultiplier: number;
   overtimeRoundingMinutes: number;
+  // --- Time & leave depth ---
+  /** Per-weekday timings of the default shift (Shift.daySchedule). */
+  defaultShiftSchedule: unknown;
+  awolEnabled: boolean;
+  awolAfterDays: number;
+  newJoinerGraceDays: number;
+  regularisationMonthlyLimit: number | null;
+  regularisationCutoffDay: number | null;
+  wfhMonthlyLimit: number | null;
+  odMonthlyLimit: number | null;
+  remoteNoticeDays: number | null;
+  remoteAllowedOnHolidays: boolean;
+  remoteAllowedOnWeeklyOffs: boolean;
+  remoteAttachmentRequired: boolean;
+  overtimeToCompOff: boolean;
+  overtimeCompOffHoursPerDay: number;
 }
 
 /**
@@ -155,6 +173,7 @@ export async function resolveTimePolicy(employeeId: string, at: Date): Promise<R
     noAttendanceIsLop: policy.noAttendanceIsLop,
     overtimeEnabled: policy.overtimeEnabled,
     overtimeMinMinutes: policy.overtimeMinMinutes,
+    hoursBasis: policy.hoursBasis === "GROSS" ? "GROSS" : "EFFECTIVE",
   } : DEFAULT_RULES;
 
   return {
@@ -193,6 +212,20 @@ export async function resolveTimePolicy(employeeId: string, at: Date): Promise<R
     overtimeMultiplier: policy ? Number(policy.overtimeMultiplier) : 1,
     overtimeOffDayMultiplier: policy ? Number(policy.overtimeOffDayMultiplier) : 1,
     overtimeRoundingMinutes: policy?.overtimeRoundingMinutes ?? 0,
+    defaultShiftSchedule: shiftRow?.daySchedule ?? null,
+    awolEnabled: policy?.awolEnabled ?? false,
+    awolAfterDays: policy?.awolAfterDays ?? 3,
+    newJoinerGraceDays: policy?.newJoinerGraceDays ?? 0,
+    regularisationMonthlyLimit: policy?.regularisationMonthlyLimit ?? null,
+    regularisationCutoffDay: policy?.regularisationCutoffDay ?? null,
+    wfhMonthlyLimit: policy?.wfhMonthlyLimit ?? null,
+    odMonthlyLimit: policy?.odMonthlyLimit ?? null,
+    remoteNoticeDays: policy?.remoteNoticeDays ?? null,
+    remoteAllowedOnHolidays: policy?.remoteAllowedOnHolidays ?? false,
+    remoteAllowedOnWeeklyOffs: policy?.remoteAllowedOnWeeklyOffs ?? false,
+    remoteAttachmentRequired: policy?.remoteAttachmentRequired ?? false,
+    overtimeToCompOff: policy?.overtimeToCompOff ?? false,
+    overtimeCompOffHoursPerDay: policy ? Number(policy.overtimeCompOffHoursPerDay) : 8,
   };
 }
 
@@ -295,6 +328,33 @@ async function pendingDays(employeeId: string, leaveTypeId: string, exceptReques
   return Number(agg._sum.totalDays ?? 0);
 }
 
+/**
+ * How far below zero a type's balance may go: the permitted overdraft plus,
+ * when advance leave is on, the accrual still to come this leave year.
+ */
+export async function balanceFloor(
+  employeeId: string,
+  type: { id: string; allowNegativeBalance: boolean; maxNegativeDays: unknown; allowAdvanceLeave: boolean; advanceLeaveMaxDays: unknown; annualQuota: unknown },
+  yearStart: Date,
+  at: Date,
+): Promise<{ floor: number; overdraft: number; advance: number }> {
+  const overdraft = type.allowNegativeBalance ? Number(type.maxNegativeDays ?? 0) : 0;
+  let advance = 0;
+  if (type.allowAdvanceLeave && Number(type.advanceLeaveMaxDays ?? 0) > 0) {
+    const plan = await planFor(employeeId, at);
+    const link = plan?.plan.types.find((t) => t.leaveTypeId === type.id);
+    const quota = Number(link?.quotaOverride ?? type.annualQuota ?? 0);
+    const credited = await prisma.leaveLedgerEntry.aggregate({
+      where: { employeeId, leaveTypeId: type.id, yearStart, kind: "ACCRUAL" }, _sum: { days: true },
+    });
+    advance = advanceAllowance({
+      allow: true, maxDays: Number(type.advanceLeaveMaxDays), annualQuota: quota,
+      creditedThisYear: Number(credited._sum.days ?? 0),
+    });
+  }
+  return { floor: -(overdraft + advance), overdraft, advance };
+}
+
 /** Leave dates already covered by pending or approved requests. */
 async function otherLeaveMap(employeeId: string, from: Date, to: Date, sameTypeOnly?: string) {
   const days = await prisma.leaveRequestDay.findMany({
@@ -328,6 +388,9 @@ export interface ApplyLeaveInput {
   onBehalf?: boolean;
   /** The employee who raised it, when not the employee themselves. */
   requestedByEmployeeId?: string | null;
+  /** HOURS-unit types: the hours on the (single) date and their start time. */
+  hours?: number | null;
+  startTime?: string | null;
   today?: Date;
 }
 
@@ -337,6 +400,8 @@ export interface ApplyLeaveResult {
   issues: Array<{ field: string; message: string }>;
   totalDays?: number;
   sandwichDays?: number;
+  /** The part taken against accrual still to come. */
+  advanceDays?: number;
 }
 
 export async function previewLeave(input: ApplyLeaveInput) {
@@ -359,10 +424,28 @@ export async function previewLeave(input: ApplyLeaveInput) {
   // Overlap is checked against leave of any type, whatever the sandwich scope.
   const anyOther = sandwich?.clubAcrossLeaveTypes ? other : await otherLeaveMap(input.employeeId, from, to);
 
+  // Hourly leave is one date, counted in hours; no portions and no sandwich.
+  const hourly = type.unit === "HOURS";
   const count = countLeave({
-    from, to, fromPortion: input.fromPortion, toPortion: input.toPortion,
-    calendar: policy.calendar, sandwich, otherLeave: other,
+    from, to: hourly ? from : to,
+    fromPortion: hourly ? "FULL_DAY" : input.fromPortion, toPortion: hourly ? "FULL_DAY" : input.toPortion,
+    calendar: policy.calendar, sandwich: hourly ? null : sandwich, otherLeave: other,
   });
+  const hourlyIssues = hourly ? hourlyLeaveIssues({
+    name: type.name,
+    hoursPerDay: type.hoursPerDay === null ? null : Number(type.hoursPerDay),
+    minHoursPerRequest: type.minHoursPerRequest === null ? null : Number(type.minHoursPerRequest),
+    maxHoursPerDay: type.maxHoursPerDay === null ? null : Number(type.maxHoursPerDay),
+    hourIncrementMinutes: type.hourIncrementMinutes,
+  }, input.hours, input.startTime) : [];
+  if (hourly) {
+    if (to.getTime() !== from.getTime()) hourlyIssues.push({ field: "toDate", message: `${type.name} is taken by the hour on a single date.` });
+    const h = input.hours && input.hours > 0 ? r2(input.hours) : 0;
+    count.days = count.days.map((d) => ({ ...d, value: h }));
+    count.leaveDays = count.days.length ? h : 0;
+    count.sandwichDays = 0;
+    count.totalDays = count.leaveDays;
+  }
   count.overlaps = [...new Set([
     ...count.overlaps,
     ...count.days.filter((d) => !d.isSandwich && anyOther.has(d.key)).map((d) => d.key),
@@ -377,6 +460,8 @@ export async function previewLeave(input: ApplyLeaveInput) {
     ? await recomputeBalance(input.employeeId, input.leaveTypeId, yearStart)
     : 0;
   const available = r2(balance - await pendingDays(input.employeeId, input.leaveTypeId));
+  const tracks = type.isPaid && !type.isUnlimited && !isIncident;
+  const floor = tracks ? await balanceFloor(input.employeeId, type, yearStart, from) : { floor: 0, overdraft: 0, advance: 0 };
 
   const onProbation = emp.status === "PROBATION";
   const usedDuringProbation = onProbation
@@ -398,8 +483,8 @@ export async function previewLeave(input: ApplyLeaveInput) {
       maxConsecutiveDays: type.maxConsecutiveDays
         ? Number(type.maxConsecutiveDays)
         : isIncident ? Number(type.annualQuota) : null,
-      allowNegativeBalance: type.allowNegativeBalance,
-      maxNegativeDays: type.maxNegativeDays ? Number(type.maxNegativeDays) : null,
+      allowNegativeBalance: floor.floor < 0,
+      maxNegativeDays: -floor.floor,
       isUnlimited: type.isUnlimited || isIncident,
       accrueDuringProbation: type.accrueDuringProbation,
       maxDaysDuringProbation: type.maxDaysDuringProbation ? Number(type.maxDaysDuringProbation) : null,
@@ -409,10 +494,17 @@ export async function previewLeave(input: ApplyLeaveInput) {
     today, available, reason: input.reason, hasAttachment: !!input.attachmentUrl,
     onProbation, usedDuringProbation,
   });
+  issues.push(...hourlyIssues);
+  // An overdraft made of advance leave says so, rather than "negative balance".
+  for (const i of issues) {
+    if (i.field === "leaveTypeId" && floor.advance > 0 && /permitted overdraft/.test(i.message)) {
+      i.message = `This goes beyond ${type.name}'s balance plus the ${floor.advance} ${hourly ? "hour(s)" : "day(s)"} you may take in advance of accrual. Available: ${available}, requested: ${count.totalDays}.`;
+    }
+  }
 
   // Usage limits: days per month, the gap between requests, and a
   // consecutive run that an adjoining request would make too long.
-  if (!count.empty && to.getTime() >= from.getTime()) {
+  if (!count.empty && to.getTime() >= from.getTime() && !hourly) {
     const { usageIssuesFor } = await import("./leave-policy");
     issues.push(...await usageIssuesFor({ employeeId: input.employeeId, type, count, from, to, calendar: policy.calendar }));
   }
@@ -422,8 +514,11 @@ export async function previewLeave(input: ApplyLeaveInput) {
     issues.push({ field: "leaveTypeId", message: `${type.name} can only be applied by an administrator.` });
   }
 
-  return { emp, type, count, issues, available, yearStart, from, to };
+  const advanceDays = tracks ? advancePortion(available + floor.overdraft, count.totalDays, floor.advance) : 0;
+  return { emp, type, count, issues, available, yearStart, from, to: hourly ? from : to, hourly, advanceDays, floor };
 }
+
+const hoursPerDayOf = (t: { hoursPerDay: unknown }) => (t.hoursPerDay === null || t.hoursPerDay === undefined ? null : Number(t.hoursPerDay));
 
 export async function applyLeave(input: ApplyLeaveInput): Promise<ApplyLeaveResult> {
   const p = await previewLeave(input);
@@ -440,9 +535,12 @@ export async function applyLeave(input: ApplyLeaveInput): Promise<ApplyLeaveResu
       employeeId: p.emp.id,
       leaveTypeId: p.type.id,
       fromDate: p.from, toDate: p.to,
-      fromPortion: input.fromPortion ?? "FULL_DAY",
-      toPortion: input.toPortion ?? "FULL_DAY",
+      fromPortion: p.hourly ? portionForDayValue(hoursToDayValue(p.count.totalDays, hoursPerDayOf(p.type))) : input.fromPortion ?? "FULL_DAY",
+      toPortion: p.hourly ? portionForDayValue(hoursToDayValue(p.count.totalDays, hoursPerDayOf(p.type))) : input.toPortion ?? "FULL_DAY",
       totalDays: p.count.totalDays,
+      hours: p.hourly ? p.count.totalDays : null,
+      startTime: p.hourly ? input.startTime ?? null : null,
+      advanceDays: p.advanceDays,
       sandwichDays: p.count.sandwichDays,
       reason: input.reason ?? null,
       attachmentUrl: input.attachmentUrl ?? null,
@@ -451,7 +549,10 @@ export async function applyLeave(input: ApplyLeaveInput): Promise<ApplyLeaveResu
       ...(steps ? { approvalSteps: steps as never, approvalLevel: 0, levelSince: new Date() } : {}),
       days: {
         create: p.count.days.map((d) => ({
-          date: d.date, portion: d.portion, dayValue: d.value,
+          // An hourly request's day carries the share of the day, for payroll.
+          date: d.date,
+          portion: p.hourly ? portionForDayValue(hoursToDayValue(d.value, hoursPerDayOf(p.type))) : d.portion,
+          dayValue: p.hourly ? hoursToDayValue(d.value, hoursPerDayOf(p.type)) : d.value,
           isSandwich: d.isSandwich,
           // Unpaid leave reaches payroll as LOP through exactly this flag.
           isPaid: p.type.isPaid,
@@ -462,7 +563,7 @@ export async function applyLeave(input: ApplyLeaveInput): Promise<ApplyLeaveResu
 
   return {
     ok: true, requestId: request.id, issues: [],
-    totalDays: p.count.totalDays, sandwichDays: p.count.sandwichDays,
+    totalDays: p.count.totalDays, sandwichDays: p.count.sandwichDays, advanceDays: p.advanceDays,
   };
 }
 
@@ -544,7 +645,7 @@ export async function decideLeave(opts: {
     request.leaveType.category !== "INCIDENT";
   if (tracksBalance) {
     const available = await recomputeBalance(request.employeeId, request.leaveTypeId, yearStart);
-    const floor = request.leaveType.allowNegativeBalance ? -Number(request.leaveType.maxNegativeDays ?? 0) : 0;
+    const { floor } = await balanceFloor(request.employeeId, request.leaveType, yearStart, request.fromDate);
     if (available - Number(request.totalDays) < floor - 1e-9) {
       return {
         ok: false,
@@ -726,6 +827,8 @@ export async function runAccrual(opts: { tenantId: string; year: number; month: 
         currentBalance: current,
       });
       if (res.credit <= 0 || !res.periodKey) continue;
+      // A negative balance is advance leave being paid back by this credit.
+      const recovered = advanceRecovered(current, res.credit);
 
       // skipDuplicates makes a re-run a silent no-op against the unique key,
       // rather than a thrown (and logged) constraint violation per employee.
@@ -733,7 +836,7 @@ export async function runAccrual(opts: { tenantId: string; year: number; month: 
         data: [{
           tenantId: emp.tenantId, employeeId: emp.id, leaveTypeId: t.id, yearStart,
           kind: "ACCRUAL", days: res.credit, periodKey: `ACCRUAL:${res.periodKey}`,
-          note: res.reason,
+          note: recovered > 0 ? `${res.reason}; ${recovered} recovered against advance leave` : res.reason,
         }],
         skipDuplicates: true,
       });
@@ -1033,7 +1136,7 @@ export async function processAttendance(opts: {
           date: { gte: empFrom, lte: empTo },
           request: { employeeId: emp.id, status: "APPROVED" },
         },
-        select: { date: true, portion: true, isPaid: true, isSandwich: true },
+        select: { date: true, portion: true, isPaid: true, isSandwich: true, request: { select: { hours: true } } },
       }),
       prisma.attendanceRequest.findMany({
         where: {
@@ -1058,7 +1161,15 @@ export async function processAttendance(opts: {
       const k = localDateKey(l.timestamp, tz);
       logsByDay.set(k, [...(logsByDay.get(k) ?? []), l]);
     }
-    const leaveByDay = new Map(leaveDays.filter((d) => !d.isSandwich).map((d) => [dayKey(d.date), d]));
+    // Hourly leave is time away inside a working day, credited like a
+    // permitted partial absence rather than as a half or full day off.
+    const leaveByDay = new Map(leaveDays.filter((d) => !d.isSandwich && d.request.hours === null).map((d) => [dayKey(d.date), d]));
+    const hourlyLeaveMinutes = new Map<string, number>();
+    for (const d of leaveDays) {
+      if (d.request.hours === null) continue;
+      const k = dayKey(d.date);
+      hourlyLeaveMinutes.set(k, (hourlyLeaveMinutes.get(k) ?? 0) + Number(d.request.hours) * 60);
+    }
     const shiftByDay = new Map(shiftOverrides.map((s) => [dayKey(s.date), s]));
 
     const results: Array<DayResult & { date: Date; key: string }> = [];
@@ -1081,12 +1192,13 @@ export async function processAttendance(opts: {
       // ...and a rostered working day overrides a pattern weekly-off.
       else if (override?.weeklyOffCode === "ON" && (kind === "WEEKLY_OFF" || kind === "HALF_WEEKLY_OFF")) kind = "WORKING";
 
-      const shift: ShiftSpec = override ? {
+      // A shift may run different hours on different weekdays.
+      const shift: ShiftSpec = override ? shiftForDate({
         startTime: override.shift.startTime, endTime: override.shift.endTime,
         breakMinutes: override.shift.breakMinutes, isFlexible: override.shift.isFlexible,
         requiredHours: override.shift.requiredHours ? Number(override.shift.requiredHours) : null,
         crossesMidnight: override.shift.crossesMidnight,
-      } : policy.defaultShift;
+      }, override.shift.daySchedule, date) : shiftForDate(policy.defaultShift, policy.defaultShiftSchedule, date);
 
       const r = evaluateDay({
         date, kind, shift, rules: policy.rules,
@@ -1095,7 +1207,8 @@ export async function processAttendance(opts: {
         remote: remote ? (remote.type as "WORK_FROM_HOME" | "ON_DUTY") : null,
         remotePortion: remote?.portion ?? null,
         regularised: covering.some((r) => r.type === "REGULARISATION" || r.type === "ADJUSTMENT"),
-        partialMinutes: covering.filter((r) => r.type === "PARTIAL_DAY").reduce((s, r) => s + (r.partialMinutes ?? 0), 0) + hourlyRemoteMinutes,
+        partialMinutes: covering.filter((r) => r.type === "PARTIAL_DAY").reduce((s, r) => s + (r.partialMinutes ?? 0), 0) + hourlyRemoteMinutes
+          + (hourlyLeaveMinutes.get(key) ?? 0),
         tzOffsetMinutes: tz,
         trackAttendance: policy.trackAttendance,
       });
@@ -1113,6 +1226,41 @@ export async function processAttendance(opts: {
       results.push({ ...r, date, key });
     }
 
+    // New joiners: no late or missing-punch penalties in their first days.
+    if (policy.newJoinerGraceDays > 0) {
+      const graceEnd = utcMidnight(emp.dateOfJoining).getTime() + (policy.newJoinerGraceDays - 1) * DAY;
+      for (const r of results) {
+        if (r.date.getTime() <= graceEnd && (r.isLate || r.isMissingPunch)) {
+          r.isLate = false; r.isMissingPunch = false;
+          r.notes = [...r.notes, "New-joiner grace — no penalties"];
+        }
+      }
+    }
+
+    // Absent without leave: a long enough run of no-shows is each full LOP,
+    // whatever the policy says about a single day with no attendance. The run
+    // may have started before this range, so earlier stored days seed it.
+    const awol = new Set<string>();
+    if (policy.awolEnabled && policy.awolAfterDays > 0) {
+      const before = await prisma.attendanceRecord.findMany({
+        where: { employeeId: emp.id, date: { gte: new Date(empFrom.getTime() - (policy.awolAfterDays * 3 + 7) * DAY), lt: empFrom } },
+        select: { date: true, status: true, penaltyReason: true },
+      });
+      const seeded = before.map((b) => ({
+        key: dayKey(b.date),
+        status: b.status === "ABSENT" && (b.penaltyReason ?? "").includes("Absent without leave") ? "NO_ATTENDANCE" : b.status,
+      }));
+      const pinnedKeys = new Set(pinnedByDay.keys());
+      for (const k of awolKeys([...seeded, ...results.map((r) => ({ key: r.key, status: pinnedKeys.has(r.key) ? "PINNED" : r.status }))], policy.awolAfterDays)) {
+        awol.add(k);
+      }
+      for (const r of results) {
+        if (!awol.has(r.key)) continue;
+        r.status = "ABSENT"; r.lopValue = 1; r.payableValue = 0;
+        r.notes = [...r.notes, `Absent without leave — ${policy.awolAfterDays}+ working days with no attendance or leave`];
+      }
+    }
+
     // Penalties per calendar month.
     const byMonth = new Map<string, typeof results>();
     for (const r of results) {
@@ -1128,7 +1276,9 @@ export async function processAttendance(opts: {
         if (!r.penaltyReason || r.date.getTime() <= bufferEdge) return r;
         const before = monthDays.find((x) => x.key === dayKey(r.date))!;
         return { ...r, lopValue: before.lopValue, payableValue: before.payableValue, penaltyReason: null };
-      });
+      }).map((r) => (awol.has(dayKey(r.date))
+        ? { ...r, penaltyReason: ["Absent without leave", r.penaltyReason].filter(Boolean).join("; ") }
+        : r));
       for (const r of penalised) {
         const key = dayKey(r.date);
         const status = r.status;
@@ -1217,6 +1367,22 @@ export async function raiseAttendanceRequest(input: {
   if (pastOnly && (today.getTime() - from.getTime()) / DAY > policy.regularisationWindowDays) {
     return { ok: false, message: `Corrections can only go back ${policy.regularisationWindowDays} days.` };
   }
+  // Regularisation rules: a monthly cap on corrections and a cut-off day.
+  if (pastOnly && (policy.regularisationMonthlyLimit != null || policy.regularisationCutoffDay)) {
+    const monthStart = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+    const monthEnd = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + 1, 0));
+    const used = await prisma.attendanceRequest.count({
+      where: {
+        employeeId: input.employeeId, type: { in: ["ADJUSTMENT", "REGULARISATION"] },
+        status: { in: ["PENDING", "APPROVED"] }, fromDate: { gte: monthStart, lte: monthEnd },
+      },
+    });
+    const issue = regularisationIssue({
+      date: from, today, cutoffDay: policy.regularisationCutoffDay,
+      monthlyLimit: policy.regularisationMonthlyLimit, usedInMonth: used,
+    });
+    if (issue) return { ok: false, message: issue };
+  }
   // An adjustment carries either one in/out pair or a list of punches.
   let proposedLogs: ProposedPunch[] | null = null;
   if (input.type === "ADJUSTMENT") {
@@ -1253,6 +1419,48 @@ export async function raiseAttendanceRequest(input: {
     if (!input.proposedIn || !input.proposedOut || input.proposedOut.getTime() <= input.proposedIn.getTime()) {
       return { ok: false, message: "Give the start and end time of the hourly request, end after start." };
     }
+  }
+
+  // Remote-work rules from the capture policy: notice, off days, documents
+  // and a monthly allowance per kind.
+  if (remoteWork) {
+    const label = input.type === "WORK_FROM_HOME" ? "Work from home" : "On duty";
+    const limit = input.type === "WORK_FROM_HOME" ? policy.wfhMonthlyLimit : policy.odMonthlyLimit;
+    const usedByMonth = new Map<string, number>();
+    if (limit != null) {
+      const windowStart = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+      const windowEnd = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth() + 1, 0));
+      const prior = await prisma.attendanceRequest.findMany({
+        where: {
+          employeeId: input.employeeId, type: input.type, status: { in: ["PENDING", "APPROVED"] }, isHourly: false,
+          fromDate: { lte: windowEnd }, toDate: { gte: windowStart },
+        },
+        select: { fromDate: true, toDate: true, portion: true },
+      });
+      for (const p of prior) {
+        const unit = p.portion === "FIRST_HALF" || p.portion === "SECOND_HALF" ? 0.5 : 1;
+        for (const d of eachDayUtc(p.fromDate, p.toDate)) {
+          const kind = classifyDay(d, policy.calendar);
+          const counts = kind === "WORKING" || kind === "HALF_WEEKLY_OFF"
+            || (kind === "HOLIDAY" && policy.remoteAllowedOnHolidays) || (kind === "WEEKLY_OFF" && policy.remoteAllowedOnWeeklyOffs);
+          if (!counts || d.getTime() < windowStart.getTime() || d.getTime() > windowEnd.getTime()) continue;
+          const m = dayKey(d).slice(0, 7);
+          usedByMonth.set(m, (usedByMonth.get(m) ?? 0) + unit);
+        }
+      }
+    }
+    const issues = remoteWorkIssues({
+      label, from, to, today,
+      rules: {
+        monthlyLimit: limit, noticeDays: policy.remoteNoticeDays,
+        allowedOnHolidays: policy.remoteAllowedOnHolidays, allowedOnWeeklyOffs: policy.remoteAllowedOnWeeklyOffs,
+        attachmentRequired: policy.remoteAttachmentRequired,
+      },
+      days: eachDayUtc(from, to).map((d) => ({ date: d, kind: classifyDay(d, policy.calendar) })),
+      usedByMonth, unit: input.isHourly ? 0 : half ? 0.5 : 1,
+      hasAttachment: !!input.attachmentFileId,
+    });
+    if (issues.length) return { ok: false, message: issues.join(" ") };
   }
 
   const clash = await prisma.attendanceRequest.findFirst({

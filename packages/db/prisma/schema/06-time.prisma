@@ -132,6 +132,24 @@ model LeaveType {
   /// { "levels": ["REPORTING_MANAGER", "HR"], "skipSamePerson": true, "autoApproveAfterDays": 3 }
   approvalChain Json?
 
+  // --- Time & leave depth (26-time-leave-depth) ---
+  /// HOURS unit: hours that make one working day (for attendance and payroll).
+  hoursPerDay            Decimal? @db.Decimal(5, 2)
+  /// HOURS unit: the smallest and largest request on one day, and the step.
+  minHoursPerRequest     Decimal? @db.Decimal(5, 2)
+  maxHoursPerDay         Decimal? @db.Decimal(5, 2)
+  hourIncrementMinutes   Int?
+  /// Calendar months (1-12) in which encashment may be raised; empty = any month.
+  encashmentMonths       Int[]    @default([])
+  /// Balance that must remain after an encashment.
+  encashmentMinBalance   Decimal? @db.Decimal(9, 2)
+  /// Leave may be taken against accrual still to come this leave year.
+  allowAdvanceLeave      Boolean  @default(false)
+  advanceLeaveMaxDays    Decimal? @db.Decimal(9, 2)
+  /// COMP_OFF: hours worked on an off day that earn a half / full day.
+  compOffHalfDayMinHours Decimal? @db.Decimal(5, 2)
+  compOffFullDayMinHours Decimal? @db.Decimal(5, 2)
+
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -284,6 +302,12 @@ model LeaveRequest {
   approvalSteps Json?
   /// Index into approvalSteps of the level awaiting a decision.
   approvalLevel Int       @default(0)
+  /// Hourly leave (HOURS unit): hours on the single date and the local start
+  /// time ("HH:MM"). totalDays then carries the same hours.
+  hours         Decimal?  @db.Decimal(5, 2)
+  startTime     String?
+  /// The part of totalDays taken against accrual still to come.
+  advanceDays   Decimal   @default(0) @db.Decimal(9, 2)
   /// When the current level started waiting (drives auto-approval).
   levelSince    DateTime?
 

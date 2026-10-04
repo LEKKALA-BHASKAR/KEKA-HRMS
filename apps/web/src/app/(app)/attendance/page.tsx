@@ -323,7 +323,7 @@ async function ShiftsTab({ tenantId, edit }: { tenantId: string; edit?: string }
     <div className="stack gap-4">
       <Card title={editing ? `Edit ${editing.name}` : "New shift"} action={editing ? <Link className="btn sm" href="/attendance?tab=shifts">Close</Link> : null}>
         {editing ? (
-          <ShiftForm key={editing.id} shift={{ ...editing, requiredHours: editing.requiredHours ? n(editing.requiredHours) : null }} />
+          <ShiftForm key={editing.id} shift={{ ...editing, requiredHours: editing.requiredHours ? n(editing.requiredHours) : null, daySchedule: (editing.daySchedule ?? null) as Record<string, { startTime: string; endTime: string; breakMinutes?: number }> | null }} />
         ) : <Disclosure label="Create a shift"><ShiftForm /></Disclosure>}
       </Card>
       <Card tight title="Shifts">

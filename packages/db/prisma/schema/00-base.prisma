@@ -244,6 +244,11 @@ model Tenant {
   probationPolicies ProbationPolicy[]
   probations        EmployeeProbation[]
 
+  // --- Time & leave depth (26-time-leave-depth) ---
+  attendanceKiosks AttendanceKiosk[]
+  kioskPins        KioskPin[]
+  workLogWeeks     WorkLogWeek[]
+
   @@index([subdomain])
   @@map("tenants")
 }
