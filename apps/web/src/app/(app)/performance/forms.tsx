@@ -133,7 +133,9 @@ export function CycleOps({ cycleId, status }: { cycleId: string; status: string 
   );
 }
 
-export function ReviewForm({ reviewId, reviewerType, indicators }: { reviewId: string; reviewerType: string; indicators: Array<{ id: string; name: string; category: string }> }) {
+export interface FormSectionView { id: string; title: string; description: string | null; questions: Array<{ id: string; kind: string; prompt: string; competency: string | null; isRequired: boolean }> }
+
+export function ReviewForm({ reviewId, reviewerType, indicators, sections = [] }: { reviewId: string; reviewerType: string; indicators: Array<{ id: string; name: string; category: string }>; sections?: FormSectionView[] }) {
   const [state, action, pending] = useForm(submitReviewAction);
   if (state.ok) return <div className="callout success"><div>{state.message}</div></div>;
   return (
@@ -152,6 +154,22 @@ export function ReviewForm({ reviewId, reviewerType, indicators }: { reviewId: s
           ))}
         </div>
       ) : null}
+      {sections.filter((sec) => sec.questions.length).map((sec) => (
+        <fieldset key={sec.id} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
+          <legend className="strong text-sm" style={{ padding: "0 6px" }}>{sec.title}</legend>
+          {sec.description ? <div className="text-xs subtle" style={{ marginBottom: 8 }}>{sec.description}</div> : null}
+          {sec.questions.map((q) => (
+            <div key={q.id} className="field">
+              <label className="label" htmlFor={`q:${q.id}`}>{q.prompt}{q.competency ? <span className="subtle"> · {q.competency}</span> : null}{q.isRequired ? <span style={{ color: "var(--danger)" }}> *</span> : null}</label>
+              {q.kind === "TEXT"
+                ? <textarea id={`q:${q.id}`} name={`q:${q.id}`} className="textarea" rows={3} required={q.isRequired} />
+                : <select id={`q:${q.id}`} name={`q:${q.id}`} className="select" defaultValue="" required={q.isRequired} style={{ width: 220 }}>
+                    <option value="">Choose…</option>{[5, 4, 3, 2, 1].map((n) => <option key={n} value={n}>{n} — {["", "Poor", "Below", "Meets", "Strong", "Exceptional"][n]}</option>)}
+                  </select>}
+            </div>
+          ))}
+        </fieldset>
+      ))}
       <Field label="Overall rating" name="overallRating" state={state} required>
         <div className="row gap-3 wrap">
           {[1, 2, 3, 4, 5].map((n) => (
@@ -170,14 +188,17 @@ export function ReviewForm({ reviewId, reviewerType, indicators }: { reviewId: s
   );
 }
 
-export function CalibrateForm({ reviewId, raw }: { reviewId: string; raw: number | null }) {
+export function CalibrateForm({ reviewId, raw, potential }: { reviewId: string; raw: number | null; potential?: number | null }) {
   const [state, action, pending] = useForm(calibrateAction);
   const [value, setValue] = useState(raw ?? 3);
   const moved = raw !== null && Math.abs(value - raw) > 0.001;
   return (
     <form action={action} className="row gap-2 wrap" style={{ justifyContent: "flex-end" }}>
       <input type="hidden" name="reviewId" value={reviewId} />
-      <input className="input num" name="finalRating" type="number" min={1} max={5} step={0.1} value={value} onChange={(e) => setValue(Number(e.target.value))} style={{ width: 70 }} />
+      <input className="input num" name="finalRating" type="number" min={1} max={5} step={0.1} value={value} onChange={(e) => setValue(Number(e.target.value))} style={{ width: 70 }} aria-label="Final rating" />
+      <select name="potentialRating" className="select" defaultValue={potential ? String(Math.round(potential)) : ""} style={{ width: 120 }} aria-label="Potential" title="Potential, for the 9-box">
+        <option value="">Potential…</option>{[5, 4, 3, 2, 1].map((n) => <option key={n} value={n}>{n} — {["", "Low", "Limited", "Moderate", "High", "Exceptional"][n]}</option>)}
+      </select>
       {moved ? <input className="input" name="reason" placeholder="Why it moved" required style={{ width: 160 }} /> : null}
       <button className="btn sm" disabled={pending}>{pending ? "…" : "Set"}</button>
       {state.message ? <div className={`text-xs ${state.ok ? "pos" : "neg"}`} style={{ width: "100%", textAlign: "right" }}>{state.message}</div> : null}

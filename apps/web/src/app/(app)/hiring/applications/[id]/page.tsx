@@ -14,6 +14,7 @@ import { FeedbackDrawer } from "../../_parts/feedback-drawer";
 import { SummarizeButton, CandidateFeedbackButton } from "../../_parts/summary";
 import { QuestionsButton, type QSection } from "../../_parts/questions";
 import { FlashToast } from "../../_parts/toast";
+import { TalentPanel } from "../../_parts/talent-panel";
 import { userNames, kDate, kDateTime } from "../../_lib/data";
 import s from "../../hire.module.css";
 
@@ -185,6 +186,7 @@ export default async function ApplicationPage({ params, searchParams }: { params
             ]} />
           </div>
           <OfferCard />
+          <TalentPanel viewer={viewer} applicationId={app!.id} />
         </div>
         <NotesCard />
       </div>

@@ -147,6 +147,10 @@ model Goal {
   visibility String  @default("EVERYONE")
   /// MANUAL | AI
   source     String  @default("MANUAL")
+  /// Talent depth: the library template it started from, and the team goal
+  /// (one goal assigned to many people at once) it belongs to.
+  templateId String?
+  teamGoalId String?
 
   createdBy String?
   createdAt DateTime @default(now())
@@ -237,6 +241,12 @@ model ReviewCycle {
   reviews       EmployeeReview[]
   bands         PerformanceBand[]
   compProposals CompensationProposal[]
+
+  // --- Talent depth (28-talent-depth) ---
+  formSections          ReviewFormSection[]
+  stageDates            ReviewCycleStage?
+  participants          ReviewCycleParticipant[]
+  salaryRecommendations SalaryRecommendation[]
 
   @@unique([tenantId, name])
   @@index([tenantId, status])
@@ -467,6 +477,8 @@ model Feedback {
   /// What it concerns — a project, a skill, a behaviour.
   topic           String?
   message         String
+  /// Talent depth: the giver's name is hidden from the subject.
+  isAnonymous     Boolean      @default(false)
   createdAt       DateTime     @default(now())
 
   @@index([tenantId, aboutEmployeeId])

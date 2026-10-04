@@ -26,6 +26,8 @@ export default async function ReviewToPayPage({ params }: { params: Promise<{ id
     prisma.bonusType.findMany({ where: { tenantId: viewer.tenantId, isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.employeeReview.count({ where: { cycleId: id, status: { in: ["CALIBRATED", "SHARED", "ACKNOWLEDGED"] } } }),
   ]);
+  // Manager recommendations from the reviews (Inbox › Salary increments decides them).
+  const recs = new Map((await prisma.salaryRecommendation.findMany({ where: { cycleId: id, tenantId: viewer.tenantId } })).map((r) => [r.reviewId, r]));
   const drafts = proposals.filter((p) => p.status === "DRAFT");
   const live = proposals.filter((p) => p.status !== "SKIPPED");
   const payroll = live.reduce((s, p) => s + Number(p.currentCtc), 0);
@@ -51,7 +53,7 @@ export default async function ReviewToPayPage({ params }: { params: Promise<{ id
           <Card tight title={`Proposals (${proposals.length})`}>
             {proposals.length === 0 ? <Empty title="No proposals yet">Save the merit matrix, then build proposals from calibrated reviews.</Empty> : (
               <div className="table-wrap"><table className="data">
-                <thead><tr><th>Employee</th><th>Band</th><th className="num">Current CTC</th><th className="num">Matrix</th><th className="num">New CTC</th><th className="num">Bonus</th><th /></tr></thead>
+                <thead><tr><th>Employee</th><th>Band</th><th className="num">Current CTC</th><th className="num">Matrix</th><th className="num">Manager</th><th className="num">New CTC</th><th className="num">Bonus</th><th /></tr></thead>
                 <tbody>
                   {proposals.map((p) => (
                     <tr key={p.id}>
@@ -59,6 +61,7 @@ export default async function ReviewToPayPage({ params }: { params: Promise<{ id
                       <td className="text-sm">{p.bandName ?? "—"}</td>
                       <td className="num text-sm">{inr(Number(p.currentCtc))}</td>
                       <td className="num text-sm">{Number(p.recommendedPercent)}%</td>
+                      <td className="num text-sm">{recs.get(p.reviewId) ? <>{Number(recs.get(p.reviewId)!.incrementPercent)}%{recs.get(p.reviewId)!.recommendPromotion ? <div className="text-xs">+ promotion</div> : null}<div className="text-xs subtle">{recs.get(p.reviewId)!.status.toLowerCase()}</div></> : "—"}</td>
                       <td className="num text-sm strong">{inr(Number(p.proposedCtc))}<div className="text-xs subtle">{Number(p.proposedPercent)}%</div></td>
                       <td className="num text-sm">{Number(p.bonusAmount) ? inr(Number(p.bonusAmount)) : "—"}</td>
                       <td className="right">

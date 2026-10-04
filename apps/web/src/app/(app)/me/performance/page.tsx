@@ -11,6 +11,7 @@ import { Avatar } from "@/components/avatar";
 import { Badge } from "@/components/ui";
 import { IconTrophy, IconEngage, IconLock, IconTarget, IconChart } from "@/components/icons";
 import { GiveButtons } from "./give";
+import { feedbackRules } from "@/lib/talent";
 import s from "./performance.module.css";
 
 /**
@@ -43,6 +44,8 @@ export default async function MyPerformancePage({ searchParams }: { searchParams
         { label: "Feedback", href: "/me/performance" },
         { label: "Goals", href: "/me/performance?view=goals" },
         { label: "Reviews", href: "/me/performance?view=reviews" },
+        { label: "Feedback Requests", href: "/me/performance/requests" },
+        { label: "Growth Plans", href: "/me/performance/growth" },
       ]} />
       {!viewer.employee ? (
         <Panel><EmptyState icon={<IconChart />} title="No employee record">This login is not linked to an employee, so there is no performance data to show.</EmptyState></Panel>
@@ -59,6 +62,8 @@ export default async function MyPerformancePage({ searchParams }: { searchParams
 
 const PERSON = { select: { id: true, displayName: true, firstName: true, lastName: true, jobTitleName: true, photoUrl: true, department: { select: { name: true } } } } as const;
 type Person = { id: string; displayName: string | null; firstName: string; lastName: string; jobTitleName: string | null; photoUrl: string | null; department: { name: string } | null };
+/** Shown in place of the giver when feedback was given anonymously. */
+const ANONYMOUS: Person = { id: "anonymous", displayName: "Anonymous colleague", firstName: "Anonymous", lastName: "", jobTitleName: null, photoUrl: null, department: null };
 type Item = { id: string; person: Person; direction: "From" | "To" | "About"; badge?: string | null; topic?: string | null; message: string; at: Date; isPublic?: boolean };
 
 async function feedbackItems(viewer: Viewer, tab: FeedbackTab): Promise<Item[]> {
@@ -74,7 +79,7 @@ async function feedbackItems(viewer: Viewer, tab: FeedbackTab): Promise<Item[]> 
     case "feedback-received":
       // Only shared feedback: a note about the viewer is never theirs to read.
       return (await prisma.feedback.findMany({ where: { tenantId, aboutEmployeeId: me, kind: "FEEDBACK" }, include: { fromEmployee: PERSON }, orderBy: { createdAt: "desc" }, take: LIST_LIMIT }))
-        .map((f) => ({ id: f.id, person: f.fromEmployee, direction: "From", topic: f.topic, message: f.message, at: f.createdAt }));
+        .map((f) => ({ id: f.id, person: f.isAnonymous ? ANONYMOUS : f.fromEmployee, direction: "From", topic: f.topic, message: f.message, at: f.createdAt }));
     case "feedback-given":
       return (await prisma.feedback.findMany({ where: { tenantId, fromEmployeeId: me, kind: "FEEDBACK" }, include: { aboutEmployee: PERSON }, orderBy: { createdAt: "desc" }, take: LIST_LIMIT }))
         .map((f) => ({ id: f.id, person: f.aboutEmployee, direction: "To", topic: f.topic, message: f.message, at: f.createdAt }));
@@ -122,6 +127,7 @@ async function Feedback({ viewer, tab }: { viewer: Viewer; tab: FeedbackTab }) {
         </div>
         <GiveButtons
           canPraise={can(viewer, P.PRAISE_GIVE)}
+          allowAnonymous={(await feedbackRules(viewer.tenantId)).allowAnonymous}
           reportIds={[...viewer.allReportIds]}
           colleagues={directory.map((e) => ({ id: e.id, name: nameOf(e), meta: [e.jobTitleName, e.department?.name].filter(Boolean).join(", ") }))}
         />

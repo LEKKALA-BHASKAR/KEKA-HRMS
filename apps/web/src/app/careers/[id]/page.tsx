@@ -2,9 +2,17 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { prisma } from "@keka/db";
+import { EEO_OPTIONS } from "@keka/services";
 import { tenantFromHost } from "@/lib/tenant-host";
 import { publicJobWhere } from "../data";
-import { ApplyForm } from "./apply-form";
+import { ApplyForm, type EeoQuestion } from "./apply-form";
+
+const EEO_QUESTIONS: EeoQuestion[] = [
+  { name: "gender", label: "Gender", options: EEO_OPTIONS.gender },
+  { name: "ethnicity", label: "Ethnicity", options: EEO_OPTIONS.ethnicity },
+  { name: "veteranStatus", label: "Veteran status", options: EEO_OPTIONS.veteranStatus },
+  { name: "disabilityStatus", label: "Disability", options: EEO_OPTIONS.disabilityStatus },
+];
 
 async function load(id: string) {
   const tenant = await tenantFromHost();
@@ -25,6 +33,7 @@ export default async function PublicJobPage({ params }: { params: Promise<{ id: 
   const got = await load((await params).id);
   if (!got) notFound();
   const { job } = got;
+  const collectEeo = !!(await prisma.careerSiteSetting.findUnique({ where: { tenantId: got.tenant.id }, select: { collectEeo: true } }))?.collectEeo;
   const [dept, loc] = await Promise.all([
     job.departmentId ? prisma.department.findUnique({ where: { id: job.departmentId }, select: { name: true } }) : null,
     job.locationId ? prisma.location.findUnique({ where: { id: job.locationId }, select: { name: true, city: true } }) : null,
@@ -51,7 +60,7 @@ export default async function PublicJobPage({ params }: { params: Promise<{ id: 
         </div>
         <div className="card" style={{ padding: 20, marginTop: 20 }}>
           <h2 style={{ fontSize: 16, margin: "0 0 12px" }}>Apply</h2>
-          <ApplyForm jobId={job.id} />
+          <ApplyForm jobId={job.id} eeo={collectEeo ? EEO_QUESTIONS : undefined} />
         </div>
       </div>
     </>

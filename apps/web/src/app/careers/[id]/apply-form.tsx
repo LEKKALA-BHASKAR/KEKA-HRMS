@@ -3,7 +3,9 @@
 import { useForm, Field, TextInput } from "@/components/form";
 import { applyToJobAction } from "../actions";
 
-export function ApplyForm({ jobId }: { jobId: string }) {
+export interface EeoQuestion { name: string; label: string; options: readonly string[] }
+
+export function ApplyForm({ jobId, eeo }: { jobId: string; eeo?: EeoQuestion[] }) {
   const [state, formAction, pending] = useForm(applyToJobAction);
   if (state.ok) return <div className="callout success"><strong>Thanks, your application is in.</strong> {state.message}</div>;
   return (
@@ -25,6 +27,22 @@ export function ApplyForm({ jobId }: { jobId: string }) {
       <Field label="Résumé (PDF, up to 5 MB)" name="resume" state={state} required>
         <input className="input" type="file" name="resume" accept="application/pdf" required />
       </Field>
+      {eeo?.length ? (
+        <details style={{ margin: "6px 0" }}>
+          <summary className="text-sm" style={{ cursor: "pointer" }}>Voluntary self-identification (optional)</summary>
+          <p className="text-xs muted">We ask to understand the diversity of our applicants. Answering is entirely optional, is never shown to the people assessing you, and does not affect your application.</p>
+          <div className="grid grid-2">
+            {eeo.map((q) => (
+              <Field key={q.name} label={q.label} name={`eeo_${q.name}`} state={state}>
+                <select className="select" name={`eeo_${q.name}`} defaultValue="">
+                  <option value="">Prefer not to say</option>
+                  {q.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </Field>
+            ))}
+          </div>
+        </details>
+      ) : null}
       <label className="row gap-2 text-xs" style={{ alignItems: "flex-start" }}>
         <input type="checkbox" name="consent" value="on" required />
         <span>I agree that my details may be used to consider me for this and similar roles.</span>

@@ -7,8 +7,9 @@ import {
   draftOffer, approveOffer, extendOffer, recordOfferResponse, completeHire, notify,
   raiseRequisition, updateRequisition, decideRequisitions, archiveRequisition, isSuperApprover, saveScorecard,
   requisitionProblems, parseKit, plainText, type RequisitionInput,
-  parseManualBreakup, issueOfferLink, revokeOfferLink,
+  parseManualBreakup, issueOfferLink, revokeOfferLink, hireChain,
 } from "@keka/services";
+import { routeRequisitionChain, chainRequisitionDecisions, routeOfferChain } from "@/lib/talent-hire";
 import { foreignReference } from "@/lib/ownership";
 import { requireAuth, requireViewer, can, canAny, type Viewer } from "@/lib/context";
 import { saveFile } from "@/lib/storage";
@@ -86,7 +87,9 @@ export async function raiseRequisitionAction(_prev: ActionState, formData: FormD
   const res = await raiseRequisition(viewer.tenantId, input, viewer.user.id);
   if (!res.ok) return { ok: false, message: res.message, values: values(formData) };
   await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Requisition", entityId: res.id!, summary: "Created Requisition", newValue: { code: res.code, title: input.title } });
-  return { ...done(REQ_PATHS, res.message), values: { id: res.id! } };
+  // Multi-level approval: a matching chain rule decides who approves, in order.
+  const routed = await routeRequisitionChain(viewer, res.id!);
+  return { ...done(REQ_PATHS, routed ? `${res.message}. ${routed}` : res.message), values: { id: res.id! } };
 }
 
 export async function updateRequisitionAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -104,6 +107,8 @@ export async function updateRequisitionAction(_prev: ActionState, formData: Form
   const res = await updateRequisition(viewer.tenantId, id, input, { userId: viewer.user.id, canManage: can(viewer, P.REQUISITION_MANAGE), canApprove: can(viewer, P.REQUISITION_APPROVE) });
   if (!res.ok) return { ok: false, message: res.message, values: values(formData) };
   await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "Requisition", entityId: id, summary: res.changes?.length ? `Edited: ${res.changes.join(", ")}` : "Edited requisition" });
+  // A resubmitted (or re-routed) requisition starts its approval chain again.
+  if (!(await hireChain(viewer.tenantId, "REQUISITION", id)).pending) await routeRequisitionChain(viewer, id);
   return { ...done(REQ_PATHS, res.message), values: { id } };
 }
 
@@ -114,7 +119,13 @@ export async function bulkDecideRequisitionsAction(_prev: ActionState, formData:
   const decision = String(formData.get("decision") ?? "");
   if (decision !== "approve" && decision !== "reject") return { ok: false, message: "Unknown decision." };
   const actor = { userId: viewer.user.id, canApprove: can(viewer, P.REQUISITION_APPROVE), superApprover: await isSuperApprover(viewer.tenantId, viewer.user.id) };
-  const res = await decideRequisitions({ tenantId: viewer.tenantId, ids, approve: decision === "approve", reason: String(formData.get("reason") ?? "") || null, actor });
+  // Requisitions on a multi-level chain move one level at a time; only the last level (or a rejection) settles them.
+  const chain = await chainRequisitionDecisions(viewer, ids, decision === "approve", String(formData.get("reason") ?? "") || null);
+  for (const id of chain.advanced) await writeAudit(viewer, { module: "EMPLOYEE", action: "APPROVE", entityType: "Requisition", entityId: id, summary: "Approved Requisition at this level; sent to the next approver" });
+  const chainNote = [chain.advanced.length ? `${chain.advanced.length} approved at your level and sent to the next approver` : "", chain.blocked.length ? `${chain.blocked.length} skipped (${chain.blocked[0].why})` : ""].filter(Boolean).join("; ");
+  if (chain.settle.length === 0) return chain.advanced.length ? done(REQ_PATHS, `${chainNote}.`) : { ok: false, message: `Nothing was decided: ${chainNote}.` };
+  const res0 = await decideRequisitions({ tenantId: viewer.tenantId, ids: chain.settle, approve: decision === "approve", reason: String(formData.get("reason") ?? "") || null, actor });
+  const res = chainNote ? { ...res0, ok: res0.ok || chain.advanced.length > 0, message: `${res0.message}; ${chainNote}` } : res0;
   for (const d of res.done) {
     await writeAudit(viewer, {
       module: "EMPLOYEE", action: decision === "approve" ? "APPROVE" : "REJECT", entityType: "Requisition", entityId: d.id,
@@ -391,7 +402,10 @@ export async function draftOfferAction(_prev: ActionState, formData: FormData): 
     if (b.error) return { ok: false, message: b.error, errors: { breakup: b.error }, values: values(formData) };
     breakup = b.rows!;
   }
-  const res = await draftOffer({ ...rest, salaryStructureId: breakupMode === "MANUAL" ? null : rest.salaryStructureId, breakup });
+  const res0 = await draftOffer({ ...rest, salaryStructureId: breakupMode === "MANUAL" ? null : rest.salaryStructureId, breakup });
+  // Multi-level approval: a matching chain rule routes the offer to its approvers in order.
+  const routed = res0.ok ? await routeOfferChain(viewer, parsed.data.applicationId) : null;
+  const res = routed ? { ...res0, message: `Offer drafted. ${routed}` } : res0;
   if (res.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Offer", entityId: parsed.data.applicationId, summary: `Offer drafted at ₹${parsed.data.annualCtc}: ${res.message}` });
   return res.ok ? done([`/hiring/applications/${parsed.data.applicationId}`, "/hiring/offers"], res.message) : { ok: false, message: res.message, values: values(formData) };
 }
@@ -405,6 +419,7 @@ export async function offerOpAction(_prev: ActionState, formData: FormData): Pro
   let res: { ok: boolean; message: string };
   if (op === "approve") {
     if (!can(viewer, P.OFFER_APPROVE)) return { ok: false, message: "You cannot approve offers." };
+    if ((await hireChain(viewer.tenantId, "OFFER", applicationId)).pending) return { ok: false, message: "This offer is on an approval chain; each approver decides from their Inbox." };
     res = await approveOffer(applicationId, viewer.user.id);
   } else if (op === "extend") {
     if (!can(viewer, P.OFFER_MANAGE)) return { ok: false, message: "You cannot extend offers." };

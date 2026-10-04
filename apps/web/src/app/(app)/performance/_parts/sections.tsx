@@ -81,7 +81,7 @@ export async function Cycles({ viewer }: { viewer: V }) {
                     <td className="text-sm nowrap">{formatDate(c.periodStart)} – {formatDate(c.periodEnd)}</td>
                     <td><Badge tone={c.status === "COMPLETED" ? "success" : c.status === "DRAFT" ? "neutral" : "info"}>{label(c.status)}</Badge></td>
                     <td>{c.reviews.length ? <><Progress value={done} max={c.reviews.length} /><div className="text-xs subtle" style={{ marginTop: 3 }}>{done} of {c.reviews.length} fully reviewed</div></> : <span className="text-xs subtle">not launched</span>}</td>
-                    <td className="right"><span className="row gap-2" style={{ justifyContent: "flex-end" }}>{can(viewer, P.PERFORMANCE_MANAGE) ? <CycleOps cycleId={c.id} status={c.status} /> : null}<Link className="btn sm" href={`/performance/cycles/${c.id}`}>Calibrate</Link></span></td>
+                    <td className="right"><span className="row gap-2" style={{ justifyContent: "flex-end" }}>{can(viewer, P.PERFORMANCE_MANAGE) ? <CycleOps cycleId={c.id} status={c.status} /> : null}{can(viewer, P.PERFORMANCE_MANAGE) ? <Link className="btn sm" href={`/performance/cycles/${c.id}/setup`}>{c.status === "DRAFT" ? "Set up" : "Form & dates"}</Link> : null}<Link className="btn sm" href={`/performance/cycles/${c.id}`}>Calibrate</Link></span></td>
                   </tr>
                 );
               })}

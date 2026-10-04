@@ -325,6 +325,8 @@ enum CustomFieldEntity {
   CLIENT
   /// Asset custom fields (values may also live on Asset.customFields).
   ASSET
+  /// Hire custom fields on candidates (28-talent-depth).
+  CANDIDATE
 }
 
 /// Employee custom fields, which can be made mandatory and can be turned

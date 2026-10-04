@@ -4,6 +4,7 @@ import { requisitionApproverChain } from "@keka/services";
 import { requireAuth } from "@/lib/context";
 import { HiringSettingsForm, JdTemplateForm, DeleteTemplate, FlowForm } from "../_parts/settings-forms";
 import { userNames } from "../_lib/data";
+import { HireSettingsTabs } from "../_parts/settings-tabs";
 import s from "../hire.module.css";
 
 export const metadata = { title: "Settings · Hire" };
@@ -23,6 +24,7 @@ export default async function HiringSettingsPage() {
   const approvers = ids.map((id) => ({ value: id, label: names.get(id) ?? "Administrator" })).sort((a, b) => a.label.localeCompare(b.label));
   return (
     <>
+      <HireSettingsTabs />
       <div className={s.head}><div><h1 className={s.h1}>Hiring Settings</h1><p className={s.sub}>How requisitions are approved, the stages candidates move through, and the templates recruiters start from.</p></div></div>
       <div className={s.settingsGrid}>
         <div className="stack gap-4">

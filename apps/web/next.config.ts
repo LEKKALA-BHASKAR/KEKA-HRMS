@@ -32,7 +32,8 @@ const config: NextConfig = {
       "font-src 'self' data:",
       "connect-src 'self'",
       // Course videos: YouTube's privacy-enhanced player only.
-      "frame-src https://www.youtube-nocookie.com",
+      // ...and this app's own files (the inline résumé preview on a candidate).
+      "frame-src 'self' https://www.youtube-nocookie.com",
       "frame-ancestors 'none'",
       "form-action 'self'",
       "base-uri 'self'",
@@ -55,6 +56,22 @@ const config: NextConfig = {
       {
         source: "/documents/letters/:id/print",
         headers: [{ key: "Content-Security-Policy", value: "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" }],
+      },
+      // Stored files: no scripts, and only this app may frame one (the PDF
+      // résumé preview). frame-ancestors overrides X-Frame-Options.
+      {
+        source: "/files/:id",
+        headers: [
+          { key: "Content-Security-Policy", value: "default-src 'none'; object-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+        ],
+      },
+      // The embeddable jobs widget (Hire > Settings > Career site) is meant to
+      // be framed by the company's own website; the page itself refuses to
+      // render unless the company switched embedding on.
+      {
+        source: "/embed/:path*",
+        headers: [{ key: "Content-Security-Policy", value: csp.replace("frame-ancestors 'none'", "frame-ancestors *") }],
       },
     ];
   },

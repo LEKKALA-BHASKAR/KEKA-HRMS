@@ -254,6 +254,13 @@ model Employee {
   // --- Time & leave depth (26-time-leave-depth) ---
   kioskPin     KioskPin?
   workLogWeeks WorkLogWeek[]
+  // --- Talent depth (28-talent-depth) ---
+  cycleParticipations   ReviewCycleParticipant[] @relation("CycleParticipant")
+  feedbackRequestsMade  FeedbackRequest[]        @relation("FeedbackRequestsMade")
+  feedbackRequestsAsked FeedbackRequest[]        @relation("FeedbackRequestsReceived")
+  salaryRecommendations SalaryRecommendation[]   @relation("SalaryRecommendationFor")
+  growthPlans           GrowthPlan[]             @relation("GrowthPlanFor")
+  internalApplications  InternalApplication[]    @relation("InternalApplicant")
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
