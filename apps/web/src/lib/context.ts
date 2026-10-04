@@ -6,7 +6,7 @@ import { redirect, forbidden } from "next/navigation";
 import { prisma } from "@keka/db";
 import {
   type ViewerContext, type RoleGrant, type Permission,
-  effectivePermissions, hasPermission,
+  effectivePermissions, hasPermission, moduleOf,
 } from "@keka/rbac";
 import { readSession } from "./session";
 
@@ -45,6 +45,8 @@ export interface Viewer extends ViewerContext {
     fyStartMonth: number;
     hasHire: boolean;
     hasPsa: boolean;
+    /** Module keys switched off by the platform (see @keka/rbac MODULES). */
+    disabledModules: string[];
   };
   roleNames: string[];
   permissions: Set<Permission>;
@@ -117,15 +119,20 @@ async function buildViewer(userId: string, session: { tenantId: string; sessionV
   if (!user || (session && user.tenantId !== session.tenantId)) return null;
   // A disabled login takes effect immediately, with no grace period.
   if (user.loginDisabled || user.isDeactivated) return null;
+  // A suspended company signs everyone out on their next request.
+  if (!user.tenant.isActive) return null;
   // "Sign out everywhere" and password changes bump the version; older
   // sessions stop working on their next request.
   if (session && session.sessionVersion !== user.sessionVersion) return null;
 
+  // Modules the platform switched off for this company grant nothing, whatever the role says.
+  const disabledModules = new Set<string>(user.tenant.disabledModules);
+  const enabled = (p: string) => { const m = moduleOf(p); return !m || !disabledModules.has(m); };
   const grants: RoleGrant[] = user.roleAssignments.map((a) => ({
     roleId: a.roleId,
     roleKey: a.role.key,
     roleName: a.role.name,
-    permissions: new Set(a.role.permissions.map((p) => p.permission as Permission)),
+    permissions: new Set(a.role.permissions.map((p) => p.permission as Permission).filter(enabled)),
     scopes: a.scopes.map((s) => ({
       departmentId: s.departmentId,
       locationId: s.locationId,
@@ -176,6 +183,7 @@ async function buildViewer(userId: string, session: { tenantId: string; sessionV
       restrictByBusinessUnit: user.tenant.visibilitySetting?.restrictByBusinessUnit ?? false,
       managerReporteeOverride: user.tenant.visibilitySetting?.managerReporteeOverride ?? true,
     },
+    disabledModules,
   };
 
   const implicitNames: string[] = [];
@@ -208,6 +216,7 @@ async function buildViewer(userId: string, session: { tenantId: string; sessionV
       fyStartMonth: user.tenant.fyStartMonth,
       hasHire: user.tenant.hasHire,
       hasPsa: user.tenant.hasPsa,
+      disabledModules: [...disabledModules],
     },
     roleNames: [...grants.map((g) => g.roleName), ...implicitNames],
     permissions: effectivePermissions(base),

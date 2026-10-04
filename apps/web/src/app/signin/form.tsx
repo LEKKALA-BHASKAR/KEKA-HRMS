@@ -30,13 +30,27 @@ const initial: SignInState = {};
  * not the account exists (lockout included). Two-factor still redirects to
  * /signin/verify from inside the action.
  */
-export function SignInForm({ product = "BooS-HR", next, sso, ssoError }: { product?: string; next?: string; sso?: { name: string; required: boolean } | null; ssoError?: string | null }) {
+export function SignInForm({ product = "BooS-HR", next, company = null, blocked = null, sso, ssoError }: {
+  product?: string; next?: string;
+  /** The company this address belongs to; null on the bare domain, where people type a company code. */
+  company?: { subdomain: string; name: string } | null;
+  /** Shown instead of the form: an unknown address or a suspended company. */
+  blocked?: string | null;
+  sso?: { name: string; required: boolean } | null; ssoError?: string | null;
+}) {
   const [state, formAction, pending] = useActionState(signIn, initial);
   const [step, setStep] = useState<"email" | "password">("email");
   const [email, setEmail] = useState("");
+  const [companyCode, setCompanyCode] = useState(company?.subdomain ?? "");
+  // On the bare domain, remember the last company code typed on this device.
+  useEffect(() => {
+    if (company) return;
+    try { const saved = localStorage.getItem("boss.company"); if (saved) setCompanyCode(saved); } catch { /* storage unavailable */ }
+  }, [company]);
   const [password, setPassword] = useState("");
   const [reveal, setReveal] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
+  const companyRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const firstRender = useRef(true);
   // An error belongs to the attempt that caused it: hide it once the email changes.
@@ -58,6 +72,12 @@ export function SignInForm({ product = "BooS-HR", next, sso, ssoError }: { produ
   const toPassword = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const value = email.trim();
+    if (!company) {
+      const code = companyCode.trim().toLowerCase();
+      if (!code) { companyRef.current?.reportValidity(); return; }
+      setCompanyCode(code);
+      try { localStorage.setItem("boss.company", code); } catch { /* storage unavailable */ }
+    }
     if (!emailRef.current?.checkValidity() || !value) { emailRef.current?.reportValidity(); return; }
     setEmail(value);
     setStep("password");
@@ -70,6 +90,7 @@ export function SignInForm({ product = "BooS-HR", next, sso, ssoError }: { produ
   };
 
   const pickDemo = (address: string) => {
+    if (!company) setCompanyCode("acme");
     setEmail(address);
     setPassword(DEMO_PASSWORD);
     setReveal(false);
@@ -77,8 +98,18 @@ export function SignInForm({ product = "BooS-HR", next, sso, ssoError }: { produ
     else setStep("password");
   };
 
+  if (blocked) {
+    return (
+      <AuthLayout title={`Login to ${product}`}>
+        <div className={s.error} role="alert">{blocked}</div>
+      </AuthLayout>
+    );
+  }
+
+  const showDemo = !company || company.subdomain === "acme";
+
   return (
-    <AuthLayout title={`Login to ${product}`}>
+    <AuthLayout title={company ? `Sign in to ${company.name}` : `Login to ${product}`}>
       <p className="sr-only" aria-live="polite">
         {step === "password" ? `Enter the password for ${email}.` : ""}
       </p>
@@ -97,6 +128,23 @@ export function SignInForm({ product = "BooS-HR", next, sso, ssoError }: { produ
       ) : null}
       {step === "email" ? (
         <form onSubmit={toPassword}>
+          {company ? null : (
+            <div className={s.field}>
+              <label className={s.label} htmlFor="signin-company">Company code</label>
+              <input
+                ref={companyRef}
+                id="signin-company"
+                name="company"
+                className={s.control}
+                placeholder="e.g. bluecloudsoftech"
+                autoCapitalize="none"
+                spellCheck={false}
+                required
+                value={companyCode}
+                onChange={(e) => setCompanyCode(e.target.value)}
+              />
+            </div>
+          )}
           <div className={s.field}>
             <label className={s.label} htmlFor="signin-email">Email</label>
             <input
@@ -119,7 +167,7 @@ export function SignInForm({ product = "BooS-HR", next, sso, ssoError }: { produ
         </form>
       ) : (
         <form action={formAction}>
-          <input type="hidden" name="subdomain" value="acme" />
+          <input type="hidden" name="subdomain" value={company?.subdomain ?? companyCode} />
           {next ? <input type="hidden" name="next" value={next} /> : null}
           {/* The username travels with the password, and password managers see the pair. */}
           <input type="email" name="email" value={email} autoComplete="username" readOnly hidden />
@@ -177,7 +225,7 @@ export function SignInForm({ product = "BooS-HR", next, sso, ssoError }: { produ
         </form>
       )}
 
-      <details className={s.demo}>
+      {showDemo ? <details className={s.demo}>
         <summary>
           <span>Demo accounts <span className={s.demoHint}>· password {DEMO_PASSWORD}</span></span>
           <IconChevronDown aria-hidden="true" />
@@ -193,7 +241,7 @@ export function SignInForm({ product = "BooS-HR", next, sso, ssoError }: { produ
             </button>
           ))}
         </div>
-      </details>
+      </details> : null}
     </AuthLayout>
   );
 }

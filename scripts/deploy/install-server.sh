@@ -16,6 +16,7 @@
 #   KEKA_BRANCH   git branch or commit to deploy (default main)
 #   KEKA_EMAIL    email for Let's Encrypt expiry notices (default: none)
 #   KEKA_PORT     local port the app listens on (default 3100)
+#   KEKA_PLATFORM_EMAIL  email of the first platform admin (default admin@<domain>)
 set -euo pipefail
 
 REPO_URL="${KEKA_REPO:-https://github.com/LEKKALA-BHASKAR/KEKA-HRMS.git}"
@@ -162,37 +163,115 @@ EOF
 touch /var/log/keka-jobs.log && chown "$APP_USER" /var/log/keka-jobs.log
 
 # ---------------------------------------------------------------------------
-log "Putting nginx in front (${DOMAIN})"
+log "Putting nginx in front (${DOMAIN} and every company's <name>.${DOMAIN})"
 # ---------------------------------------------------------------------------
-# Sign-in cookies are Secure in production, so the site must be served over
-# HTTPS; plain-IP visits are redirected to the HTTPS name.
-cat > /etc/nginx/sites-available/keka <<EOF
+# Each company signs in at its own address, <subdomain>.${DOMAIN}. sslip.io
+# answers for any such name; with your own domain add a wildcard DNS record
+# (*.yourdomain -> this server). Sign-in cookies are Secure in production, so
+# everything is HTTPS: one certificate holds the main name plus every
+# company's name, and keka-cert-sync adds new companies to it every few minutes.
+CERT_NAME="$DOMAIN"
+CERT_DIR="/etc/letsencrypt/live/${CERT_NAME}"
+mkdir -p /var/www/certbot
+
+write_nginx() {
+  local proxy='
+        proxy_pass http://127.0.0.1:'"${PORT}"';
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 120s;'
+  if [ -f "${CERT_DIR}/fullchain.pem" ]; then
+    cat > /etc/nginx/sites-available/keka <<EOF
 server {
     listen 80;
     listen [::]:80;
-    server_name ${DOMAIN} ${PUBLIC_IP};
-    client_max_body_size 25m;
-
+    server_name ${DOMAIN} .${DOMAIN} ${PUBLIC_IP};
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
     location / {
         if (\$host = ${PUBLIC_IP}) { return 301 https://${DOMAIN}\$request_uri; }
-        proxy_pass http://127.0.0.1:${PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_read_timeout 120s;
+        return 301 https://\$host\$request_uri;
+    }
+}
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${DOMAIN} .${DOMAIN};
+    ssl_certificate ${CERT_DIR}/fullchain.pem;
+    ssl_certificate_key ${CERT_DIR}/privkey.pem;
+    client_max_body_size 25m;
+    location / {${proxy}
     }
 }
 EOF
-ln -sf /etc/nginx/sites-available/keka /etc/nginx/sites-enabled/keka
-nginx -t
-systemctl reload nginx
+  else
+    cat > /etc/nginx/sites-available/keka <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN} .${DOMAIN} ${PUBLIC_IP};
+    client_max_body_size 25m;
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / {${proxy}
+    }
+}
+EOF
+  fi
+  ln -sf /etc/nginx/sites-available/keka /etc/nginx/sites-enabled/keka
+  # Older nginx (before 1.25.1) has no "http2 on;" directive.
+  if ! nginx -t 2>/dev/null; then sed -i '/http2 on;/d; s/listen 443 ssl;/listen 443 ssl http2;/; s/listen \[::\]:443 ssl;/listen [::]:443 ssl http2;/' /etc/nginx/sites-available/keka; fi
+  nginx -t
+  systemctl reload nginx
+}
+write_nginx
 
+# The certificate sync: adds every active company's address to the certificate.
+cat > "$STATE_DIR/cert.env" <<EOF
+DOMAIN="${DOMAIN}"
+CERT_NAME="${CERT_NAME}"
+KEKA_EMAIL="${KEKA_EMAIL:-}"
+EOF
+cat > /usr/local/sbin/keka-cert-sync <<'EOF'
+#!/usr/bin/env bash
+# Keeps the HTTPS certificate covering the main address and every active
+# company's <subdomain> address. Run by cron; safe to run by hand.
+set -euo pipefail
+. /etc/keka/cert.env
+names=("$DOMAIN")
+while read -r sub; do
+  [ -n "$sub" ] && names+=("${sub}.${DOMAIN}")
+done < <(sudo -u postgres psql -d keka -Atc "SELECT subdomain FROM tenants WHERE \"isActive\" ORDER BY \"createdAt\" LIMIT 99")
+have="$(openssl x509 -in "/etc/letsencrypt/live/${CERT_NAME}/fullchain.pem" -noout -ext subjectAltName 2>/dev/null || true)"
+missing=0
+for n in "${names[@]}"; do grep -q "DNS:${n}\(,\|$\)" <<<"$have" || missing=1; done
+[ "$missing" = 1 ] || exit 0
 if [ -n "${KEKA_EMAIL:-}" ]; then email_args=(--email "$KEKA_EMAIL"); else email_args=(--register-unsafely-without-email); fi
-certbot --nginx --non-interactive --agree-tos --redirect "${email_args[@]}" -d "$DOMAIN" \
-  || echo "!! HTTPS certificate failed. Check that ports 80 and 443 are open in the server firewall, then re-run."
+args=(); for n in "${names[@]}"; do args+=(-d "$n"); done
+certbot certonly --webroot -w /var/www/certbot --cert-name "$CERT_NAME" --expand --non-interactive --agree-tos "${email_args[@]}" "${args[@]}" \
+  --deploy-hook "systemctl reload nginx"
+EOF
+chmod 755 /usr/local/sbin/keka-cert-sync
+echo "*/5 * * * * root /usr/local/sbin/keka-cert-sync >> /var/log/keka-cert-sync.log 2>&1" > /etc/cron.d/keka-certs
+
+if /usr/local/sbin/keka-cert-sync; then
+  write_nginx
+else
+  echo "!! HTTPS certificate failed. Check that ports 80 and 443 are open in the server firewall, then re-run."
+fi
 if command -v ufw >/dev/null && ufw status | grep -q active; then ufw allow 'Nginx Full' || true; fi
+
+# ---------------------------------------------------------------------------
+log "Platform admin panel"
+# ---------------------------------------------------------------------------
+# The first platform admin is created once; after that they add teammates
+# from the panel. The temporary password is printed here and never stored.
+PLATFORM_LOGIN=""
+if [ "$(sudo -u postgres psql -d keka -Atc 'SELECT count(*) FROM platform_admins')" = 0 ]; then
+  PLATFORM_LOGIN="$(as_app "npm run --silent platform:admin -- '${KEKA_PLATFORM_EMAIL:-admin@${DOMAIN}}' 'Platform Admin'")"
+fi
 
 # ---------------------------------------------------------------------------
 log "Checking it answers"
@@ -204,5 +283,7 @@ done
 curl -fsS "http://127.0.0.1:${PORT}/api/health" && echo
 echo
 echo "Live at: https://${DOMAIN}"
-echo "Company code: acme   Admin: vikram.menon@acme.test   Password: see the seed (Keka@2026) - change it after first sign-in"
+echo "Platform admin panel (onboard companies): https://${DOMAIN}/platform"
+if [ -n "$PLATFORM_LOGIN" ]; then echo "$PLATFORM_LOGIN"; else echo "  Lost the platform login? Reset it: cd ${APP_DIR} && sudo -u ${APP_USER} npm run platform:admin -- <email>"; fi
+echo "Demo company: https://acme.${DOMAIN}   Admin: vikram.menon@acme.test   Password: see the seed (Keka@2026) - change it after first sign-in"
 echo "Logs: journalctl -u keka-web -f"

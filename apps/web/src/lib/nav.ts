@@ -86,6 +86,8 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
   const me = !!viewer.employee;
   const isManager = viewer.allReportIds.size > 0;
   const tabs = (list: Array<NavTab | false | null | undefined>) => list.filter((t): t is NavTab => !!t);
+  /** Is this module switched on for the viewer's company? (The platform admin decides.) */
+  const on = (module: string) => !viewer.tenant.disabledModules.includes(module);
 
   // ---- Home ------------------------------------------------------------------
   sections.push({
@@ -93,7 +95,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     tabs: tabs([
       { label: "Dashboard", href: "/", paths: ["/"] },
       me && { label: "Welcome", href: "/home/welcome", dot: opts.welcomeDot },
-      (can(viewer, P.ANALYTICS_VIEW) || (opts.sharedBoards ?? 0) > 0) && { label: "Storyboard", href: "/storyboards" },
+      on("analytics") && (can(viewer, P.ANALYTICS_VIEW) || (opts.sharedBoards ?? 0) > 0) && { label: "Storyboard", href: "/storyboards" },
     ]),
   });
 
@@ -101,14 +103,14 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
   if (me) {
     sections.push({
       key: "me", label: "Me", icon: "user", href: "/me/attendance",
-      tabs: [
+      tabs: tabs([
         { label: "Attendance", href: "/me/attendance" },
         { label: "Leave", href: "/me/leave" },
-        { label: "Performance", href: "/me/performance", paths: ["/me/performance", "/me/career"] },
-        { label: "Expenses & Travel", href: "/me/expenses" },
-        { label: "Helpdesk", href: "/me/helpdesk" },
+        on("performance") && { label: "Performance", href: "/me/performance", paths: ["/me/performance", "/me/career"] },
+        on("expenses") && { label: "Expenses & Travel", href: "/me/expenses" },
+        on("helpdesk") && { label: "Helpdesk", href: "/me/helpdesk" },
         { label: "Apps", href: "/me/apps", paths: ["/me/apps", "/me/assets"] },
-      ],
+      ]),
     });
   }
 
@@ -136,7 +138,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         isManager && can(viewer, P.ATTENDANCE_APPROVE) && { label: "Attendance", href: "/team/attendance", count: counts.attendance },
       ]),
     });
-    sections.push({
+    if (on("payroll")) sections.push({
       key: "finances", label: "My Finances", icon: "finance", href: "/finances",
       tabs: [
         { label: "Summary", href: "/finances", paths: ["/finances"] },
@@ -170,7 +172,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
       canAny(viewer, [P.EXPENSE_MANAGE, P.TRAVEL_MANAGE, P.ADVANCE_APPROVE]) && { label: "Expenses & Travel", href: "/expenses" },
       can(viewer, P.DOCUMENT_VIEW) && { label: "Documents", href: "/documents", count: counts.documents },
       canAny(viewer, [P.ASSET_MANAGE, P.ASSET_ASSIGN]) && { label: "Assets", href: "/assets", count: counts.assets },
-      (can(viewer, P.HELPDESK_MANAGE) || opts.isHelpdeskAgent) && { label: "Helpdesk", href: "/helpdesk", count: counts.tickets },
+      on("helpdesk") && (can(viewer, P.HELPDESK_MANAGE) || opts.isHelpdeskAgent) && { label: "Helpdesk", href: "/helpdesk", count: counts.tickets },
       !!settingsHref && { label: "Settings", href: settingsHref, paths: ["/admin"] },
     ]),
   });
@@ -183,7 +185,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     (me || canAny(viewer, [P.SURVEY_MANAGE, P.SURVEY_RESULTS])) && { label: "Surveys & Polls", href: "/engage/surveys", count: counts.surveys },
     can(viewer, P.MEETING_VIEW) && { label: "Meetings", href: "/meetings" },
   ]);
-  if (engage.length) sections.push({ key: "engage", label: "Engage", icon: "engage", href: engage[0].href, tabs: engage });
+  if (engage.length && on("engage")) sections.push({ key: "engage", label: "Engage", icon: "engage", href: engage[0].href, tabs: engage });
 
   const learn = tabs([
     (me || can(viewer, P.LEARNING_VIEW)) && { label: "My Courses", href: "/learn/my-courses", paths: ["/learn/my-courses", "/learn/courses", "/learn"], count: counts.learning },
@@ -191,7 +193,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     canAny(viewer, [P.TRAINING_MANAGE, P.COURSE_MANAGE]) && { label: "Manage Courses", href: "/learn/manage-courses" },
     can(viewer, P.TRAINING_VIEW) && { label: "Programmes", href: "/training" },
   ]);
-  if (learn.length) sections.push({ key: "learn", label: "Learn", icon: "learn", href: learn[0].href, tabs: learn });
+  if (learn.length && on("learn")) sections.push({ key: "learn", label: "Learn", icon: "learn", href: learn[0].href, tabs: learn });
 
   // ---- Modules ------------------------------------------------------------------
   // Interviewers give feedback from their apps; the workspace is for those who run hiring.
@@ -207,7 +209,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     if (hire.length) sections.push({ key: "hire", label: "Hire", icon: "hire", href: hire[0].href, tabs: hire, admin: true });
   }
 
-  if (isManager || canAny(viewer, [P.PERFORMANCE_MANAGE, P.PERFORMANCE_CALIBRATE, P.GOALS_MANAGE, P.PIP_MANAGE, P.CAREER_PATH_MANAGE, P.SKILL_MANAGE])) {
+  if (on("performance") && (isManager || canAny(viewer, [P.PERFORMANCE_MANAGE, P.PERFORMANCE_CALIBRATE, P.GOALS_MANAGE, P.PIP_MANAGE, P.CAREER_PATH_MANAGE, P.SKILL_MANAGE]))) {
     sections.push({
       key: "performance", label: "Performance", icon: "performance", href: "/performance/goals", admin: true,
       tabs: tabs([
@@ -221,7 +223,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
   }
 
   // Line managers approve timesheets from the inbox; the workspace is for project people.
-  if (opts.managesProject || canAny(viewer, [P.PROJECT_VIEW, P.PROJECT_MANAGE, P.INVOICE_MANAGE, P.OPPORTUNITY_VIEW, P.RESOURCE_VIEW])) {
+  if (on("projects") && (opts.managesProject || canAny(viewer, [P.PROJECT_VIEW, P.PROJECT_MANAGE, P.INVOICE_MANAGE, P.OPPORTUNITY_VIEW, P.RESOURCE_VIEW]))) {
     const hub = canAny(viewer, [P.PROJECT_VIEW, P.PROJECT_MANAGE]);
     const project = tabs([
       hub && { label: "Dashboard", href: "/projects/dashboard" },
@@ -345,5 +347,19 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     can(viewer, P.RESOURCE_VIEW) && { label: "Resource planner", href: "/projects/resources", keywords: "resource allocation bench planner" },
     me && { label: "Take a survey", href: "/engage/surveys", keywords: "survey poll pulse feedback enps" },
   ];
-  return list.filter((x): x is { label: string; href: string; keywords: string } => !!x);
+  // Shortcuts into a module the company has switched off are dropped.
+  const off = (href: string) => MODULE_ROUTES.some(([prefix, mod]) => href.startsWith(prefix) && viewer.tenant.disabledModules.includes(mod));
+  return list.filter((x): x is { label: string; href: string; keywords: string } => !!x && !off(x.href));
 }
+
+/** Which module a self-service route belongs to, for hiding shortcuts. */
+const MODULE_ROUTES: Array<[string, string]> = [
+  ["/finances", "payroll"], ["/payroll", "payroll"], ["/accounting", "payroll"],
+  ["/me/expenses", "expenses"], ["/expenses", "expenses"],
+  ["/me/assets", "assets"], ["/assets", "assets"],
+  ["/me/helpdesk", "helpdesk"], ["/helpdesk", "helpdesk"],
+  ["/me/performance", "performance"], ["/performance", "performance"],
+  ["/hiring", "hire"], ["/projects", "projects"],
+  ["/engage", "engage"], ["/?compose", "engage"],
+  ["/learn", "learn"], ["/analytics", "analytics"], ["/storyboards", "analytics"],
+];

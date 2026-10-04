@@ -51,6 +51,22 @@ model Tenant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // --- Platform administration (25-platform-admin) ---
+  /// Module keys (see @keka/rbac MODULES) the platform has switched off.
+  disabledModules String[]  @default([])
+  /// Why the company was suspended; shown on its sign-in page.
+  suspendedReason String?
+  suspendedAt     DateTime?
+  /// Who to call about this account. Platform-only.
+  contactName     String?
+  contactEmail    String?
+  contactPhone    String?
+  /// Licensed headcount; null means no limit. Shown against active employees.
+  employeeLimit   Int?
+  /// Free-text notes for the platform team.
+  platformNotes   String?
+  platformAuditLogs PlatformAuditLog[]
+
   users                User[]
   legalEntities        LegalEntity[]
   businessUnits        BusinessUnit[]

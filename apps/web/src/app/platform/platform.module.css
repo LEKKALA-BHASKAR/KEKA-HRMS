@@ -1,0 +1,61 @@
+/* Platform admin panel: the BooS-HR team's console for onboarding and running companies. */
+
+.shell { min-height: 100vh; background: var(--bg); }
+
+.top {
+  display: flex; align-items: center; gap: 24px;
+  height: 56px; padding: 0 24px;
+  background: #0f1b3d; color: #fff;
+}
+.brand { font-size: 17px; font-weight: 800; letter-spacing: -0.02em; white-space: nowrap; color: #fff; text-decoration: none; }
+.brand span { font-weight: 500; opacity: .7; margin-left: 6px; font-size: 13px; letter-spacing: 0; }
+.nav { display: flex; gap: 4px; flex: 1; overflow-x: auto; }
+.nav a { color: rgba(255,255,255,.75); text-decoration: none; padding: 7px 12px; border-radius: 6px; font-size: 13.5px; font-weight: 550; white-space: nowrap; }
+.nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.nav a[aria-current="page"] { background: rgba(255,255,255,.14); color: #fff; }
+.me { display: flex; align-items: center; gap: 12px; font-size: 13px; color: rgba(255,255,255,.8); white-space: nowrap; }
+.me button { background: transparent; border: 1px solid rgba(255,255,255,.3); color: #fff; border-radius: 6px; padding: 5px 10px; font-size: 12.5px; cursor: pointer; }
+
+.main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 64px; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 22px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.statLabel { font-size: 12px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.statValue { font-size: 26px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+.formGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 18px; }
+.section { font-size: 13px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin: 18px 0 10px; }
+.section:first-child { margin-top: 0; }
+
+.subdomainRow { display: flex; align-items: stretch; }
+.subdomainRow input { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.subdomainSuffix { display: flex; align-items: center; padding: 0 11px; border: 1px solid var(--border-strong); border-left: none; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: var(--neutral-bg); color: var(--text-muted); font-size: 13px; white-space: nowrap; }
+
+.modules { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.module { display: flex; gap: 10px; align-items: flex-start; padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--surface); }
+.module:has(input:checked) { border-color: var(--brand-600); background: var(--brand-50); }
+.module input { margin-top: 3px; }
+.moduleName { font-weight: 620; font-size: 13.5px; }
+.moduleDesc { font-size: 12px; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
+
+.creds { margin-top: 14px; border: 1px solid var(--success); background: var(--success-bg); border-radius: 10px; padding: 14px 16px; }
+.creds dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 10px 0 0; }
+.creds dt { font-size: 12.5px; color: var(--text-muted); font-weight: 600; }
+.creds dd { margin: 0; font-family: var(--font-mono); font-size: 13.5px; word-break: break-all; }
+.error { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--danger-bg); color: var(--danger); font-size: 13px; }
+.info { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--info-bg); color: var(--info); font-size: 13px; }
+
+.signin { min-height: 100vh; display: grid; place-items: center; background: #0f1b3d; padding: 16px; }
+.signinCard { width: 100%; max-width: 380px; background: var(--surface); border-radius: 14px; padding: 28px; box-shadow: 0 20px 50px rgba(0,0,0,.25); }
+.signinCard h1 { font-size: 20px; margin: 0 0 4px; }
+.signinCard p { margin: 0 0 18px; color: var(--text-muted); font-size: 13px; }
+
+.danger { border-color: var(--danger) !important; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.inlineForm { display: inline; }
+
+@media (max-width: 720px) {
+  .top { padding: 0 16px; gap: 12px; }
+  .brand span { display: none; }
+  .main { padding: 20px 16px 48px; }
+}

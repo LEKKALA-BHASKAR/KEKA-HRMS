@@ -39,12 +39,17 @@ export function VerifyForm({ email }: { email: string }) {
   );
 }
 
-export function ForgotForm() {
+export function ForgotForm({ hasCompany }: { hasCompany: boolean }) {
   const [state, action, pending] = useActionState(requestPasswordReset, {} as SignInState);
   return (
     <AuthLayout title="Reset your password" subtitle="We will email you a link to choose a new one.">
       <form action={action}>
-        <input type="hidden" name="subdomain" value="acme" />
+        {hasCompany ? null : (
+          <div className={s.field}>
+            <label className={s.label} htmlFor="company">Company code</label>
+            <input id="company" name="subdomain" className={s.control} autoCapitalize="none" spellCheck={false} required />
+          </div>
+        )}
         <div className={s.field}>
           <label className={s.label} htmlFor="email">Email</label>
           <input id="email" name="email" type="email" className={s.control} placeholder="you@company.com" autoComplete="username" autoCapitalize="none" spellCheck={false} required autoFocus />

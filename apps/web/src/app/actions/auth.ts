@@ -13,6 +13,8 @@ import {
   passwordIssues, isRecentlyUsed, newPasswordFields, passwordExpired, findResetChallenge,
 } from "@/lib/auth-policy";
 import { requireViewer } from "@/lib/context";
+import { hostSubdomain } from "@/lib/tenant-host";
+import { companyUrl } from "@/lib/tenant-host-shared";
 import { passwordAllowed } from "@keka/services";
 
 /**
@@ -56,7 +58,7 @@ async function completeSignIn(user: { id: string; email: string; tenantId: strin
 export async function signIn(_prev: SignInState, formData: FormData): Promise<SignInState> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
-  const subdomain = String(formData.get("subdomain") ?? "acme").trim().toLowerCase();
+  const subdomain = (await hostSubdomain()) ?? String(formData.get("subdomain") ?? "").trim().toLowerCase();
   // Where to land afterwards — validated here, never trusted from the page.
   const next = safeNext(formData.get("next"));
   const { ip, userAgent } = await client();
@@ -68,10 +70,15 @@ export async function signIn(_prev: SignInState, formData: FormData): Promise<Si
     return { error: "Too many sign-in attempts from your network. Wait a few minutes and try again." };
   }
 
+  if (!subdomain) return { error: "Enter your company code." };
   const tenant = await prisma.tenant.findUnique({ where: { subdomain } });
-  if (!tenant || !tenant.isActive) {
+  if (!tenant) {
     await logLogin({ email, ip, userAgent, success: false, outcome: "BAD_CREDENTIALS" });
     return { error: GENERIC_ERROR };
+  }
+  if (!tenant.isActive) {
+    await logLogin({ tenantId: tenant.id, email, ip, userAgent, success: false, outcome: "DISABLED" });
+    return { error: "This company's BooS-HR account is suspended. Contact your administrator." };
   }
   const policy = await securityPolicy(tenant.id);
 
@@ -187,7 +194,7 @@ export async function changePassword(_prev: PasswordState, formData: FormData): 
 
 export async function requestPasswordReset(_prev: SignInState, formData: FormData): Promise<SignInState> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
-  const subdomain = String(formData.get("subdomain") ?? "acme").trim().toLowerCase();
+  const subdomain = (await hostSubdomain()) ?? String(formData.get("subdomain") ?? "").trim().toLowerCase();
   const { ip, userAgent } = await client();
   const done = { info: "If that address has an account, a reset link is on its way. It works for an hour." };
   if (!email) return { error: "Enter your work email." };
@@ -198,7 +205,7 @@ export async function requestPasswordReset(_prev: SignInState, formData: FormDat
   await logLogin({ tenantId: tenant?.id, userId: user?.id, email, ip, userAgent, success: false, outcome: "RESET_REQUESTED" });
   if (!tenant || !user || user.isDeactivated) return done;
   const { code } = await issueOtp(tenant.id, email, "RESET");
-  const base = process.env.APP_URL ?? process.env.AUTH_URL ?? "http://localhost:3100";
+  const base = companyUrl(tenant.subdomain);
   await prisma.emailOutbox.create({
     data: {
       tenantId: tenant.id, toAddress: email, subject: `Reset your ${tenant.name} password`,

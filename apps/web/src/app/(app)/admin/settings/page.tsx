@@ -12,6 +12,7 @@ import { SsoForm, TestSso } from "./sso";
 import { headers } from "next/headers";
 import { Notifications } from "./notifications";
 import { NoticePolicyForm, NoticePolicyRow, ExitReasonForm, ExitReasonRow, FolderForm, FolderHeader, DocTypeForm, DocTypeRow } from "./workplace";
+import { companyUrl } from "@/lib/tenant-host-shared";
 
 const P = PERMISSIONS;
 const TABS = { org: "Organisation", fields: "Custom fields", documents: "Documents", exits: "Notice & exits", security: "Security", sso: "Single sign-on", log: "Sign-in log", mail: "Email", notifications: "Notifications", jobs: "Scheduled jobs" } as const;
@@ -61,7 +62,7 @@ async function Org({ tenantId }: { tenantId: string }) {
   ]);
   return (
     <div className="stack gap-4">
-      <Card title="Organisation" description={`${tenant.subdomain}.keka.local · ${tenant.plan.toLowerCase()} plan · ${tenant.currency}`}>
+      <Card title="Organisation" description={`${companyUrl(tenant.subdomain).replace(/^https?:\/\//, "")} · ${tenant.plan.toLowerCase()} plan · ${tenant.currency}`}>
         <ProfileForm name={tenant.name} timezone={tenant.timezone} fyStartMonth={tenant.fyStartMonth} locked={finalised > 0} />
       </Card>
       <Card title="Directory visibility" description="Who can find whom in the employee directory and org chart.">

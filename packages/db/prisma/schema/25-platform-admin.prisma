@@ -1,0 +1,42 @@
+// ============================================================================
+//  Platform administration — the people who run BooS-HR itself and onboard
+//  companies. Separate from tenant users: a platform admin belongs to no
+//  company and signs in at /platform.
+// ============================================================================
+
+model PlatformAdmin {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  name               String
+  passwordHash       String
+  isActive           Boolean   @default(true)
+  mustChangePassword Boolean   @default(false)
+  failedLoginCount   Int       @default(0)
+  lockedUntil        DateTime?
+  /// Bumped to revoke every live session.
+  sessionVersion     Int       @default(0)
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  auditLogs PlatformAuditLog[]
+
+  @@map("platform_admins")
+}
+
+/// Every change a platform admin makes, including to a company.
+model PlatformAuditLog {
+  id         String         @id @default(cuid())
+  adminId    String?
+  admin      PlatformAdmin? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  adminEmail String
+  action     String
+  tenantId   String?
+  tenant     Tenant?        @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  summary    String
+  createdAt  DateTime       @default(now())
+
+  @@index([tenantId])
+  @@index([createdAt])
+  @@map("platform_audit_logs")
+}

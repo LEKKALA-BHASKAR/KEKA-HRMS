@@ -4,6 +4,7 @@ import {
   SELF_PERMISSIONS,
   type ImplicitRoleKey,
 } from "./roles";
+import { moduleOf } from "./modules";
 
 /**
  * Access resolution.
@@ -62,6 +63,9 @@ export interface ViewerContext {
   businessUnitId: string | null;
 
   visibility: VisibilitySetting;
+
+  /** Modules the platform switched off for this company; their permissions are withheld. */
+  disabledModules?: ReadonlySet<string>;
 }
 
 export interface TargetEmployee {
@@ -97,6 +101,12 @@ export function effectivePermissions(ctx: ViewerContext): Set<Permission> {
     role?.permissions.forEach((p) => out.add(p));
   }
   if (ctx.employeeId) SELF_PERMISSIONS.forEach((p) => out.add(p));
+  if (ctx.disabledModules?.size) {
+    for (const p of out) {
+      const m = moduleOf(p);
+      if (m && ctx.disabledModules.has(m)) out.delete(p);
+    }
+  }
   return out;
 }
 
