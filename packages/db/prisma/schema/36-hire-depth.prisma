@@ -1,0 +1,926 @@
+// ============================================================================
+//  BooS-HR — Hire depth: sourcing, career site content, ATS operations,
+//  interview operations and offer depth.
+// ============================================================================
+//  Sourcing
+//    SourcingChannel (configurable sources, each mapped to a CandidateSource
+//    category, with a cost), SourcingCampaign (a tracked, budgeted push with
+//    its own ?c= code), SourcingProject (a shared workspace of prospects),
+//    SavedSourcingSearch (boolean queries, private or in the shared library),
+//    CandidateSourcingProfile (one per candidate: attribution, engagement,
+//    tags, consent, time zone, captured profile), tag and attribution rules,
+//    agencies and outreach cadences.
+//
+//  ATS operations
+//    RecruiterTask (task queues, SLAs, sign-off through the workflow engine),
+//    HireDepthSetting (SLAs, intake questionnaire, aging, posting approval,
+//    offer checklist), RequisitionIntake, DispositionReason and
+//    ApplicationDisposition, CandidateCommunication, CandidateDocument,
+//    CandidateMergeLog, ReferralRecord, HireAlert (deduplicated alerts).
+//
+//  Career site
+//    CareerContent (+ versions): EVP, stories, culture, FAQ, diversity,
+//    location sections, recruiter contacts and landing pages, published
+//    through an approval; CareerSiteConfig (SEO, accessibility, languages,
+//    analytics tag), CareerSiteSnapshot (career page versions), job alert
+//    subscriptions, first-party visit tracking, the applicant portal and
+//    applicant change requests, per-job posting metadata.
+//
+//  Interviews
+//    InterviewPlan (rounds, panel rules, weighted skills, sign-off),
+//    InterviewEvent (reschedules, no-shows, panel changes and responses),
+//    InterviewConsent (recording consent), InterviewerCapacity,
+//    InterviewGuide and QuestionBankItem.
+//
+//  Offers
+//    OfferVersion (every draft and revision), OfferNegotiation (counter-
+//    offers, joining-date asks, compensation confirmation), OfferClause
+//    (conditional clauses, tax disclaimers, localised blocks), OfferExtra
+//    (clauses frozen on the offer, locale) and OfferChecklistCheck.
+//
+//  Approvals run on the generic workflow engine (entity type HIRE_REQUEST,
+//  category = what is being approved, entityId = the record).
+// ============================================================================
+
+model HireDepthSetting {
+  id       String @id @default(cuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// New applications should be screened (moved or rejected) within this many hours.
+  screenSlaHours           Int     @default(72)
+  /// Panellists should submit feedback within this many hours of the interview ending.
+  feedbackSlaHours         Int     @default(24)
+  /// An extended offer should get an answer within this many hours.
+  offerResponseSlaHours    Int     @default(120)
+  /// A pending requisition approval is escalated after this many hours.
+  requisitionApprovalSlaHours Int  @default(48)
+  /// Approved requisitions without a filled job are flagged after this many days.
+  requisitionMaxAgeDays    Int     @default(60)
+  /// Publishing a job on the careers site needs an approval.
+  requirePostingApproval   Boolean @default(false)
+  /// Requisition intake questionnaire: string[] of questions.
+  intakeQuestions          Json?
+  /// Offer compliance checklist: string[] of items that must be ticked before extending.
+  offerChecklist           Json?
+  /// Extra words the interview bias prompt looks for: string[].
+  biasTerms                Json?
+  /// After this many no-shows an application is closed.
+  noShowLimit              Int     @default(2)
+  /// Consent to keep a prospect's data lapses after this many days.
+  consentValidityDays      Int     @default(365)
+  /// Rejected/withdrawn candidates become reactivation candidates after this many days.
+  reactivationAfterDays    Int     @default(90)
+  alertsLastRunAt          DateTime?
+  updatedAt                DateTime @updatedAt
+
+  @@map("hire_depth_settings")
+}
+
+// ---------------------------------------------------------------------------
+//  Recruiter tasks
+// ---------------------------------------------------------------------------
+
+model RecruiterTask {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title          String
+  details        String?
+  /// SOURCING | SCREENING | SCHEDULING | FEEDBACK | OFFER | OUTREACH | OTHER
+  queue          String    @default("OTHER")
+  /// LOW | MEDIUM | HIGH
+  priority       String    @default("MEDIUM")
+  /// OPEN | PENDING_APPROVAL | DONE | CANCELLED
+  status         String    @default("OPEN")
+  assigneeUserId String?
+  createdBy      String?
+  dueAt          DateTime?
+  /// Completing it needs the creator's (or a hiring approver's) sign-off.
+  requiresSignOff Boolean  @default(false)
+  applicationId  String?
+  candidateId    String?
+  campaignId     String?
+  /// Set by automation (SLA breach, cadence step, no-show follow-up), for dedupe.
+  sourceKey      String?
+  completedAt    DateTime?
+  completedBy    String?
+  outcome        String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([tenantId, sourceKey])
+  @@index([tenantId, status, assigneeUserId])
+  @@index([tenantId, queue])
+  @@map("recruiter_tasks")
+}
+
+/// One alert raised by the hire alert job; the key makes each alert fire once.
+model HireAlert {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// STAGE_TIME | STALLED | SCREEN_SLA | FEEDBACK_OVERDUE | OFFER_RESPONSE | REQ_APPROVAL_SLA | REQ_AGING | POOL_EXPIRY | CONSENT_EXPIRY
+  kind       String
+  key        String
+  entityType String
+  entityId   String
+  message    String
+  notified   Int       @default(0)
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@unique([tenantId, key])
+  @@index([tenantId, kind, resolvedAt])
+  @@map("hire_alerts")
+}
+
+model RequisitionIntake {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requisitionId String   @unique
+  /// [{ question, answer }]
+  answers       Json
+  submittedBy   String?
+  updatedAt     DateTime @updatedAt
+
+  @@map("requisition_intakes")
+}
+
+// ---------------------------------------------------------------------------
+//  Sourcing
+// ---------------------------------------------------------------------------
+
+model SourcingChannel {
+  id          String          @id @default(cuid())
+  tenantId    String
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  /// The candidate source category candidates from it are counted under.
+  baseSource  CandidateSource
+  description String?
+  /// Monthly spend on the channel, for cost per hire.
+  monthlyCost Decimal?        @db.Decimal(18, 2)
+  /// PENDING_APPROVAL | ACTIVE | INACTIVE | REJECTED
+  status      String          @default("PENDING_APPROVAL")
+  createdBy   String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  campaigns SourcingCampaign[]
+
+  @@unique([tenantId, name])
+  @@map("sourcing_channels")
+}
+
+model SourcingCampaign {
+  id               String           @id @default(cuid())
+  tenantId         String
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name             String
+  /// The ?c= code on links that attribute applicants to it.
+  code             String
+  jobId            String?
+  channelId        String?
+  channel          SourcingChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  budget           Decimal?         @db.Decimal(18, 2)
+  startsOn         DateTime?
+  endsOn           DateTime?
+  targetApplicants Int?
+  description      String?
+  /// DRAFT | PENDING_APPROVAL | ACTIVE | PAUSED | CLOSED | REJECTED
+  status           String           @default("DRAFT")
+  ownerUserId      String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, name])
+  @@map("sourcing_campaigns")
+}
+
+model SourcingProject {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  description   String?
+  jobId         String?
+  ownerUserId   String?
+  /// Collaborators: user ids.
+  memberUserIds Json?
+  /// ACTIVE | ARCHIVED
+  status        String   @default("ACTIVE")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  prospects SourcingProjectCandidate[]
+  searches  SavedSourcingSearch[]
+
+  @@unique([tenantId, name])
+  @@map("sourcing_projects")
+}
+
+model SourcingProjectCandidate {
+  id          String          @id @default(cuid())
+  projectId   String
+  project     SourcingProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  candidateId String
+  candidate   Candidate       @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  /// IDENTIFIED | CONTACTED | INTERESTED | SUBMITTED | NOT_INTERESTED
+  stage       String          @default("IDENTIFIED")
+  note        String?
+  addedBy     String?
+  addedAt     DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([projectId, candidateId])
+  @@index([candidateId])
+  @@map("sourcing_project_candidates")
+}
+
+model SavedSourcingSearch {
+  id          String           @id @default(cuid())
+  tenantId    String
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  /// Boolean query: AND / OR / NOT, "quoted phrases", parentheses.
+  query       String
+  /// { source, city, tag, engagement, minExperience }
+  filters     Json?
+  /// In the shared boolean query library.
+  isShared    Boolean          @default(false)
+  projectId   String?
+  project     SourcingProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  ownerUserId String
+  lastRunAt   DateTime?
+  lastCount   Int?
+  createdAt   DateTime         @default(now())
+
+  @@index([tenantId, ownerUserId])
+  @@map("saved_sourcing_searches")
+}
+
+/// One per candidate: where they came from and how the relationship stands.
+model CandidateSourcingProfile {
+  id               String    @id @default(cuid())
+  tenantId         String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidateId      String    @unique
+  candidate        Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  channelId        String?
+  campaignId       String?
+  agencyId         String?
+  utmSource        String?
+  utmCampaign      String?
+  /// NEW | CONTACTED | ENGAGED | INTERESTED | NOT_INTERESTED | UNRESPONSIVE
+  engagementStatus String    @default("NEW")
+  isPassive        Boolean   @default(false)
+  isHighPotential  Boolean   @default(false)
+  /// string[]
+  tags             Json?
+  /// NONE | GRANTED | WITHDRAWN
+  consentStatus    String    @default("NONE")
+  consentSource    String?
+  consentAt        DateTime?
+  consentExpiresAt DateTime?
+  lastContactedAt  DateTime?
+  /// IANA time zone, e.g. "America/New_York"; null = IST.
+  timeZone         String?
+  /// Captured public profile: { url, headline, summary, skills[], capturedAt }
+  linkedProfile    Json?
+  updatedAt        DateTime  @updatedAt
+
+  @@index([tenantId, engagementStatus])
+  @@map("candidate_sourcing_profiles")
+}
+
+model ProspectTagRule {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tag       String
+  /// SKILL | TITLE | EMPLOYER | CITY | SOURCE | MIN_EXPERIENCE | EDUCATION
+  field     String
+  value     String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, isActive])
+  @@map("prospect_tag_rules")
+}
+
+model SourceAttributionRule {
+  id         String          @id @default(cuid())
+  tenantId   String
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  /// UTM_SOURCE | EMAIL_DOMAIN | CAMPAIGN_CODE
+  matchField String
+  /// Case-insensitive; "*" wildcards allowed.
+  pattern    String
+  source     CandidateSource
+  channelId  String?
+  /// Lower runs first.
+  priority   Int             @default(100)
+  isActive   Boolean         @default(true)
+  createdAt  DateTime        @default(now())
+
+  @@index([tenantId, isActive])
+  @@map("source_attribution_rules")
+}
+
+model RecruitmentAgency {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  contactEmail String?
+  feePercent   Decimal? @db.Decimal(5, 2)
+  /// Candidates from this agency are owned by (routed to) this recruiter.
+  ownerUserId  String?
+  /// Optional: agency candidates enter the job at this stage name.
+  entryStage   String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("recruitment_agencies")
+}
+
+model OutreachCadence {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  /// [{ day, channel: EMAIL | CALL | SMS | LINKEDIN, action }]
+  steps     Json
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  enrollments CadenceEnrollment[]
+
+  @@unique([tenantId, name])
+  @@map("outreach_cadences")
+}
+
+model CadenceEnrollment {
+  id          String          @id @default(cuid())
+  cadenceId   String
+  cadence     OutreachCadence @relation(fields: [cadenceId], references: [id], onDelete: Cascade)
+  candidateId String
+  candidate   Candidate       @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  /// ACTIVE | COMPLETED | STOPPED
+  status      String          @default("ACTIVE")
+  enrolledBy  String?
+  startedAt   DateTime        @default(now())
+  stoppedAt   DateTime?
+
+  @@unique([cadenceId, candidateId])
+  @@index([candidateId])
+  @@map("cadence_enrollments")
+}
+
+// ---------------------------------------------------------------------------
+//  Candidate record depth
+// ---------------------------------------------------------------------------
+
+model CandidateCommunication {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  applicationId String?
+  /// EMAIL | CALL | SMS | MEETING | LINKEDIN | NOTE
+  channel       String
+  /// OUTBOUND | INBOUND
+  direction     String    @default("OUTBOUND")
+  subject       String?
+  body          String?
+  occurredAt    DateTime  @default(now())
+  byUserId      String?
+
+  @@index([tenantId, candidateId])
+  @@map("candidate_communications")
+}
+
+model CandidateDocument {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  /// ID_PROOF | EDUCATION | EXPERIENCE | ADDRESS | OTHER
+  kind        String
+  fileId      String
+  fileName    String
+  /// PENDING | VERIFIED | REJECTED
+  status      String    @default("PENDING")
+  note        String?
+  uploadedBy  String?
+  verifiedBy  String?
+  verifiedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId, candidateId])
+  @@map("candidate_documents")
+}
+
+/// A duplicate folded into another candidate. The duplicate row is deleted;
+/// this keeps who it was and what moved.
+model CandidateMergeLog {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  survivorId        String
+  mergedCandidateId String
+  mergedName        String
+  mergedEmail       String
+  /// { applications, notes, pools, documents, communications }
+  moved             Json
+  requestedBy       String?
+  approvedBy        String?
+  createdAt         DateTime @default(now())
+
+  @@index([tenantId, survivorId])
+  @@map("candidate_merge_logs")
+}
+
+model DispositionReason {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  label     String
+  /// REJECT | WITHDRAW
+  kind      String   @default("REJECT")
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, kind, label])
+  @@map("disposition_reasons")
+}
+
+/// Why an application closed: the library reason, and who decided.
+model ApplicationDisposition {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  applicationId String   @unique
+  reasonId      String?
+  /// REJECT | WITHDRAW | NO_SHOW
+  kind          String
+  label         String
+  note          String?
+  /// RECRUITER | CANDIDATE | SYSTEM
+  byWhom        String   @default("RECRUITER")
+  byUserId      String?
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, kind])
+  @@map("application_dispositions")
+}
+
+model ReferralRecord {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidateId        String    @unique
+  candidate          Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  referrerEmployeeId String
+  relationship       String?
+  recommendation     String?
+  bonusAmount        Decimal?  @db.Decimal(18, 2)
+  /// NONE | REQUESTED | APPROVED | REJECTED | PAID
+  bonusStatus        String    @default("NONE")
+  bonusRequestedAt   DateTime?
+  bonusDecidedAt     DateTime?
+  bonusPaidAt        DateTime?
+  updatedAt          DateTime  @updatedAt
+  createdAt          DateTime  @default(now())
+
+  @@index([tenantId, bonusStatus])
+  @@map("referral_records")
+}
+
+// ---------------------------------------------------------------------------
+//  Career site
+// ---------------------------------------------------------------------------
+
+model CareerContent {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// EVP | STORY | CULTURE | FAQ | DIVERSITY | LOCATION | RECRUITER | LANDING
+  kind           String
+  title          String
+  body           String
+  /// Landing pages: /careers/p/<slug>.
+  slug           String?
+  /// en, hi, … — the career site shows the visitor's language when present.
+  locale         String    @default("en")
+  /// LOCATION sections and location-specific content.
+  locationId     String?
+  /// LANDING: CAMPAIGN | REFERRAL | CAMPUS; FAQ: CANDIDATE | RECRUITER.
+  audience       String?
+  /// Story: the employee's name and role; recruiter: their email.
+  personName     String?
+  personTitle    String?
+  contactEmail   String?
+  /// Optional image: a StoredFile id (CareerSiteAsset), and its alt text.
+  imageFileId    String?
+  imageAlt       String?
+  /// LANDING: the campaign code its apply links carry.
+  campaignCode   String?
+  seoTitle       String?
+  seoDescription String?
+  sortOrder      Int       @default(0)
+  /// DRAFT | PENDING_APPROVAL | PUBLISHED | ARCHIVED
+  status         String    @default("DRAFT")
+  version        Int       @default(1)
+  publishedAt    DateTime?
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  versions CareerContentVersion[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, kind, status])
+  @@map("career_contents")
+}
+
+model CareerContentVersion {
+  id        String        @id @default(cuid())
+  contentId String
+  content   CareerContent @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  version   Int
+  /// The content's fields as saved.
+  snapshot  Json
+  note      String?
+  createdBy String?
+  createdAt DateTime      @default(now())
+
+  @@unique([contentId, version])
+  @@map("career_content_versions")
+}
+
+model CareerSiteConfig {
+  id             String   @id @default(cuid())
+  tenantId       String   @unique
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  seoTitle       String?
+  seoDescription String?
+  /// A Google Analytics measurement id (G-XXXXXXX) or tag manager id (GTM-XXXX).
+  analyticsTagId String?
+  /// string[] of locales offered beyond English.
+  locales        Json?
+  highContrast   Boolean  @default(false)
+  largeText      Boolean  @default(false)
+  reduceMotion   Boolean  @default(false)
+  /// Refuse to publish content with an image but no alt text.
+  requireAltText Boolean  @default(true)
+  /// Group open roles by location on the careers home page.
+  groupByLocation Boolean @default(false)
+  showRecruiterContacts Boolean @default(true)
+  updatedAt      DateTime @updatedAt
+
+  @@map("career_site_configs")
+}
+
+/// A version of the career page (branding + configuration), saved on every change.
+model CareerSiteSnapshot {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  version   Int
+  data      Json
+  note      String?
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, version])
+  @@map("career_site_snapshots")
+}
+
+model JobPostingMeta {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  jobId          String   @unique
+  seoTitle       String?
+  seoDescription String?
+  /// { "<locale>": { title, description } }
+  translations   Json?
+  updatedAt      DateTime @updatedAt
+
+  @@map("job_posting_metas")
+}
+
+model JobAlertSubscription {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email          String
+  keywords       String?
+  departmentId   String?
+  locationId     String?
+  tokenHash      String    @unique
+  confirmedAt    DateTime?
+  unsubscribedAt DateTime?
+  createdAt      DateTime  @default(now())
+
+  sent JobAlertSent[]
+
+  @@unique([tenantId, email])
+  @@map("job_alert_subscriptions")
+}
+
+model JobAlertSent {
+  id             String               @id @default(cuid())
+  subscriptionId String
+  subscription   JobAlertSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  jobId          String
+  sentAt         DateTime             @default(now())
+
+  @@unique([subscriptionId, jobId])
+  @@map("job_alert_sents")
+}
+
+model CareerSiteVisit {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  path         String
+  jobId        String?
+  utmSource    String?
+  utmMedium    String?
+  utmCampaign  String?
+  campaignCode String?
+  referrerHost String?
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@map("career_site_visits")
+}
+
+/// The applicant's own link to follow and manage their application.
+model ApplicantPortalLink {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  applicationId String
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  viewCount     Int       @default(0)
+  lastViewedAt  DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([applicationId])
+  @@map("applicant_portal_links")
+}
+
+model ApplicantChangeRequest {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  applicationId String
+  /// EXPECTED_CTC | NOTICE_PERIOD | INTERVIEW_RESCHEDULE
+  field         String
+  oldValue      String?
+  newValue      String
+  note          String?
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN
+  status        String    @default("PENDING")
+  workflowRequestId String?
+  decidedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([tenantId, applicationId])
+  @@map("applicant_change_requests")
+}
+
+// ---------------------------------------------------------------------------
+//  Interviews
+// ---------------------------------------------------------------------------
+
+model InterviewPlan {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  jobId       String    @unique
+  /// [{ name, mode, durationMinutes, focus }]
+  rounds      Json
+  /// { minPanel, maxPanel, requireHiringManager, requireOtherDepartment }
+  panelRules  Json?
+  /// { "<skill>": weight 1..5 }
+  skillWeights Json?
+  /// DRAFT | PENDING_APPROVAL | APPROVED | REJECTED
+  status      String    @default("DRAFT")
+  approvedBy  String?
+  approvedAt  DateTime?
+  updatedBy   String?
+  updatedAt   DateTime  @updatedAt
+
+  @@map("interview_plans")
+}
+
+model InterviewEvent {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  interviewId String
+  /// RESCHEDULED | NO_SHOW | CANCELLED | PANEL_ADDED | PANEL_REMOVED | PANEL_ACCEPTED | PANEL_DECLINED | CANDIDATE_NOTIFIED
+  kind        String
+  reason      String?
+  fromAt      DateTime?
+  toAt        DateTime?
+  employeeId  String?
+  byUserId    String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, interviewId])
+  @@index([tenantId, kind])
+  @@map("interview_events")
+}
+
+model InterviewConsent {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  interviewId String   @unique
+  /// REQUESTED | GRANTED | DECLINED
+  status      String
+  /// CANDIDATE_PORTAL | RECRUITER
+  method      String
+  recordedBy  String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("interview_consents")
+}
+
+model InterviewerCapacity {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  maxPerWeek Int      @default(5)
+  maxPerDay  Int      @default(2)
+  isActive   Boolean  @default(true)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([tenantId, employeeId])
+  @@map("interviewer_capacities")
+}
+
+model InterviewGuide {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title        String
+  /// Matches jobs whose title contains this (case-insensitive), e.g. "Engineer".
+  roleKeyword  String?
+  departmentId String?
+  /// Markdown.
+  body         String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenantId, title])
+  @@map("interview_guides")
+}
+
+model QuestionBankItem {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  text       String
+  /// The competency / scorecard skill it probes.
+  competency String
+  /// EASY | MEDIUM | HARD
+  difficulty String   @default("MEDIUM")
+  /// What a good answer covers.
+  guidance   String?
+  isActive   Boolean  @default(true)
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, competency])
+  @@map("question_bank_items")
+}
+
+// ---------------------------------------------------------------------------
+//  Offers
+// ---------------------------------------------------------------------------
+
+model OfferVersion {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  tenant              Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  applicationId       String
+  version             Int
+  annualCtc           Decimal   @db.Decimal(18, 2)
+  joiningBonus        Decimal?  @db.Decimal(18, 2)
+  proposedJoiningDate DateTime?
+  expiresOn           DateTime?
+  breakup             Json?
+  /// DRAFTED | REVISION_REQUESTED | REVISED | EXTENDED
+  event               String
+  reason              String?
+  /// Offer status after this version.
+  status              String
+  contentHash         String?
+  createdBy           String?
+  createdAt           DateTime  @default(now())
+
+  @@unique([applicationId, version])
+  @@index([tenantId])
+  @@map("offer_versions")
+}
+
+model OfferNegotiation {
+  id                   String    @id @default(cuid())
+  tenantId             String
+  tenant               Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  applicationId        String
+  /// COUNTER_OFFER | JOINING_DATE | COMP_CONFIRMATION
+  kind                 String
+  requestedCtc         Decimal?  @db.Decimal(18, 2)
+  requestedJoiningDate DateTime?
+  /// A competing offer the candidate shared.
+  competitorName       String?
+  competitorCtc        Decimal?  @db.Decimal(18, 2)
+  note                 String?
+  /// OPEN | ACCEPTED | REJECTED | CONFIRMED
+  status               String    @default("OPEN")
+  resolution           String?
+  createdBy            String?
+  resolvedBy           String?
+  resolvedAt           DateTime?
+  createdAt            DateTime  @default(now())
+
+  @@index([tenantId, applicationId])
+  @@map("offer_negotiations")
+}
+
+model OfferClause {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title          String
+  /// GENERAL | CONDITIONAL | TAX_DISCLAIMER | COMPONENT
+  kind           String   @default("GENERAL")
+  body           String
+  locale         String   @default("en")
+  /// Applies when the offer CTC is at least this.
+  minCtc         Decimal? @db.Decimal(18, 2)
+  departmentId   String?
+  /// FULL_TIME | PART_TIME | CONTRACT | INTERNSHIP
+  employmentType String?
+  /// COMPONENT: the amount shown in the letter.
+  amount         Decimal? @db.Decimal(18, 2)
+  sortOrder      Int      @default(0)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  @@unique([tenantId, title, locale])
+  @@map("offer_clauses")
+}
+
+/// Offer depth that lives beside the offer: clauses frozen into the letter.
+model OfferExtra {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  applicationId String    @unique
+  locale        String    @default("en")
+  /// Clause ids applied, and their HTML as appended to the letter.
+  clauseIds     Json?
+  clausesHtml   String?
+  /// Candidate confirmed the compensation before joining.
+  compConfirmedAt DateTime?
+  compConfirmedNote String?
+  withdrawReason String?
+  updatedAt     DateTime  @updatedAt
+
+  @@map("offer_extras")
+}
+
+model OfferChecklistCheck {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  applicationId String
+  item          String
+  checkedBy     String?
+  checkedAt     DateTime @default(now())
+
+  @@unique([applicationId, item])
+  @@index([tenantId])
+  @@map("offer_checklist_checks")
+}

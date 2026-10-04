@@ -9,6 +9,7 @@ import {
   runRetention, govAudit,
 } from "./governance-core";
 import { CASES_DOCS_ROUTES, applyCasesDocsEffect } from "./cases-docs-effects";
+import { applyHireRequest, hireRequestPermission } from "./hire-depth-core";
 import {
   WORKFLOW_ENTITY_TYPES, dueAtFor, finalApprovers, nextApplicableStep, pickDefinition, stepOutcome, validateWorkflowSubmission,
   type RouteContext, type StepSpec, type ValidationRule, type WorkflowEntityType,
@@ -52,6 +53,10 @@ export function builtInRoute(entityType: WorkflowEntityType, opts: { reviewerUse
     case "RETENTION_PURGE":
     case "POLICY_PUBLISH":
     case "CONSENT_PURPOSE": return [perm("Compliance manager", "admin.compliance.manage")];
+    // Hiring requests: a named reviewer (task creator, hiring manager), else the holders of the permission for that kind of request.
+    case "HIRE_REQUEST": return opts.reviewerUserId
+      ? [{ order: 1, name: "Reviewer", approverType: "USER", approverUserId: opts.reviewerUserId, mode: "ANY", slaHours: 48, escalateTo: "ADMINS" }]
+      : [perm("Hiring approver", hireRequestPermission(opts.changeKind))];
     default: {
       const r = CASES_DOCS_ROUTES[entityType as keyof typeof CASES_DOCS_ROUTES];
       return r ? [perm(r.name, r.permission)] : engageBuiltInRoute(entityType, opts);
@@ -189,7 +194,7 @@ async function advance(requestId: string, from: number, actorUserId: string | nu
 }
 
 /** Run the entity's effect for an outcome. */
-async function applyEffect(req: { id: string; tenantId: string; entityType: string; entityId: string | null }, outcome: "APPROVED" | "REJECTED" | "WITHDRAWN", actorUserId: string | null): Promise<void> {
+async function applyEffect(req: { id: string; tenantId: string; entityType: string; entityId: string | null; category?: string | null; data?: Prisma.JsonValue }, outcome: "APPROVED" | "REJECTED" | "WITHDRAWN", actorUserId: string | null): Promise<void> {
   const t = req.tenantId, id = req.entityId;
   const approved = outcome === "APPROVED";
   switch (req.entityType) {
@@ -233,6 +238,8 @@ async function applyEffect(req: { id: string; tenantId: string; entityType: stri
       if (approved) await activatePolicyCampaign(t, id, actorUserId);
       else await prisma.policyCampaign.updateMany({ where: { id, tenantId: t }, data: { status: "REJECTED", closedAt: new Date() } });
       return;
+    case "HIRE_REQUEST":
+      return applyHireRequest({ tenantId: t, entityId: id, category: req.category ?? null, data: req.data ?? null }, outcome, actorUserId);
     case "CONSENT_PURPOSE":
       if (!id) return;
       if (approved) await publishConsentPurpose(t, id, actorUserId);

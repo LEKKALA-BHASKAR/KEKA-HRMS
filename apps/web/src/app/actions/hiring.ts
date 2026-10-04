@@ -8,7 +8,9 @@ import {
   raiseRequisition, updateRequisition, decideRequisitions, archiveRequisition, isSuperApprover, saveScorecard,
   requisitionProblems, parseKit, plainText, type RequisitionInput,
   parseManualBreakup, issueOfferLink, revokeOfferLink, hireChain, beyondPlanWarning,
+  biasFlags, hireDepthConfig, recordOfferVersion, sendJobAlerts, captureSilverMedalists,
 } from "@keka/services";
+import { gatedStageMove, panelRuleProblems, capacityProblems, resolveOfferClauses, offerChecklistMissing } from "@/lib/hire-depth";
 import { routeRequisitionChain, chainRequisitionDecisions, routeOfferChain } from "@/lib/talent-hire";
 import { foreignReference } from "@/lib/ownership";
 import { requireAuth, requireViewer, can, canAny, type Viewer } from "@/lib/context";
@@ -163,6 +165,11 @@ export async function openJobAction(_prev: ActionState, formData: FormData): Pro
   const foreign = await foreignReference(viewer.tenantId, { employee: hm });
   if (foreign) return { ok: false, message: foreign };
   const res = await openJobFromRequisition(id, { hiringManagerId: hm, recruiterId: viewer.user.id, description: String(formData.get("description") ?? "") || null });
+  if (res.ok && res.jobId) {
+    // Postings that need approval stay off the careers site until approved; otherwise alert subscribers.
+    if ((await hireDepthConfig(viewer.tenantId)).requirePostingApproval) await prisma.job.update({ where: { id: res.jobId }, data: { isPublished: false, publishedAt: null } });
+    else await sendJobAlerts(viewer.tenantId, res.jobId);
+  }
   if (res.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Job", entityId: res.jobId!, summary: `Opened a job from requisition: ${res.message}` });
   return res.ok ? done([...REQ_PATHS, "/hiring/jobs"], res.message) : { ok: false, message: res.message };
 }
@@ -174,9 +181,12 @@ export async function jobStatusAction(_prev: ActionState, formData: FormData): P
   const id = String(formData.get("jobId"));
   const status = String(formData.get("status")) as "OPEN" | "ON_HOLD" | "CLOSED";
   if (!["OPEN", "ON_HOLD", "CLOSED"].includes(status)) return { ok: false, message: "Unknown status." };
-  const u = await prisma.job.updateMany({ where: { id, tenantId: viewer.tenantId, status: { not: "FILLED" } }, data: { status, isPublished: status === "OPEN" } });
+  // When postings need approval, reopening a job does not put it back on the careers site by itself.
+  const gated = status === "OPEN" && (await hireDepthConfig(viewer.tenantId)).requirePostingApproval;
+  const u = await prisma.job.updateMany({ where: { id, tenantId: viewer.tenantId, status: { not: "FILLED" } }, data: gated ? { status } : { status, isPublished: status === "OPEN" } });
   if (u.count) await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "Job", entityId: id, summary: `Job set to ${status.toLowerCase().replace("_", " ")}` });
-  return u.count ? done(["/hiring/jobs", `/hiring/jobs/${id}`], `Job ${status.toLowerCase().replace("_", " ")}.`) : { ok: false, message: "Job not found or already filled." };
+  if (u.count && status === "OPEN" && !gated) await sendJobAlerts(viewer.tenantId, id);
+  return u.count ? done(["/hiring/jobs", `/hiring/jobs/${id}`], `Job ${status.toLowerCase().replace("_", " ")}.${gated ? " Request a careers posting to publish it." : ""}`) : { ok: false, message: "Job not found or already filled." };
 }
 
 export async function saveJobDetailsAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -245,7 +255,8 @@ export async function moveStageAction(_prev: ActionState, formData: FormData): P
   const viewer = await requireAuth(P.CANDIDATE_MANAGE);
   const id = String(formData.get("applicationId"));
   if (!(await inTenant(viewer, await prisma.application.findUnique({ where: { id } })))) return { ok: false, message: "Application not found." };
-  const res = await moveStage({ applicationId: id, stageId: String(formData.get("stageId")), byUserId: viewer.user.id, note: String(formData.get("note") ?? "") || null });
+  // Through the stage gate: entry criteria, and stages that need an approval first.
+  const res = await gatedStageMove(viewer, id, String(formData.get("stageId")), String(formData.get("note") ?? "") || null);
   if (res.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "Application", entityId: id, summary: res.message });
   return res.ok ? done([`/hiring/applications/${id}`, "/hiring/jobs"], res.message) : { ok: false, message: res.message };
 }
@@ -256,6 +267,10 @@ export async function rejectApplicationAction(_prev: ActionState, formData: Form
   const id = String(formData.get("applicationId"));
   if (!(await inTenant(viewer, await prisma.application.findUnique({ where: { id } })))) return { ok: false, message: "Application not found." };
   const res = await rejectApplication(id, String(formData.get("reason") ?? ""));
+  if (res.ok) {
+    const label = String(formData.get("reason") ?? "").trim().slice(0, 300);
+    await prisma.applicationDisposition.upsert({ where: { applicationId: id }, create: { tenantId: viewer.tenantId, applicationId: id, kind: "REJECT", label, byUserId: viewer.user.id }, update: { kind: "REJECT", label, reasonId: null, byWhom: "RECRUITER", byUserId: viewer.user.id } });
+  }
   if (res.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: "REJECT", entityType: "Application", entityId: id, summary: `Archived candidate: ${String(formData.get("reason") ?? "").trim()}` });
   return res.ok ? done([`/hiring/applications/${id}`, "/hiring/jobs"], res.message) : { ok: false, message: res.message };
 }
@@ -295,6 +310,13 @@ export async function scheduleInterviewAction(_prev: ActionState, formData: Form
   const panel = formData.getAll("panel").map(String).filter(Boolean);
   const valid = await prisma.employee.count({ where: { id: { in: panel }, tenantId: viewer.tenantId } });
   if (valid !== panel.length) return { ok: false, message: "Some interviewers were not found." };
+  const app = await prisma.application.findUniqueOrThrow({ where: { id: d.applicationId }, select: { jobId: true } });
+  const rules = await panelRuleProblems(viewer.tenantId, app.jobId, panel);
+  if (rules.length) return { ok: false, message: `The job's interview plan: ${rules.join(" ")}`, values: values(formData) };
+  if (formData.get("capacityOverride") !== "on") {
+    const over = await capacityProblems(viewer.tenantId, panel, at);
+    if (over.length) return { ok: false, message: `${over.join(" ")} Pick someone else, or tick the box to book anyway.`, values: values(formData) };
+  }
   const res = await scheduleInterview({ applicationId: d.applicationId, title: d.title, scheduledAt: at, durationMinutes: d.durationMinutes, mode: d.mode, meetingUrl: d.meetingUrl, panel });
   if (res.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Interview", entityId: res.interviewId!, summary: `Scheduled ${d.title}` });
   return res.ok ? done([`/hiring/applications/${d.applicationId}`, "/hiring/interviews"], res.message) : { ok: false, message: res.message, values: values(formData) };
@@ -314,6 +336,11 @@ export async function saveScorecardAction(_prev: ActionState, formData: FormData
   let ratings: unknown = [];
   try { ratings = JSON.parse(String(formData.get("ratings") ?? "[]")); } catch { return { ok: false, message: "The ratings could not be read." }; }
   const submit = formData.get("intent") === "submit";
+  // Bias check: flagged wording must be reworded or consciously confirmed before submitting.
+  if (submit && formData.get("biasReviewed") !== "1") {
+    const flags = biasFlags(String(formData.get("notes") ?? ""), (await hireDepthConfig(viewer.tenantId)).biasTerms);
+    if (flags.length) return { ok: false, message: `Check this wording before submitting: ${flags.map((x) => `“${x.term}” (${x.suggestion})`).join("; ")}.`, errors: { biasReviewed: "Review the wording" } };
+  }
   const res = await saveScorecard({
     interviewId, panelistEmployeeId: viewer.employee.id, recommendation: String(formData.get("recommendation") ?? "") || null,
     notes: String(formData.get("notes") ?? ""), ratings, submit, aiAssisted: formData.get("aiAssisted") === "1",
@@ -408,6 +435,11 @@ export async function draftOfferAction(_prev: ActionState, formData: FormData): 
   // Multi-level approval: a matching chain rule routes the offer to its approvers in order.
   const routed = res0.ok ? await routeOfferChain(viewer, parsed.data.applicationId) : null;
   const res = routed ? { ...res0, message: `Offer drafted. ${routed}` } : res0;
+  if (res.ok) {
+    // Freeze the clauses that apply to these terms, and keep this draft as the first version.
+    await resolveOfferClauses(viewer.tenantId, parsed.data.applicationId);
+    await recordOfferVersion(viewer.tenantId, parsed.data.applicationId, "DRAFTED", null, viewer.user.id);
+  }
   if (res.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Offer", entityId: parsed.data.applicationId, summary: `Offer drafted at ₹${parsed.data.annualCtc}: ${res.message}` });
   return res.ok ? done([`/hiring/applications/${parsed.data.applicationId}`, "/hiring/offers"], res.message) : { ok: false, message: res.message, values: values(formData) };
 }
@@ -425,6 +457,8 @@ export async function offerOpAction(_prev: ActionState, formData: FormData): Pro
     res = await approveOffer(applicationId, viewer.user.id);
   } else if (op === "extend") {
     if (!can(viewer, P.OFFER_MANAGE)) return { ok: false, message: "You cannot extend offers." };
+    const missing = await offerChecklistMissing(viewer.tenantId, applicationId);
+    if (missing.length) return { ok: false, message: `Finish the offer checklist first: ${missing.join("; ")}.` };
     res = await extendOffer(applicationId, async (pdf, filename) => {
       const f = await saveFile({ tenantId: viewer.tenantId, filename, mimeType: "application/pdf", data: pdf, relatedType: "Offer", relatedId: applicationId, uploadedBy: viewer.user.id });
       return `/files/${f.id}`;
@@ -441,6 +475,7 @@ export async function offerOpAction(_prev: ActionState, formData: FormData): Pro
     if (op === "declined" && !reason) return { ok: false, message: "Record why the candidate declined." };
     res = await recordOfferResponse(applicationId, op === "accepted", reason, viewer.user.id);
   } else return { ok: false, message: "Unknown action." };
+  if (res.ok && ["extend", "accepted", "declined"].includes(op)) await recordOfferVersion(viewer.tenantId, applicationId, op === "extend" ? "EXTENDED" : op.toUpperCase(), null, viewer.user.id);
   if (res.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: op === "approve" ? "APPROVE" : "UPDATE", entityType: "Offer", entityId: applicationId, summary: `Offer ${op}: ${res.message}` });
   return res.ok ? done([`/hiring/applications/${applicationId}`, "/hiring/offers"], res.message) : { ok: false, message: res.message };
 }
@@ -483,6 +518,8 @@ export async function hireAction(_prev: ActionState, formData: FormData): Promis
   const emp = await prisma.employee.findFirstOrThrow({ where: { tenantId: viewer.tenantId, workEmail } });
   const res = await completeHire(applicationId, emp.id);
   if (!res.ok) return res;
+  // A filled job's finalists are kept as silver medallists for the next opening.
+  if ((await prisma.job.findUnique({ where: { id: app.jobId }, select: { status: true } }))?.status === "FILLED") await captureSilverMedalists(viewer.tenantId, app.jobId, viewer.user.id);
   await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Application", entityId: applicationId, summary: `Hired ${emp.displayName} as ${emp.employeeNumber} from ${app.job.code}` });
   return done(["/hiring/jobs", "/hiring/offers", "/employees", "/onboarding"], `${created.message}`);
 }

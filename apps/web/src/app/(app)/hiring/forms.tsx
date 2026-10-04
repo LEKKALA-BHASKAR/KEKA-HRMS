@@ -113,6 +113,7 @@ export function InterviewForm({ applicationId, employees, round }: { application
           <Field label="Panel" name="panel" state={state} hint="Hold ⌘ or Ctrl for several; the first is the lead">
             <select name="panel" multiple className="select" style={{ height: 110 }}>{employees.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}</select>
           </Field>
+          <label className="row gap-2 text-sm"><input type="checkbox" name="capacityOverride" /> Book even if an interviewer is over their capacity limit</label>
         </>
       )}
     </ActionForm>

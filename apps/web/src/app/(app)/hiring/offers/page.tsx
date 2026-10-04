@@ -46,7 +46,7 @@ export default async function OffersPage({ searchParams }: { searchParams: Promi
                       <td>{o.reportingManagerId ? mn.get(o.reportingManagerId) ?? "—" : "—"}</td>
                       <td className="nowrap">{kDate(o.proposedJoiningDate)}</td>
                       <td className="nowrap">{kDate(o.expiresOn)}</td>
-                      <td><span className={`${s.statusChip} ${s[TONE[o.status]] ?? ""}`}>{o.status.charAt(0) + o.status.slice(1).toLowerCase().replace(/_/g, " ")}</span></td>
+                      <td><span className={`${s.statusChip} ${s[TONE[o.status]] ?? ""}`}>{o.status.charAt(0) + o.status.slice(1).toLowerCase().replace(/_/g, " ")}</span> <Link className="text-xs" href={`/hiring/offers/${o.applicationId}`}>details</Link></td>
                     </tr>
                   );
                 })}

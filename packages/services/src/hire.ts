@@ -4,6 +4,7 @@ import {
   annualBudget, nextRequisitionCode, totalPositions, kitOf, cleanRatings, ratingsAverage, normaliseDecision, plainText,
   type SkillRating, type KitSection,
 } from "./hire-math";
+import { parseSkillWeights, weightedRatingsAverage } from "./hire-depth-math";
 
 export * from "./hire-math";
 
@@ -311,8 +312,12 @@ export async function saveScorecard(opts: {
   }
   const kit = await interviewKit(iv.application.jobId);
   const ratings: SkillRating[] = cleanRatings(opts.ratings, kit);
+  // The job's interview plan may weight skills (36-hire-depth); without weights it is the plain mean.
+  const plan = await prisma.interviewPlan.findUnique({ where: { jobId: iv.application.jobId }, select: { skillWeights: true } });
+  const parsedWeights = parseSkillWeights(plan?.skillWeights);
+  const weights = Object.keys(parsedWeights).length ? parsedWeights : null;
   const data = {
-    recommendation: decision, notes, ratings: ratings as unknown as Prisma.InputJsonValue, overallScore: ratingsAverage(ratings),
+    recommendation: decision, notes, ratings: ratings as unknown as Prisma.InputJsonValue, overallScore: weights ? weightedRatingsAverage(ratings, weights) : ratingsAverage(ratings),
     aiAssisted: !!opts.aiAssisted || (existing?.aiAssisted ?? false),
     status: opts.submit ? "SUBMITTED" : "DRAFT",
     ...(opts.submit ? { submittedAt: new Date() } : {}),

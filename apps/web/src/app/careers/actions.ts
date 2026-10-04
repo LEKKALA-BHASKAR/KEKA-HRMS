@@ -3,7 +3,7 @@
 import { headers } from "next/headers";
 import { z } from "zod";
 import { prisma } from "@keka/db";
-import { applyCandidate, notify, EEO_OPTIONS } from "@keka/services";
+import { applyCandidate, notify, EEO_OPTIONS, afterPublicApply } from "@keka/services";
 import { tenantFromHost } from "@/lib/tenant-host";
 import { saveFile, sniffUpload } from "@/lib/storage";
 import { parseForm, type ActionState } from "@/lib/forms";
@@ -98,6 +98,10 @@ export async function applyToJobAction(_prev: ActionState, formData: FormData): 
     const declined = Object.values(eeo).every((v) => v === null);
     await prisma.candidateEeo.upsert({ where: { candidateId: app.candidateId }, create: { tenantId: tenant.id, candidateId: app.candidateId, ...eeo, declined }, update: { ...eeo, declined, submittedAt: new Date() } });
   }
+
+  // Source attribution (campaign code, UTM, rules), tags, the audit entry and the applicant's portal link.
+  const track = (k: string) => String(formData.get(k) ?? "").trim().slice(0, 80) || null;
+  await afterPublicApply(tenant.id, res.applicationId!, { utmSource: track("utm_source"), utmCampaign: track("utm_campaign"), campaignCode: track("campaign") });
 
   const people = await prisma.employee.findMany({ where: { id: { in: [job.recruiterId, job.hiringManagerId].filter((x): x is string => !!x) } }, select: { userId: true } });
   await notify({ tenantId: tenant.id, userIds: people.map((p) => p.userId), kind: "HIRING", title: `New application: ${d.firstName} ${d.lastName} for ${job.title}`, body: "Applied from the careers site.", link: `/hiring/applications/${res.applicationId}` });

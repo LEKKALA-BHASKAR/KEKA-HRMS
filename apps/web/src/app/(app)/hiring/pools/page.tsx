@@ -4,6 +4,8 @@ import { PERMISSIONS } from "@keka/rbac";
 import { asStringList } from "@keka/services";
 import { requireAuth } from "@/lib/context";
 import { CreatePoolForm } from "../_parts/talent-forms";
+import { GrowthForm, ActButton } from "@/components/growth-forms";
+import { captureSilverAction, reactivationCampaignAction } from "@/app/actions/hire-sourcing";
 import { kDate } from "../_lib/data";
 import s from "../hire.module.css";
 
@@ -18,7 +20,8 @@ export default async function PoolsPage({ searchParams }: { searchParams: Promis
   const viewer = await requireAuth(PERMISSIONS.CANDIDATE_MANAGE);
   const q = ((await searchParams).q ?? "").trim().slice(0, 80);
   const tenantId = viewer.tenantId;
-  const pools = await prisma.talentPool.findMany({ where: { tenantId }, include: { _count: { select: { members: true } } }, orderBy: { name: "asc" } });
+  const pools = await prisma.talentPool.findMany({ where: { tenantId }, include: { _count: { select: { members: true } } }, orderBy: [{ archivedAt: { sort: "asc", nulls: "first" } }, { name: "asc" }] });
+  const closedJobs = await prisma.job.findMany({ where: { tenantId, status: { in: ["FILLED", "CLOSED", "OPEN", "ON_HOLD"] } }, select: { id: true, title: true, code: true }, orderBy: { updatedAt: "desc" }, take: 200 });
   const hits = q
     ? await prisma.talentPoolMember.findMany({
         where: {
@@ -31,7 +34,7 @@ export default async function PoolsPage({ searchParams }: { searchParams: Promis
     : [];
   return (
     <>
-      <div className={s.head}><div><h1 className={s.h1}>Talent pools</h1><p className={s.sub}>Keep strong candidates close for the next opening. Save anyone to a pool from their candidate page.</p></div></div>
+      <div className={s.head}><div><h1 className={s.h1}>Talent pools</h1><p className={s.sub}>Keep strong candidates close for the next opening. Save anyone to a pool from their candidate page.</p></div><a className="btn" href="/hiring/insights/export?kind=pools">CSV</a></div>
       <form className="row gap-2" style={{ marginBottom: 16 }}>
         <input className="input" name="q" defaultValue={q} placeholder="Search pooled candidates by name, title or skill" aria-label="Search pooled candidates" style={{ flex: 1, maxWidth: 420 }} />
         <button className="btn">Search</button>
@@ -59,7 +62,7 @@ export default async function PoolsPage({ searchParams }: { searchParams: Promis
             <table className={s.table}><tbody>
               {pools.map((p) => (
                 <tr key={p.id}>
-                  <td><Link href={`/hiring/pools/${p.id}`} className="strong">{p.name}</Link>{p.description ? <div className={s.metaLine}>{p.description}</div> : null}</td>
+                  <td><Link href={`/hiring/pools/${p.id}`} className="strong">{p.name}</Link>{p.kind !== "STANDARD" ? <span className="text-xs subtle"> · {p.kind.toLowerCase().replace(/_/g, " ")}</span> : null}{p.archivedAt ? <span className="text-xs neg"> · archived</span> : null}{p.description ? <div className={s.metaLine}>{p.description}</div> : null}</td>
                   <td className="nowrap">{p._count.members} candidate{p._count.members === 1 ? "" : "s"}</td>
                   <td className="text-xs subtle nowrap">since {kDate(p.createdAt)}</td>
                 </tr>
@@ -70,6 +73,13 @@ export default async function PoolsPage({ searchParams }: { searchParams: Promis
         <section className={s.listCard}>
           <div className={s.listHead}><span className={s.listTitle}>New pool</span></div>
           <div style={{ padding: 18 }}><CreatePoolForm /></div>
+          <div className={s.listHead}><span className={s.listTitle}>Silver medallists and re-engagement</span></div>
+          <div className="stack gap-3" style={{ padding: 18 }} data-testid="pool-automation">
+            <GrowthForm action={captureSilverAction} cols={2} submitLabel="Keep finalists" fields={[
+              { name: "jobId", label: "Keep the finalists of", type: "select", required: true, options: closedJobs.map((j) => ({ value: j.id, label: `${j.title}${j.code ? ` (${j.code})` : ""}` })) },
+            ]} />
+            <ActButton action={reactivationCampaignAction} hidden={{}} label="Queue past candidates for re-engagement" confirmText="Add every past candidate not contacted recently to a re-engage pool and create outreach tasks?" />
+          </div>
         </section>
       </div>
     </>

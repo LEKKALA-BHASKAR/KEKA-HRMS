@@ -36,6 +36,7 @@ export const WORKFLOW_ENTITY_TYPES = {
   DOCUMENT_FOLDER_ACCESS: "Confidential document folder access",
   LETTER_TEMPLATE: "Letter template approval",
   ASSET_DISPOSAL: "Asset disposal",
+  HIRE_REQUEST: "Hiring requests (campaigns, career content, referral bonuses, offer revisions…)",
 } as const;
 export type WorkflowEntityType = keyof typeof WORKFLOW_ENTITY_TYPES;
 export const isWorkflowEntityType = (v: string): v is WorkflowEntityType => v in WORKFLOW_ENTITY_TYPES;

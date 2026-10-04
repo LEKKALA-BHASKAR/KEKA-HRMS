@@ -13,7 +13,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   if (!tenant) return new NextResponse("Not found.", { status: 404 });
   const { id } = await params;
   const site = await prisma.careerSiteSetting.findUnique({ where: { tenantId: tenant.id }, select: { logoFileId: true, bannerFileId: true } });
-  if (!site || (site.logoFileId !== id && site.bannerFileId !== id)) return new NextResponse("Not found.", { status: 404 });
+  const brand = !!site && (site.logoFileId === id || site.bannerFileId === id);
+  // Images on published careers content (stories, locations, recruiter profiles) are public too.
+  if (!brand && !(await prisma.careerContent.count({ where: { tenantId: tenant.id, imageFileId: id, status: "PUBLISHED" } }))) return new NextResponse("Not found.", { status: 404 });
   const file = await prisma.storedFile.findFirst({ where: { id, tenantId: tenant.id, relatedType: "CareerSiteAsset" } });
   if (!file || !file.mimeType.startsWith("image/")) return new NextResponse("Not found.", { status: 404 });
   const data = await loadFile(file.storageKey, file.sha256);

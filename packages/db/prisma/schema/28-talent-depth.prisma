@@ -285,6 +285,16 @@ model TalentPool {
   description String?
   createdBy   String?
   createdAt   DateTime           @default(now())
+  // --- Hire depth (36-hire-depth) ---
+  /// STANDARD | SILVER_MEDALIST | HIGH_POTENTIAL | COMMUNITY | REACTIVATION
+  kind             String    @default("STANDARD")
+  /// Segment rules: { skills[], city, minExperience, tags[], source }; refreshing adds matches.
+  rules            Json?
+  /// Members drop out this many days after being added.
+  memberExpiryDays Int?
+  /// Adding a member needs an approval.
+  requiresApproval Boolean   @default(false)
+  archivedAt       DateTime?
   members     TalentPoolMember[]
 
   @@unique([tenantId, name])
@@ -300,6 +310,10 @@ model TalentPoolMember {
   note        String?
   addedBy     String?
   addedAt     DateTime   @default(now())
+  // --- Hire depth (36-hire-depth) ---
+  /// ACTIVE | PENDING_APPROVAL | EXPIRED
+  status      String     @default("ACTIVE")
+  expiresAt   DateTime?
 
   @@unique([poolId, candidateId])
   @@index([candidateId])
