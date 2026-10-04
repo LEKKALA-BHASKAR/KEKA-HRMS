@@ -193,7 +193,12 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     can(viewer, P.ANNOUNCEMENT_VIEW) && { label: "Announcements", href: "/announcements", count: counts.acks },
     (me || can(viewer, P.ANNOUNCEMENT_VIEW)) && { label: "Wall", href: "/wall" },
     can(viewer, P.AWARD_VIEW) && { label: "Praise & Awards", href: "/awards" },
-    (me || canAny(viewer, [P.SURVEY_MANAGE, P.SURVEY_RESULTS])) && { label: "Surveys & Polls", href: "/engage/surveys", count: counts.surveys },
+    (me || canAny(viewer, [P.SURVEY_MANAGE, P.SURVEY_RESULTS])) && { label: "Surveys & Polls", href: "/engage/surveys", paths: ["/engage/surveys", "/engage/survey-admin"], count: counts.surveys },
+    can(viewer, P.AWARD_VIEW) && { label: "Rewards", href: "/engage/rewards" },
+    (me || can(viewer, P.WELLNESS_MANAGE)) && { label: "Wellness", href: "/engage/wellness" },
+    (me || can(viewer, P.SERVICE_MANAGE)) && { label: "Employee Services", href: "/engage/services" },
+    (me || can(viewer, P.ANNOUNCEMENT_MANAGE)) && { label: "Communities", href: "/engage/communities" },
+    (me || can(viewer, P.ANNOUNCEMENT_MANAGE)) && { label: "Events", href: "/engage/events" },
     can(viewer, P.MEETING_VIEW) && { label: "Meetings", href: "/meetings" },
   ]);
   if (engage.length && on("engage")) sections.push({ key: "engage", label: "Engage", icon: "engage", href: engage[0].href, tabs: engage });

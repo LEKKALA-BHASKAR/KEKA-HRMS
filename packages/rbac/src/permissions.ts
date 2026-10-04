@@ -128,6 +128,10 @@ export const PERMISSIONS = {
   PRAISE_GIVE: "engagement.praise.give",
   SURVEY_MANAGE: "engagement.survey.manage",
   SURVEY_RESULTS: "engagement.survey.results",
+  /// Wellness programmes, check-in results and the support resource library.
+  WELLNESS_MANAGE: "engagement.wellness.manage",
+  /// Employee service catalog and fulfilment of service requests.
+  SERVICE_MANAGE: "engagement.service.manage",
 
   // --- Learning -----------------------------------------------------------
   LEARNING_VIEW: "learning.course.view",
@@ -422,6 +426,8 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.PRAISE_GIVE, label: "Give praise" },
       { key: PERMISSIONS.SURVEY_MANAGE, label: "Create & launch surveys and polls" },
       { key: PERMISSIONS.SURVEY_RESULTS, label: "View survey results" },
+      { key: PERMISSIONS.WELLNESS_MANAGE, label: "Manage wellness programmes & resources" },
+      { key: PERMISSIONS.SERVICE_MANAGE, label: "Manage & fulfil employee service requests" },
     ],
   },
   {

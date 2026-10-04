@@ -1,6 +1,8 @@
 import { prisma, type Prisma } from "@keka/db";
 import { notify, usersWithPermission } from "./lifecycle";
 import { emitEvent } from "./webhooks";
+import { engageBuiltInRoute, applyEngageEffect } from "./engage-depth";
+import { isEngageWorkflowType } from "./engage-depth-math";
 import { fireRequestAutomations } from "./automation";
 import {
   applyAccessRequest, applyChangeRequest, completeComplianceItem, activatePolicyCampaign, publishConsentPurpose,
@@ -49,6 +51,7 @@ export function builtInRoute(entityType: WorkflowEntityType, opts: { reviewerUse
     case "RETENTION_PURGE":
     case "POLICY_PUBLISH":
     case "CONSENT_PURPOSE": return [perm("Compliance manager", "admin.compliance.manage")];
+    default: return engageBuiltInRoute(entityType, opts);
   }
 }
 
@@ -230,6 +233,9 @@ async function applyEffect(req: { id: string; tenantId: string; entityType: stri
       if (!id) return;
       if (approved) await publishConsentPurpose(t, id, actorUserId);
       else await prisma.consentPurpose.updateMany({ where: { id, tenantId: t, status: "PENDING_APPROVAL" }, data: { status: "DRAFT" } });
+      return;
+    default:
+      if (isEngageWorkflowType(req.entityType)) await applyEngageEffect(req, outcome, actorUserId);
       return;
   }
 }

@@ -288,6 +288,26 @@ model Tenant {
   contingentWorkers   ContingentWorker[]
   contractorRateCards ContractorRateCard[]
 
+  // --- Engage depth (34-engage-depth) ---
+  engageSetting         EngageSetting?
+  surveySchedules       SurveySchedule[]
+  surveyTemplates       SurveyTemplate[]
+  surveyActionPlans     SurveyActionPlan[]
+  recognitionPrograms   RecognitionProgram[]
+  awardNominations      AwardNomination[]
+  rewardPointEntries    RewardPointEntry[]
+  rewardItems           RewardItem[]
+  rewardRedemptions     RewardRedemption[]
+  wellnessPrograms      WellnessProgram[]
+  wellbeingCheckIns     WellbeingCheckIn[]
+  wellbeingCheckInMarks WellbeingCheckInMark[]
+  serviceTypes          ServiceType[]
+  serviceRequests       ServiceRequest[]
+  supportResources      SupportResource[]
+  communityChannels     CommunityChannel[]
+  contentReports        ContentReport[]
+  companyEvents         CompanyEvent[]
+
   // --- Governance: workflow, IAM, compliance (31-governance) ---
   workflowDefinitions   WorkflowDefinition[]
   workflowRequests      WorkflowRequest[]

@@ -15,7 +15,7 @@ export interface Option { value: string; label: string }
 export interface FieldSpec {
   name: string;
   label: string;
-  type?: "text" | "number" | "date" | "textarea" | "select" | "checkbox" | "multiselect" | "file" | "email";
+  type?: "text" | "number" | "date" | "datetime-local" | "textarea" | "select" | "checkbox" | "multiselect" | "file" | "email";
   options?: Option[];
   required?: boolean;
   placeholder?: string;

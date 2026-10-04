@@ -2,10 +2,12 @@
 
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
-import { notify, validateSubmission, type QuestionDef, type SubmittedAnswer } from "@keka/services";
+import {
+  validateSubmission, visibleQuestionIds, branchRuleError, engageSettings, launchSurvey, remindSurvey, startWorkflow,
+  type QuestionDef, type SubmittedAnswer,
+} from "@keka/services";
 import { randomUUID } from "node:crypto";
 import { foreignReference } from "@/lib/ownership";
-import { surveyAudience } from "@/lib/engage";
 import { requireAuth, requireViewer } from "@/lib/context";
 import {
   z, parseForm, toErrorState, writeAudit, actionDone as done, formList,
@@ -60,6 +62,10 @@ const createSchema = z.object({
   pollQuestion: zOptional(300),
   pollOptions: zOptional(2000),
   pollMulti: zBool(),
+  templateId: zOptional(40),
+  onSignIn: zBool(),
+  randomize: zBool(),
+  reminderEveryDays: zNumber({ min: 1, max: 30 }),
 });
 
 export async function createSurveyAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -82,6 +88,10 @@ export async function createSurveyAction(_prev: ActionState, formData: FormData)
     if (options.length < 2) return { ok: false, message: "Give at least two options, one per line.", errors: { pollOptions: "At least two" }, values };
     if (options.length > 10) return { ok: false, message: "Keep a poll to ten options.", errors: { pollOptions: "At most ten" }, values };
     questions = [{ prompt: d.pollQuestion, type: d.pollMulti ? "MULTI_CHOICE" : "SINGLE_CHOICE", options }];
+  } else if (d.templateId) {
+    const tpl = await prisma.surveyTemplate.findFirst({ where: { id: d.templateId, tenantId: viewer.tenantId, isActive: true } });
+    if (!tpl) return { ok: false, message: "Pick a template from your library.", errors: { templateId: "Not found" }, values };
+    questions = tpl.questions as unknown as QuestionSeed[];
   } else {
     questions = TEMPLATES[d.kind];
   }
@@ -93,7 +103,8 @@ export async function createSurveyAction(_prev: ActionState, formData: FormData)
         // A poll's results are shown to voters by design; it is still not linked to names.
         isAnonymous: d.kind === "POLL" ? true : d.isAnonymous,
         minGroupSize: d.minGroupSize ?? 3, departmentIds, closesAt: d.closesAt,
-        createdBy: viewer.user.id,
+        createdBy: viewer.user.id, onSignIn: d.onSignIn, randomize: d.kind === "POLL" ? false : d.randomize,
+        reminderEveryDays: d.reminderEveryDays ?? null,
         questions: {
           create: questions.map((q, i) => ({
             sequence: i + 1, prompt: q.prompt, type: q.type, driver: q.driver ?? null,
@@ -122,7 +133,15 @@ const questionSchema = z.object({
   driver: zOptional(40),
   options: zOptional(2000),
   required: zBool(),
+  showIfQuestionId: zOptional(40),
+  showIfValues: zOptional(60),
 });
+
+/** "1, 2" → [1, 2] (score values or 1-based option numbers turned into indexes). */
+function parseBranchValues(raw: string | null | undefined, parentType: string | undefined): number[] {
+  const nums = (raw ?? "").split(/[,\s]+/).filter(Boolean).map(Number);
+  return parentType === "SINGLE_CHOICE" || parentType === "MULTI_CHOICE" ? nums.map((n) => n - 1) : nums;
+}
 
 export async function addQuestionAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const viewer = await requireAuth(P.SURVEY_MANAGE);
@@ -136,17 +155,51 @@ export async function addQuestionAction(_prev: ActionState, formData: FormData):
     if ((d.type === "SINGLE_CHOICE" || d.type === "MULTI_CHOICE") && options.length < 2) {
       return { ok: false, message: "A choice question needs at least two options, one per line.", errors: { options: "At least two" } };
     }
+    let showIfValues: number[] = [];
+    if (d.showIfQuestionId) {
+      const parent = s.questions.find((q) => q.id === d.showIfQuestionId);
+      showIfValues = parseBranchValues(d.showIfValues, parent?.type);
+      const err = branchRuleError(s.questions, { questionId: d.showIfQuestionId, values: showIfValues });
+      if (err) return { ok: false, message: err, errors: { showIfValues: err } };
+    }
     const next = (s.questions.at(-1)?.sequence ?? 0) + 1;
-    await prisma.surveyQuestion.create({
+    const q = await prisma.surveyQuestion.create({
       data: {
         surveyId: s.id, sequence: next, prompt: d.prompt, type: d.type, driver: d.type === "RATING" ? d.driver : null,
         options: d.type === "SINGLE_CHOICE" || d.type === "MULTI_CHOICE" ? options : [], required: d.required,
+        showIfQuestionId: d.showIfQuestionId ?? null, showIfValues,
       },
     });
+    await writeAudit(viewer, { module: "SYSTEM", action: "CREATE", entityType: "SurveyQuestion", entityId: q.id, summary: `Added question ${next} to "${s.title}"${d.showIfQuestionId ? " (conditional)" : ""}` });
     return done([`/engage/surveys/${s.id}`], "Question added.");
   } catch (err) {
     return toErrorState(err);
   }
+}
+
+const editSchema = z.object({
+  questionId: z.string().min(1),
+  prompt: zName(300),
+  driver: zOptional(40),
+  options: zOptional(2000),
+  required: zBool(),
+});
+
+/** Edit a question's wording, driver, options or whether it is required — while the survey is a draft. */
+export async function editQuestionAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const viewer = await requireAuth(P.SURVEY_MANAGE);
+  const parsed = parseForm(editSchema, formData);
+  if (parsed.state) return parsed.state;
+  const d = parsed.data;
+  const q = await prisma.surveyQuestion.findFirst({ where: { id: d.questionId, survey: { tenantId: viewer.tenantId } }, include: { survey: true } });
+  if (!q) return { ok: false, message: "Question not found." };
+  if (q.survey.status !== "DRAFT") return { ok: false, message: "Questions are fixed once a survey is launched." };
+  const isChoice = q.type === "SINGLE_CHOICE" || q.type === "MULTI_CHOICE";
+  const options = isChoice ? (d.options ?? "").split("\n").map((x) => x.trim()).filter(Boolean) : [];
+  if (isChoice && options.length < 2) return { ok: false, message: "A choice question needs at least two options, one per line.", errors: { options: "At least two" } };
+  await prisma.surveyQuestion.update({ where: { id: q.id }, data: { prompt: d.prompt, driver: q.type === "RATING" ? d.driver : null, options, required: d.required } });
+  await writeAudit(viewer, { module: "SYSTEM", action: "UPDATE", entityType: "SurveyQuestion", entityId: q.id, summary: `Edited question ${q.sequence} of "${q.survey.title}"`, oldValue: { prompt: q.prompt, options: q.options, required: q.required }, newValue: { prompt: d.prompt, options, required: d.required } });
+  return done([`/engage/surveys/${q.surveyId}`], "Question updated.");
 }
 
 export async function removeQuestionAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -161,7 +214,10 @@ export async function removeQuestionAction(_prev: ActionState, formData: FormDat
     const rest = await tx.surveyQuestion.findMany({ where: { surveyId: q.surveyId }, orderBy: { sequence: "asc" } });
     for (const [i, r] of rest.entries()) await tx.surveyQuestion.update({ where: { id: r.id }, data: { sequence: -(i + 1) } });
     for (const [i, r] of rest.entries()) await tx.surveyQuestion.update({ where: { id: r.id }, data: { sequence: i + 1 } });
+    // A follow-up that hung off this question is now unconditional.
+    await tx.surveyQuestion.updateMany({ where: { surveyId: q.surveyId, showIfQuestionId: q.id }, data: { showIfQuestionId: null, showIfValues: [] } });
   });
+  await writeAudit(viewer, { module: "SYSTEM", action: "DELETE", entityType: "SurveyQuestion", entityId: q.id, summary: `Removed question "${q.prompt.slice(0, 60)}" from "${q.survey.title}"` });
   return done([`/engage/surveys/${q.surveyId}`], "Question removed.");
 }
 
@@ -171,20 +227,39 @@ export async function surveyOpAction(_prev: ActionState, formData: FormData): Pr
   const op = String(formData.get("op"));
   try {
     const s = await draftSurvey(viewer.tenantId, surveyId);
+    const paths = ["/engage/surveys", `/engage/surveys/${s.id}`];
     if (op === "launch") {
       if (s.status !== "DRAFT") return { ok: false, message: "Only a draft can be launched." };
+      if ((await engageSettings(viewer.tenantId)).surveyApproval && s.approvalStatus !== "APPROVED") {
+        return { ok: false, message: "Surveys need approval before they go live — submit it for approval." };
+      }
+      const r = await launchSurvey(viewer.tenantId, s.id, viewer.user.id);
+      return r.ok ? done(paths, r.message) : { ok: false, message: r.message };
+    }
+    if (op === "submit") {
+      if (s.status !== "DRAFT") return { ok: false, message: "Only a draft can be submitted." };
+      if (s.approvalStatus === "PENDING") return { ok: false, message: "It is already waiting for approval." };
       if (s.questions.length === 0) return { ok: false, message: "Add at least one question first." };
-      const audience = await surveyAudience(viewer.tenantId, s.departmentIds);
-      if (audience.length === 0) return { ok: false, message: "Nobody is in the chosen departments." };
-      await prisma.survey.update({ where: { id: s.id }, data: { status: "ACTIVE", launchedAt: new Date(), opensAt: new Date() } });
-      await notify({
-        tenantId: viewer.tenantId, userIds: audience.map((a) => a.userId), kind: "ENGAGE",
-        title: s.kind === "POLL" ? `New poll: ${s.title}` : `Your voice counts: ${s.title}`,
-        body: s.isAnonymous ? "Your answers are anonymous." : "Your answers will carry your name.",
-        link: `/engage/surveys/${s.id}`,
+      const wf = await startWorkflow({
+        tenantId: viewer.tenantId, entityType: "SURVEY_PUBLISH", entityId: s.id, title: `Publish ${s.kind === "POLL" ? "poll" : "survey"}: ${s.title}`,
+        details: `${s.questions.length} question(s)${s.isAnonymous ? ", anonymous" : ""}`, requesterUserId: viewer.user.id, subjectEmployeeId: viewer.employee?.id ?? null,
       });
-      await writeAudit(viewer, { module: "SYSTEM", action: "UPDATE", entityType: "Survey", entityId: s.id, summary: `Launched "${s.title}" to ${audience.length} people` });
-      return done(["/engage/surveys", `/engage/surveys/${s.id}`], `Launched to ${audience.length} people.`);
+      if (!wf.ok) return { ok: false, message: wf.message };
+      const after = await prisma.survey.findUniqueOrThrow({ where: { id: s.id }, select: { status: true } });
+      if (after.status === "DRAFT") await prisma.survey.update({ where: { id: s.id }, data: { approvalStatus: "PENDING", workflowRequestId: wf.requestId } });
+      else await prisma.survey.update({ where: { id: s.id }, data: { workflowRequestId: wf.requestId } });
+      await writeAudit(viewer, { module: "SYSTEM", action: "UPDATE", entityType: "Survey", entityId: s.id, summary: `Submitted "${s.title}" for approval` });
+      return done(paths, after.status === "ACTIVE" ? "Approved automatically and launched." : "Submitted for approval. It launches when approved.");
+    }
+    if (op === "remind") {
+      const r = await remindSurvey(viewer.tenantId, s.id, viewer.user.id);
+      return r.ok ? done(paths, r.message) : { ok: false, message: r.message };
+    }
+    if (op === "archive" || op === "unarchive") {
+      if (s.status !== "CLOSED") return { ok: false, message: "Only a closed survey can be archived." };
+      await prisma.survey.update({ where: { id: s.id }, data: { archivedAt: op === "archive" ? new Date() : null } });
+      await writeAudit(viewer, { module: "SYSTEM", action: "UPDATE", entityType: "Survey", entityId: s.id, summary: `${op === "archive" ? "Archived" : "Restored"} "${s.title}"` });
+      return done(paths, op === "archive" ? "Archived. Find it under Archived." : "Restored from the archive.");
     }
     if (op === "close") {
       if (s.status !== "ACTIVE") return { ok: false, message: "Only a live survey can be closed." };
@@ -194,7 +269,9 @@ export async function surveyOpAction(_prev: ActionState, formData: FormData): Pr
     }
     if (op === "delete") {
       if (s.status !== "DRAFT") return { ok: false, message: "A launched survey keeps its responses — close it instead." };
+      if (s.approvalStatus === "PENDING") return { ok: false, message: "It is waiting for approval — withdraw the request first." };
       await prisma.survey.delete({ where: { id: s.id } });
+      await writeAudit(viewer, { module: "SYSTEM", action: "DELETE", entityType: "Survey", entityId: s.id, summary: `Deleted draft "${s.title}"` });
       return done(["/engage/surveys"], "Draft deleted.");
     }
     return { ok: false, message: "Unknown operation." };
@@ -216,7 +293,7 @@ export async function submitSurveyAction(_prev: ActionState, formData: FormData)
   if (!s) return { ok: false, message: "Survey not found." };
   if (s.status !== "ACTIVE") return { ok: false, message: "This survey is not open for responses." };
   if (s.closesAt && s.closesAt.getTime() + 86_400_000 <= Date.now()) return { ok: false, message: "This survey has closed." };
-  const me = await prisma.employee.findUniqueOrThrow({ where: { id: viewer.employee.id }, select: { departmentId: true, status: true } });
+  const me = await prisma.employee.findUniqueOrThrow({ where: { id: viewer.employee.id }, select: { departmentId: true, locationId: true, status: true } });
   if (s.departmentIds.length && !s.departmentIds.includes(me.departmentId ?? "")) return { ok: false, message: "This survey is not addressed to you." };
 
   const submitted: SubmittedAnswer[] = s.questions.map((q) => {
@@ -230,7 +307,9 @@ export async function submitSurveyAction(_prev: ActionState, formData: FormData)
     }
     return { questionId: q.id, text: String(formData.get(key) ?? "") };
   });
-  const v = validateSubmission(s.questions as QuestionDef[], submitted);
+  // Branching: only the questions this respondent was actually asked are validated and stored.
+  const shown = visibleQuestionIds(s.questions, new Map(submitted.map((a) => [a.questionId, { score: a.score ?? null, choices: a.choices ?? [] }])));
+  const v = validateSubmission((s.questions as QuestionDef[]).filter((q) => shown.has(q.id)), submitted.filter((a) => shown.has(a.questionId)));
   if (!v.ok) {
     const errors = Object.fromEntries(Object.entries(v.errors).map(([k, m]) => [`q_${k}`, m]));
     return { ok: false, message: "Please answer the highlighted questions.", errors };
@@ -243,7 +322,7 @@ export async function submitSurveyAction(_prev: ActionState, formData: FormData)
       // that could be matched against the participant row.
       await tx.surveyResponse.create({
         data: {
-          id: randomUUID(), surveyId: s.id, employeeId: s.isAnonymous ? null : viewer.employee!.id, departmentId: me.departmentId,
+          id: randomUUID(), surveyId: s.id, employeeId: s.isAnonymous ? null : viewer.employee!.id, departmentId: me.departmentId, locationId: me.locationId,
           // An anonymous response is stamped with the day only, so its time cannot be matched to the participant row.
           submittedAt: s.isAnonymous ? new Date(new Date().toISOString().slice(0, 10)) : new Date(),
           answers: { create: v.answers.map((a) => ({ ...a, id: randomUUID() })) },

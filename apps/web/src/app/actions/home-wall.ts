@@ -4,7 +4,7 @@ import { unstable_rethrow } from "next/navigation";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import {
-  notify, extractMentions, sanitiseMentions, wallPlainText, validatePollOptions, wishWindowOpen, POLL_MAX_DAYS,
+  notify, extractMentions, sanitiseMentions, wallPlainText, validatePollOptions, wishWindowOpen, POLL_MAX_DAYS, creditPraisePoints,
 } from "@keka/services";
 import { requireViewer, can, type Viewer } from "@/lib/context";
 import { directoryWhere, nameOf } from "@/lib/directory";
@@ -283,6 +283,7 @@ export async function givePraisePostAction(_prev: ActionState, formData: FormDat
     for (const u of uploads) {
       await saveFile({ tenantId: viewer.tenantId, filename: u.name, mimeType: u.mimeType, data: u.data, relatedType: "WallPostAttachment", relatedId: post.id, uploadedBy: viewer.user.id });
     }
+    await creditPraisePoints(viewer.tenantId, await prisma.praise.findMany({ where: { tenantId: viewer.tenantId, wallPostId: post.id }, select: { id: true, toEmployeeId: true } }));
     const names = people.map(nameOf).join(", ");
     await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Praise", entityId: post.id, summary: `Praised ${names}${badge ? ` — ${badge.name}` : ""}` });
     await notify({

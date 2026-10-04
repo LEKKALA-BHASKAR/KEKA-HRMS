@@ -89,3 +89,5 @@ export * from "./time-leave-depth";
 export * from "./talent";
 export * from "./workforce-math";
 export * from "./workforce";
+export * from "./engage-depth-math";
+export * from "./engage-depth";

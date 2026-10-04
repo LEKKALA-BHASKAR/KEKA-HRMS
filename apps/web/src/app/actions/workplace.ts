@@ -5,6 +5,7 @@ import { safeRevalidate } from "@/lib/forms";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
+import { creditPraisePoints, creditPoints } from "@keka/services";
 import { assignAssetAction, acknowledgeAssetAction, recoverAssetAction, decideAssetRequestAction, requestAssetAction } from "./assets";
 
 const P = PERMISSIONS;
@@ -100,10 +101,16 @@ export async function publishAnnouncement(formData: FormData): Promise<void> {
 export async function archiveAnnouncement(formData: FormData): Promise<void> {
   const viewer = await requireAuth(P.ANNOUNCEMENT_MANAGE);
   const id = String(formData.get("id"));
-  await prisma.announcement.updateMany({
+  const res = await prisma.announcement.updateMany({
     where: { id, tenantId: viewer.tenantId },
     data: { status: "ARCHIVED" },
   });
+  if (res.count) {
+    await audit({
+      tenantId: viewer.tenantId, actorId: viewer.user.id, actorLabel: viewer.user.email,
+      module: "EMPLOYEE", action: "UPDATE", entityType: "Announcement", entityId: id, summary: "Archived an announcement",
+    });
+  }
   safeRevalidate("/announcements");
 }
 
@@ -118,6 +125,8 @@ export async function givePraise(formData: FormData): Promise<void> {
   const toEmployeeId = String(formData.get("toEmployeeId"));
   const message = String(formData.get("message") ?? "").trim();
   const badge = String(formData.get("badge") ?? "") || null;
+  // Private praise is seen only by the giver, the recipient and their manager; it is not posted to the wall.
+  const isPrivate = formData.get("private") === "on";
 
   if (!message) throw new Error("Write a message");
   if (toEmployeeId === viewer.employee.id) {
@@ -136,20 +145,26 @@ export async function givePraise(formData: FormData): Promise<void> {
     ? await prisma.praiseBadge.findFirst({ where: { tenantId: viewer.tenantId, name: badge }, select: { id: true } })
     : null;
   const employeeId = viewer.employee.id;
-  await prisma.$transaction(async (tx) => {
-    const post = await tx.wallPost.create({
+  const praise = await prisma.$transaction(async (tx) => {
+    const post = isPrivate ? null : await tx.wallPost.create({
       data: { tenantId: viewer.tenantId, kind: "PRAISE", authorId: employeeId, body: message },
     });
-    await tx.praise.create({
+    return tx.praise.create({
       data: {
         tenantId: viewer.tenantId,
         fromEmployeeId: employeeId,
-        toEmployeeId, badge, badgeId: badgeRef?.id ?? null, message, isPublic: true, wallPostId: post.id,
+        toEmployeeId, badge, badgeId: badgeRef?.id ?? null, message, isPublic: !isPrivate, wallPostId: post?.id ?? null,
       },
     });
   });
+  await creditPraisePoints(viewer.tenantId, [praise]);
+  await audit({
+    tenantId: viewer.tenantId, actorId: viewer.user.id, actorLabel: viewer.user.email,
+    module: "EMPLOYEE", action: "CREATE", entityType: "Praise", entityId: praise.id,
+    summary: `${isPrivate ? "Privately praised" : "Praised"} a colleague${badge ? ` — ${badge}` : ""}`,
+  });
 
-  safeRevalidate("/awards", "/", "/wall");
+  safeRevalidate("/awards", "/", "/wall", "/engage/rewards");
 }
 
 export async function grantAward(formData: FormData): Promise<void> {
@@ -174,10 +189,14 @@ export async function grantAward(formData: FormData): Promise<void> {
       awardTypeId, employeeId,
       period, awardedOn: new Date(), citation,
       cashAmount: awardType.cashAmount,
+      points: awardType.points ?? null,
       nominatedBy: viewer.employee?.id ?? null,
       approvedBy: viewer.employee?.id ?? null,
     },
   });
+  if (awardType.points && awardType.points > 0) {
+    await creditPoints(viewer.tenantId, { employeeId, delta: awardType.points, source: "AWARD", sourceId: award.id, note: `${awardType.name} award`, createdBy: viewer.user.id });
+  }
 
   await audit({
     tenantId: viewer.tenantId, actorId: viewer.user.id, actorLabel: viewer.user.email,

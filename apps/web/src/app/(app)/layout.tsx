@@ -6,6 +6,7 @@ import { requireViewer, can } from "@/lib/context";
 import { AppShell } from "@/components/shell";
 import { buildNav, quickActions, settingsLink } from "@/lib/nav";
 import { NavProgress } from "@/components/nav-progress";
+import { EmergencyBanner } from "@/components/emergency-banner";
 import { Suspense } from "react";
 import { scopedEmployeeIds, inScope, scopedEmployeeWhere, timesheetsToApproveWhere } from "@/lib/scope";
 
@@ -171,6 +172,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           employeeId: viewer.employee?.id ?? null, photoUrl: viewer.employee?.photoUrl ?? null,
         }}
       >
+        <EmergencyBanner viewer={viewer} />
         {children}
       </AppShell>
     </>
