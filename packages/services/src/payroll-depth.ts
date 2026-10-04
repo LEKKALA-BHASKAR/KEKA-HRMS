@@ -7,7 +7,7 @@ import { adjustBalance } from "./time";
 import {
   monthBounds, splitDeduction, registerLayout, registerColumns, employeeVariance, componentVariance, grossReconciliation, runIntegrity,
   journalVoucher, statutoryBonus, bonusConfigIssues, gratuityConfigIssues, parseDeclarationCsv, contractorTds, form26qCsv, quarterRange,
-  projectPayroll, nextMonths, scenarioCost, minimumWageCheck, coverageExceptions, ptLwfStatus, toCsv,
+  projectPayroll, nextMonths, scenarioCost, minimumWageCheck, coverageExceptions, ptLwfStatus, gridToCsv,
   effectiveWindowOverride, applyWindowOverride,
   type PeriodLine, type BonusConfig, type RegisterColumn, type WindowOverride, type WindowView,
 } from "./payroll-depth-math";
@@ -293,7 +293,7 @@ export function registerCsv(d: RegisterData): string {
   const head = ["Month", ...d.columns.map((c) => c.label)];
   const body = d.rows.map((r) => [month, ...d.columns.map((c) => (c.numeric && typeof r.cells[c.key] === "number" ? (r.cells[c.key] as number).toFixed(2) : r.cells[c.key]))]);
   const total = ["TOTAL", ...d.columns.map((c, i) => (i === 0 ? `${d.rows.length} employees` : d.totals[c.key] !== undefined ? d.totals[c.key].toFixed(2) : ""))];
-  return toCsv([head, ...body, total]);
+  return gridToCsv([head, ...body, total]);
 }
 
 // ---------------------------------------------------------------------------
@@ -343,9 +343,9 @@ export async function varianceReport(tenantId: string, runId: string) {
 
 export function varianceCsv(v: NonNullable<Awaited<ReturnType<typeof varianceReport>>>, kind: "employees" | "components" | "reconciliation"): string {
   const pct = (p: number | null) => (p === null ? "new" : `${(p * 100).toFixed(1)}%`);
-  if (kind === "components") return toCsv([["Component", "Type", "Previous", "Current", "Change", "% change"], ...v.components.map((c) => [c.name, c.type, c.prev.toFixed(2), c.curr.toFixed(2), c.change.toFixed(2), pct(c.pct)])]);
-  if (kind === "reconciliation") return toCsv([["Step", "Employees", "Amount"], ...v.reconciliation.steps.map((s) => [s.label, s.count, s.amount.toFixed(2)]), ["Unexplained difference", "", v.reconciliation.difference.toFixed(2)], [], ["Integrity check", "Employees", "Difference"], ...v.integrity.map((s) => [s.label, s.count, s.amount.toFixed(2)])]);
-  return toCsv([
+  if (kind === "components") return gridToCsv([["Component", "Type", "Previous", "Current", "Change", "% change"], ...v.components.map((c) => [c.name, c.type, c.prev.toFixed(2), c.curr.toFixed(2), c.change.toFixed(2), pct(c.pct)])]);
+  if (kind === "reconciliation") return gridToCsv([["Step", "Employees", "Amount"], ...v.reconciliation.steps.map((s) => [s.label, s.count, s.amount.toFixed(2)]), ["Unexplained difference", "", v.reconciliation.difference.toFixed(2)], [], ["Integrity check", "Employees", "Difference"], ...v.integrity.map((s) => [s.label, s.count, s.amount.toFixed(2)])]);
+  return gridToCsv([
     ["Employee Number", "Name", "Department", "Status", "Previous gross", "Current gross", "Gross change", "Gross % change", "Previous net", "Current net", "Net change", "Net % change", "Main movements"],
     ...v.employees.map((e) => [e.employeeNumber, e.name, e.department, e.status, e.prevGross.toFixed(2), e.currGross.toFixed(2), e.grossChange.toFixed(2), pct(e.grossPct), e.prevNet.toFixed(2), e.currNet.toFixed(2), e.netChange.toFixed(2), pct(e.netPct), e.movers.slice(0, 4).map((m) => `${m.name} ${m.change >= 0 ? "+" : ""}${m.change.toFixed(0)}`).join("; ")]),
   ]);
@@ -382,7 +382,7 @@ export async function exportJournalVoucher(tenantId: string, runId: string, opts
   });
   const date = run.periodEnd.toISOString().slice(0, 10);
   const voucherNo = `PAY-${run.year}${String(run.month).padStart(2, "0")}-V${version}`;
-  const csv = toCsv([
+  const csv = gridToCsv([
     ["Voucher date", "Voucher no.", "Account code", "Account name", "Cost centre", "Debit", "Credit", "Narration"],
     ...jv.rows.map((r) => [date, voucherNo, r.accountCode, r.accountName, r.costCenter, r.debit ? r.debit.toFixed(2) : "", r.credit ? r.credit.toFixed(2) : "", `${r.narration} — ${payPeriodLabel(run.year, run.month)} payroll, ${run.payGroup.name}`]),
     ["", "", "", "Total", "", jv.debit.toFixed(2), jv.credit.toFixed(2), jv.balanced ? "Balanced" : "NOT BALANCED"],
@@ -421,7 +421,7 @@ export async function statutoryBonusReport(tenantId: string, fy: number) {
 }
 
 export function statutoryBonusCsv(rep: Awaited<ReturnType<typeof statutoryBonusReport>>, fy: number): string {
-  return toCsv([
+  return gridToCsv([
     [`Statutory bonus — accounting year ${fy}-${String((fy + 1) % 100).padStart(2, "0")} at ${rep.config.percent}%`],
     ["Employee Number", "Name", "Department", "Eligible", "Reason", "Days worked", "Eligible months", "Bonus wage", `Bonus at ${rep.config.percent}%`, "Bonus at 20%"],
     ...rep.rows.map((r) => [r.employeeNumber, r.name, r.department, r.eligible ? "Yes" : "No", r.reason ?? "", r.daysWorked, r.eligibleMonths, r.bonusWage.toFixed(2), r.bonus.toFixed(2), r.maxBonus.toFixed(2)]),
@@ -770,7 +770,7 @@ export async function complianceTable(tenantId: string, kind: ComplianceKind, ye
 }
 
 export function complianceCsv(t: ComplianceTable): string {
-  return toCsv([t.columns.map((c) => c.label), ...t.rows.map((r) => t.columns.map((c) => (c.numeric && typeof r[c.key] === "number" ? (r[c.key] as number).toFixed(2) : r[c.key])))]);
+  return gridToCsv([t.columns.map((c) => c.label), ...t.rows.map((r) => t.columns.map((c) => (c.numeric && typeof r[c.key] === "number" ? (r[c.key] as number).toFixed(2) : r[c.key])))]);
 }
 
 export const currentFy = (d = new Date(), fyStartMonth = 4) => fyStartYear(d, fyStartMonth);

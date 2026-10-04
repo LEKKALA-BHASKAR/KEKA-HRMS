@@ -4,7 +4,7 @@ import { calculatePayroll, calculateGratuity, resolveStructure, type StructureCo
 import {
   activeOverrides, applyComponentOverrides, monthBounds, wageTypeOf, unitsFromAttendance, splitDeduction,
   registerLayout, registerColumns, DEFAULT_REGISTER_LAYOUT, employeeVariance, componentVariance, grossReconciliation, runIntegrity,
-  journalVoucher, toCsv, statutoryBonus, bonusConfigIssues, gratuityConfigIssues, effectiveWindowOverride, applyWindowOverride,
+  journalVoucher, gridToCsv, statutoryBonus, bonusConfigIssues, gratuityConfigIssues, effectiveWindowOverride, applyWindowOverride,
   parseDeclarationCsv, contractorTds, defaultContractorRate, form26qCsv, quarterRange, quarterOfMonth, resolveLoanPolicy,
   projectPayroll, nextMonths, scenarioCost, minimumWageCheck, coverageExceptions, ptLwfStatus, variancePct, type PeriodLine,
 } from "../src/payroll-depth-math";
@@ -180,7 +180,7 @@ describe("Journal voucher", () => {
     assert.equal(jv.rows.find((r) => r.accountCode === "5100")!.debit, 30000);
   });
   test("CSV escapes and starts with a BOM for spreadsheets", () => {
-    const csv = toCsv([["a,b", 'say "hi"']]);
+    const csv = gridToCsv([["a,b", 'say "hi"']]);
     assert.ok(csv.startsWith("﻿"));
     assert.ok(csv.includes('"a,b","say ""hi"""'));
   });

@@ -327,7 +327,7 @@ export function journalVoucher(groups: Array<{ costCenter: string; lines: PayLin
 
 const csvCell = (v: unknown) => { const s = String(v ?? ""); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 /** CSV with a BOM, so spreadsheet tools (Excel included) open it with the right encoding. */
-export function toCsv(rows: unknown[][]): string {
+export function gridToCsv(rows: unknown[][]): string {
   return "﻿" + rows.map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
 }
 
@@ -502,7 +502,7 @@ export function form26qCsv(meta: { deductor: string; tan: string | null; fy: num
     [],
     ["This is the quarter's data for the Return Preparation Utility, not an FVU file. Validate the prepared return with the official FVU before upload."],
   ];
-  return { csv: toCsv(grid), issues: [...new Set(issues)], total, tds };
+  return { csv: gridToCsv(grid), issues: [...new Set(issues)], total, tds };
 }
 
 // ---------------------------------------------------------------------------
