@@ -57,7 +57,7 @@ export default async function FilingsPage({ searchParams }: { searchParams: Prom
   return (
     <>
       <PageHead title="Statutory filings" subtitle={`Files for the PF, ESIC and TRACES portals, from finalised payroll · ${fyLabel(fy)}`}
-        actions={<div className="row gap-2"><Link className="btn sm" href={`/payroll/filings?fy=${fy - 1}`}>‹ {fyLabel(fy - 1)}</Link><Link className="btn sm" href={`/payroll/filings?fy=${fy + 1}`}>{fyLabel(fy + 1)} ›</Link></div>} />
+        actions={<div className="row gap-2"><Link className="btn sm" href={`/payroll/filings?fy=${fy - 1}`}>‹ {fyLabel(fy - 1)}</Link><Link className="btn sm" href={`/payroll/filings?fy=${fy + 1}`}>{fyLabel(fy + 1)} ›</Link><Link className="btn sm" href={`/payroll/filings/26q?fy=${fy}`}>Contractor TDS (26Q)</Link></div>} />
       <Callout tone="info" title="How this works">
         Generate a file, upload it on the portal, then record the acknowledgement here. Only finalised months appear;
         a filed return is locked — corrections are revised returns on the portal.

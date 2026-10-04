@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
-import { helpdeskScope, hasHelpdeskScope, helpdeskScopeWhere, TICKET_ACTIVE_STATUSES } from "@keka/services";
+import { helpdeskScope, hasHelpdeskScope, helpdeskScopeWhere, TICKET_ACTIVE_STATUSES, isMyPayHidden } from "@keka/services";
 import { requireViewer, can } from "@/lib/context";
 import { AppShell } from "@/components/shell";
 import { buildNav, quickActions, settingsLink } from "@/lib/nav";
@@ -153,6 +153,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     isHelpdeskAgent: hasHelpdeskScope(hdScope),
     hasExit: !!myExit, managesProject: managedProjects > 0,
     welcomeDot: !!myProfile && myProfile.profileCompletion < 100,
+    hideMyPay: await isMyPayHidden(viewer.tenantId),
   });
 
   const name = viewer.employee?.displayName ?? viewer.user.email;

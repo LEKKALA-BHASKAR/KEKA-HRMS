@@ -77,6 +77,8 @@ export interface NavOptions {
   sharedBoards?: number;
   /** The Welcome page still has something for the viewer to fill in. */
   welcomeDot?: boolean;
+  /** Payroll settings hide the My Pay page from employees. */
+  hideMyPay?: boolean;
 }
 
 const path = (href: string) => href.split("?")[0];
@@ -142,7 +144,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
       key: "finances", label: "My Finances", icon: "finance", href: "/finances",
       tabs: [
         { label: "Summary", href: "/finances", paths: ["/finances"] },
-        { label: "My Pay", href: "/finances/pay", paths: ["/finances/pay", "/me/pay"] },
+        ...(opts.hideMyPay ? [] : [{ label: "My Pay", href: "/finances/pay", paths: ["/finances/pay", "/me/pay"] }]),
         { label: "Manage Tax", href: "/finances/tax", paths: ["/finances/tax", "/me/tax"] },
         { label: "Loans", href: "/finances/loans", paths: ["/finances/loans", "/me/loans"] },
       ],
@@ -270,6 +272,12 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     can(viewer, P.PAYROLL_RUN) && { label: "Perks", href: "/payroll/perks" },
     can(viewer, P.LOAN_MANAGE) && { label: "Loans", href: "/payroll/loans" },
     can(viewer, P.TAX_DECLARATION_APPROVE) && { label: "Tax Proofs", href: "/payroll/tax-proofs" },
+    can(viewer, P.TAX_DECLARATION_APPROVE) && { label: "Tax Admin", href: "/payroll/tax-admin" },
+    can(viewer, P.SALARY_REVISE) && { label: "Salary Overrides", href: "/payroll/salary-overrides" },
+    can(viewer, P.PAYROLL_VIEW) && { label: "Variance", href: "/payroll/variance" },
+    can(viewer, P.PAYROLL_VIEW) && { label: "Budget", href: "/payroll/budget" },
+    can(viewer, P.STATUTORY_MANAGE) && { label: "Compliance", href: "/payroll/compliance", paths: ["/payroll/compliance", "/payroll/statutory-bonus"] },
+    can(viewer, P.PAYROLL_SETTINGS) && { label: "Payroll Settings", href: "/payroll/settings" },
     can(viewer, P.LEDGER_VIEW) && { label: "Accounting", href: "/accounting" },
   ]);
   if (payroll.length) sections.push({ key: "payroll", label: "Payroll", icon: "payroll", href: payroll[0].href, tabs: payroll, admin: true });

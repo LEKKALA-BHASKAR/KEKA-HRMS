@@ -75,6 +75,8 @@ model PayGroup {
   lwfRegistrations  LwfStateRegistration[]
   approvalRules     PayrollApprovalRule[]
 
+  loanPolicyAssignments LoanPolicyAssignment[]
+
   @@unique([tenantId, name])
   @@index([tenantId])
   @@index([legalEntityId])
@@ -167,6 +169,8 @@ model SalaryComponent {
   claims         ComponentClaim[]
   fbpLines       FbpDeclarationLine[]
   perkDetail     Perk?
+
+  componentOverrides EmployeeComponentOverride[]
 
   @@unique([tenantId, code])
   @@index([tenantId, type])
@@ -458,6 +462,9 @@ model PayrollRunEmployee {
   carriedLopDays    Decimal  @default(0) @db.Decimal(9, 2)
   /// For daily, hourly and per-unit staff.
   payableUnits    Decimal? @db.Decimal(12, 2)
+  /// Units the run worked out from attendance (days or hours) for daily,
+  /// hourly and piece-rate staff; payableUnits, when set, overrides it.
+  autoPayableUnits  Decimal? @db.Decimal(12, 2)
 
   // --- Computed money ---
   grossEarnings   Decimal @default(0) @db.Decimal(18, 2)

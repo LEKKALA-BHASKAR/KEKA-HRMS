@@ -8,6 +8,9 @@ import {
 import type { Viewer } from "@/lib/context";
 import { bonusesForRun } from "@keka/services";
 import { BonusDecision, ClaimDecision } from "../../_forms/bonuses";
+import { DepthForm } from "../../_forms/depth";
+import { decideRunLeaveAction, deductNoAttendanceAction, setPayableUnitsAction } from "@/app/actions/payroll-depth";
+import { wageTypeOf, WAGE_LINE_LABEL } from "./wage-types";
 
 /**
  * The six run steps.
@@ -41,6 +44,7 @@ type LineLike = {
   totalDays: number;
   payableDays: unknown; lopDays: unknown;
   attendanceLopDays?: unknown; carriedLopDays?: unknown; lopReversalDays?: unknown;
+  payableUnits?: unknown; autoPayableUnits?: unknown;
   grossEarnings: unknown; totalDeductions: unknown; netPay: unknown; employerCost: unknown;
   pfWage: unknown; pfEmployee: unknown; pfEmployer: unknown; epsEmployer: unknown; vpf: unknown;
   esiGross: unknown; esiEmployee: unknown; esiEmployer: unknown;
@@ -86,6 +90,18 @@ const PAY_ACTIONS = [
 
 export async function Step1({ run, lines, editable }: StepProps) {
   const employeeIds = lines.map((l) => l.employeeId);
+
+  const runMeta = await prisma.payrollRun.findUnique({ where: { id: run.id }, select: { tenantId: true } });
+  const [paidLeaveTypes, revisions] = await Promise.all([
+    prisma.leaveType.findMany({ where: { tenantId: runMeta?.tenantId ?? "", isPaid: true, isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.salaryRevision.findMany({
+      where: { employeeId: { in: employeeIds }, status: "APPLIED", effectiveFrom: { lte: run.periodEnd } },
+      orderBy: { effectiveFrom: "desc" }, distinct: ["employeeId"],
+      select: { employeeId: true, remunerationType: true, rate: true, structure: { select: { type: true } } },
+    }),
+  ]);
+  const wageByEmp = new Map(revisions.map((r) => [r.employeeId, { type: wageTypeOf({ remunerationType: r.remunerationType, rate: r.rate === null ? null : Number(r.rate), structureType: r.structure?.type ?? null }), rate: Number(r.rate ?? 0) }]));
+  const unitRows = lines.filter((l) => wageByEmp.get(l.employeeId)?.type || l.payableUnits !== null && l.payableUnits !== undefined);
 
   const [pendingLeave, adjustments, attendanceGaps] = await Promise.all([
     prisma.leaveRequest.findMany({
@@ -176,7 +192,7 @@ export async function Step1({ run, lines, editable }: StepProps) {
           <div className="table-wrap">
             <table className="data">
               <thead>
-                <tr><th>Employee</th><th>Leave type</th><th>From</th><th>To</th><th className="num">Days</th><th>Paid</th></tr>
+                <tr><th>Employee</th><th>Leave type</th><th>From</th><th>To</th><th className="num">Days</th><th>Paid</th>{editable ? <th>Decide</th> : null}</tr>
               </thead>
               <tbody>
                 {pendingLeave.map((r) => (
@@ -191,6 +207,16 @@ export async function Step1({ run, lines, editable }: StepProps) {
                         ? <Badge tone="success">Paid</Badge>
                         : <Badge tone="danger">Unpaid — creates LOP</Badge>}
                     </td>
+                    {editable ? (
+                      <td>
+                        <div className="row gap-2 wrap">
+                          <DepthForm action={decideRunLeaveAction} inline submitLabel="Approve" hidden={{ runId: run.id, requestId: r.id, decision: "approve" }} />
+                          <DepthForm action={decideRunLeaveAction} inline variant="default" submitLabel="Reject" hidden={{ runId: run.id, requestId: r.id, decision: "reject" }}>
+                            <input className="input" name="note" placeholder="Reason" required style={{ width: 120, padding: "4px 8px", fontSize: 12.5 }} />
+                          </DepthForm>
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
@@ -232,6 +258,23 @@ export async function Step1({ run, lines, editable }: StepProps) {
                     <td className="num">{l.totalDays}</td>
                     <td className="num">
                       {gaps > 0 ? <Badge tone="warning">{gaps}</Badge> : <span className="subtle">0</span>}
+                      {gaps > 0 && editable ? (
+                        <details style={{ marginTop: 4, textAlign: "left" }}>
+                          <summary className="text-xs" style={{ cursor: "pointer" }}>Deduct leave</summary>
+                          <DepthForm action={deductNoAttendanceAction} inline submitLabel="Deduct" hidden={{ runId: run.id, employeeId: l.employeeId }}
+                            confirmText={`Deduct ${gaps} no-attendance day(s) for ${empName(l.employee)}?`}>
+                            <select className="select" name="mode" defaultValue={paidLeaveTypes.length ? "LEAVE" : "LOP"} style={{ width: 120, padding: "4px 8px", fontSize: 12.5 }}>
+                              {paidLeaveTypes.length ? <option value="LEAVE">From leave</option> : null}
+                              <option value="LOP">As LOP</option>
+                            </select>
+                            {paidLeaveTypes.length ? (
+                              <select className="select" name="leaveTypeId" style={{ width: 140, padding: "4px 8px", fontSize: 12.5 }}>
+                                {paidLeaveTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                              </select>
+                            ) : null}
+                          </DepthForm>
+                        </details>
+                      ) : null}
                     </td>
                     <td className="num">{l.attendanceLopDays === null || l.attendanceLopDays === undefined ? "—" : n(l.attendanceLopDays).toFixed(2)}</td>
                     <td className="num">{n(l.carriedLopDays) ? n(l.carriedLopDays).toFixed(2) : <span className="subtle">0</span>}</td>
@@ -264,6 +307,47 @@ export async function Step1({ run, lines, editable }: StepProps) {
             </tbody>
           </table>
         </div>
+      </Card>
+
+      <Card
+        title={`Daily wages & payable units (${unitRows.length})`}
+        description="Daily-wage, hourly and piece-rate staff are paid rate × units. Days and hours come from attendance in the run's window; enter units here to override them (blank goes back to attendance)."
+        tight
+      >
+        {unitRows.length === 0 ? (
+          <Empty title="No one is paid by units this month">Set a salary revision's remuneration type to daily, hourly or piece rate, with a rate, to pay by units.</Empty>
+        ) : (
+          <div className="table-wrap">
+            <table className="data">
+              <thead><tr><th>Employee</th><th>Paid by</th><th className="num">Rate</th><th className="num">From attendance</th><th className="num">Units paid</th><th className="num">Earnings</th><th>Payable units</th></tr></thead>
+              <tbody>
+                {unitRows.map((l) => {
+                  const w = wageByEmp.get(l.employeeId);
+                  const manual = l.payableUnits === null || l.payableUnits === undefined ? null : n(l.payableUnits);
+                  const auto = l.autoPayableUnits === null || l.autoPayableUnits === undefined ? null : n(l.autoPayableUnits);
+                  const earnings = l.lines.filter((x) => x.type === "EARNING").reduce((s, x) => s + n(x.amount), 0);
+                  return (
+                    <tr key={l.id}>
+                      <td><Person name={empName(l.employee)} meta={l.employee.employeeNumber} /></td>
+                      <td>{w?.type ? WAGE_LINE_LABEL[w.type] : <span className="subtle">Monthly</span>}</td>
+                      <td className="num">{w?.rate ? <Money value={w.rate} /> : "—"}</td>
+                      <td className="num">{auto === null ? "—" : auto.toFixed(2)}</td>
+                      <td className="num strong">{(manual ?? auto ?? 0).toFixed(2)}{manual !== null ? <Badge tone="info">manual</Badge> : null}</td>
+                      <td className="num"><Money value={earnings} /></td>
+                      <td>
+                        {editable ? (
+                          <DepthForm action={setPayableUnitsAction} inline submitLabel="Set" variant="default" hidden={{ runId: run.id, employeeId: l.employeeId }}>
+                            <input className="input num" name="units" type="number" step="0.25" min={0} defaultValue={manual ?? ""} placeholder={auto === null ? "Units" : String(auto)} style={{ width: 90, padding: "4px 8px", fontSize: 12.5 }} />
+                          </DepthForm>
+                        ) : (manual ?? "—")}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       {withLop.length > 0 ? (

@@ -1,3 +1,4 @@
+import { resolveLoanPolicy } from "./payroll-depth-math";
 import { prisma, Prisma } from "@keka/db";
 import { buildLoanSchedule, resolveStructure, type InterestTypeLiteral } from "@keka/payroll";
 import { notify, usersWithPermission } from "./lifecycle";
@@ -29,14 +30,22 @@ export async function checkLoanEligibility(employeeId: string, categoryId: strin
   const emp = await prisma.employee.findUniqueOrThrow({
     where: { id: employeeId },
     select: {
-      tenantId: true, status: true, dateOfJoining: true, exitRecord: { select: { status: true } },
+      tenantId: true, status: true, dateOfJoining: true, payGroupId: true, exitRecord: { select: { status: true } },
       salaryRevisions: { where: { status: "APPLIED" }, orderBy: { effectiveFrom: "desc" }, take: 1, select: { annualCtc: true } },
     },
   });
-  const policy = await prisma.loanPolicy.findFirst({
+  // Several policies may cover a category: the one assigned to the employee
+  // wins, then their pay group's, then a policy assigned to no one.
+  const candidates = await prisma.loanPolicy.findMany({
     where: { tenantId: emp.tenantId, isActive: true, rules: { some: { categoryId } } },
     include: { rules: { where: { categoryId } } },
+    orderBy: { createdAt: "asc" },
   });
+  const assignments = candidates.length
+    ? await prisma.loanPolicyAssignment.findMany({ where: { tenantId: emp.tenantId, policyId: { in: candidates.map((c) => c.id) } }, select: { policyId: true, employeeId: true, payGroupId: true } })
+    : [];
+  const chosen = resolveLoanPolicy({ id: employeeId, payGroupId: emp.payGroupId }, assignments, candidates.map((c) => c.id));
+  const policy = candidates.find((c) => c.id === chosen) ?? null;
   const rule = policy?.rules[0];
   const reasons: string[] = [];
   const ctc = Number(emp.salaryRevisions[0]?.annualCtc ?? 0);

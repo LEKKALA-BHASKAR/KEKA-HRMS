@@ -1,0 +1,225 @@
+// ============================================================================
+//  BooS-HR — Payroll depth (India): per-employee component overrides, payroll
+//  preferences (Hide My Pay, gratuity and statutory bonus settings), tax
+//  window overrides, contractor TDS (26Q), loan policy assignment,
+//  compensation budget scenarios and state minimum wages.
+// ============================================================================
+
+/// A fixed monthly amount for one salary component for one employee, from a
+/// month onward. The payroll engine uses it in place of the structure's
+/// formula (or adds the component when the structure lacks it). Formulas that
+/// reference the component follow the overridden value.
+model EmployeeComponentOverride {
+  id          String          @id @default(cuid())
+  tenantId    String
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  componentId String
+  component   SalaryComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
+
+  monthlyAmount Decimal   @db.Decimal(18, 2)
+  /// First day of the first month it applies to.
+  effectiveFrom DateTime
+  /// Last day of the last month it applies to; null runs on.
+  effectiveTo   DateTime?
+  note          String?
+
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([employeeId, effectiveFrom])
+  @@map("employee_component_overrides")
+}
+
+/// Tenant-wide payroll preferences that have no home on a pay group.
+model PayrollPreference {
+  id       String @id @default(cuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Hide the My Pay page (salary, payslips) from employees' self-service.
+  hideMyPayPage Boolean @default(false)
+
+  // --- Gratuity (Payment of Gratuity Act, 1972) ---
+  /// Years of continuous service for eligibility; 4.8 models the
+  /// "4 years 240 days" reading some courts allow.
+  gratuityEligibilityYears Decimal @default(5) @db.Decimal(5, 2)
+  /// Days' wages per completed year (15 under the Act).
+  gratuityDaysPerYear      Int     @default(15)
+  /// Monthly divisor (26 under the Act; 30 when not covered).
+  gratuityDivisor          Int     @default(26)
+  /// Most that is paid, whatever the formula gives.
+  gratuityCap              Decimal @default(2000000) @db.Decimal(18, 2)
+  /// Component codes that make up the gratuity wage.
+  gratuityWageCodes        Json?
+
+  // --- Statutory bonus (Payment of Bonus Act, 1965) ---
+  bonusEnabled            Boolean  @default(true)
+  /// Employees earning above this monthly wage are not eligible.
+  bonusEligibilityCeiling Decimal  @default(21000) @db.Decimal(18, 2)
+  /// The wage is capped at this (or the minimum wage, if higher).
+  bonusCalculationCeiling Decimal  @default(7000) @db.Decimal(18, 2)
+  /// Scheduled minimum wage for the employment; replaces the ceiling when higher.
+  bonusMinimumWage        Decimal? @db.Decimal(18, 2)
+  /// 8.33 to 20.
+  bonusPercent            Decimal  @default(8.33) @db.Decimal(5, 2)
+  /// Minimum days worked in the year to qualify.
+  bonusMinWorkingDays     Int      @default(30)
+  /// Component codes that make up the bonus wage.
+  bonusWageCodes          Json?
+
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+
+  @@map("payroll_preferences")
+}
+
+enum TaxWindowKind {
+  DECLARATION
+  PROOF
+}
+
+enum TaxWindowState {
+  /// Opened regardless of the pay group's window, until a date.
+  OPEN
+  /// Closed regardless of the pay group's window.
+  LOCKED
+}
+
+/// Lock or reopen the declaration or proof window for one employee, or for
+/// everyone (employeeId null). An employee's own row wins over the all-row.
+model TaxWindowOverride {
+  id          String         @id @default(cuid())
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String?
+  employee    Employee?      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  fyStartYear Int
+  kind        TaxWindowKind
+  state       TaxWindowState
+  /// For OPEN: the last day the window stays open.
+  until       DateTime?
+  note        String?
+
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, fyStartYear, kind])
+  @@index([employeeId])
+  @@map("tax_window_overrides")
+}
+
+/// A contractor or professional paid outside salary, whose TDS goes on 26Q.
+model TdsContractor {
+  id           String  @id @default(cuid())
+  tenantId     String
+  tenant       Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  pan          String?
+  /// 194C, 194J, 194H, 194I.
+  section      String  @default("194C")
+  /// Default TDS rate, percent.
+  tdsRate      Decimal @default(1) @db.Decimal(5, 2)
+  /// Individual / HUF (194C 1%) or other (194C 2%).
+  deducteeType String  @default("INDIVIDUAL")
+  email        String?
+  isActive     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  payments ContractorPayment[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("tds_contractors")
+}
+
+model ContractorPayment {
+  id           String        @id @default(cuid())
+  tenantId     String
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contractorId String
+  contractor   TdsContractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+
+  paymentDate   DateTime
+  amount        Decimal   @db.Decimal(18, 2)
+  section       String
+  tdsRate       Decimal   @db.Decimal(5, 2)
+  tdsAmount     Decimal   @db.Decimal(18, 2)
+  invoiceNumber String?
+  /// Deposit details, once paid to the government.
+  bsrCode       String?
+  challanNumber String?
+  depositDate   DateTime?
+  note          String?
+
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, paymentDate])
+  @@index([contractorId])
+  @@map("contractor_payments")
+}
+
+/// Which loan policy applies to whom: an employee row wins over a pay-group
+/// row, which wins over a policy assigned to no one (the tenant default).
+model LoanPolicyAssignment {
+  id         String     @id @default(cuid())
+  tenantId   String
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  policyId   String
+  policy     LoanPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  payGroupId String?
+  payGroup   PayGroup?  @relation(fields: [payGroupId], references: [id], onDelete: Cascade)
+  employeeId String?
+  employee   Employee?  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([policyId])
+  @@map("loan_policy_assignments")
+}
+
+/// An increment scenario: a default % and per-department %s, priced against
+/// current salaries.
+model CompBudgetScenario {
+  id                 String  @id @default(cuid())
+  tenantId           String
+  tenant             Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name               String
+  defaultPercent     Decimal @default(0) @db.Decimal(6, 2)
+  /// { [departmentId]: percent }
+  departmentPercents Json?
+  /// Month the increments take effect, for the in-year cost.
+  effectiveYear      Int
+  effectiveMonth     Int
+
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("comp_budget_scenarios")
+}
+
+/// Notified minimum wage per state and skill category, for the compliance check.
+model MinimumWageRate {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  stateCode     String
+  /// UNSKILLED, SEMI_SKILLED, SKILLED, HIGHLY_SKILLED.
+  category      String   @default("UNSKILLED")
+  monthlyAmount Decimal  @db.Decimal(18, 2)
+  effectiveFrom DateTime
+
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, stateCode, category, effectiveFrom])
+  @@index([tenantId, stateCode])
+  @@map("minimum_wage_rates")
+}

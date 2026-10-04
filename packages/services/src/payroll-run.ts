@@ -9,6 +9,7 @@ import { cappedDeductions } from "./declarations";
 import { claimEntitlement, previousIncomeApplies } from "./finances-math";
 import { fbpCarveSpecs, unclaimedFbp } from "./fbp-math";
 import { attendanceWindow, lopCarry, lopDayRate, type PriorCount } from "./payroll-pilot-math";
+import { activeOverrides, applyComponentOverrides, unitsFromAttendance, wageTypeOf } from "./payroll-depth-math";
 
 /**
  * The bridge between the database and the pure payroll engine.
@@ -216,6 +217,10 @@ function byEmployeeId<T extends { employeeId: string }>(rows: T[]): Map<string, 
 }
 
 type EligibleEmployee = Awaited<ReturnType<typeof eligibleEmployees>>[number];
+
+function revisionView(revision: EligibleEmployee["salaryRevisions"][number] | undefined) {
+  return revision ? { remunerationType: revision.remunerationType, rate: revision.rate === null ? null : Number(revision.rate), structureType: revision.structure?.type ?? null } : null;
+}
 
 function toStructureSpecs(
   revision: EligibleEmployee["salaryRevisions"][number] | undefined,
@@ -438,8 +443,26 @@ export async function calculateRun(runId: string): Promise<{
   const systemLopNow = await systemLopBetween(employeeIds, window.from, window.to);
   const carry = await lopCarryFor(run, employeeIds);
 
+  // Per-employee component overrides in force this period.
+  const overrideRows = await prisma.employeeComponentOverride.findMany({
+    where: { tenantId: run.tenantId, employeeId: { in: employeeIds }, effectiveFrom: { lte: run.periodEnd }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: run.periodStart } }] },
+    include: { component: true },
+  });
+  const overridesByEmp = byEmployeeId(overrideRows.map((o) => ({ ...o, monthlyAmount: Number(o.monthlyAmount) })));
+
+  // Daily, hourly and piece-rate staff are paid on units from attendance in
+  // the run's window, unless step 1 entered units by hand.
+  const wageEmployees = employees.filter((e) => wageTypeOf(revisionView(e.salaryRevisions[0])));
+  const unitRecords = wageEmployees.length
+    ? await prisma.attendanceRecord.findMany({
+        where: { employeeId: { in: wageEmployees.map((e) => e.id) }, date: { gte: window.from, lte: window.to } },
+        select: { employeeId: true, status: true, payableValue: true, lopValue: true, effectiveHours: true },
+      })
+    : [];
+  const unitRecordsByEmp = byEmployeeId(unitRecords);
+
   const totalDays = daysInMonth(run.year, run.month);
-  const results: Array<{ employee: EligibleEmployee; result: CalculatePayrollResult }> = [];
+  const results: Array<{ employee: EligibleEmployee; result: CalculatePayrollResult; autoUnits?: number | null }> = [];
   const allWarnings: string[] = [];
 
   for (const emp of employees) {
@@ -458,12 +481,21 @@ export async function calculateRun(runId: string): Promise<{
 
     const revision = emp.salaryRevisions[0];
     const fbp = revision?.structure?.isPartOfFbp ? fbpOf.get(emp.id) : undefined;
-    const specs = fbp
+    const baseSpecs = fbp
       ? [
           ...toStructureSpecs(revision).filter((sc) => !(sc.type === "REIMBURSEMENT" && sc.isPartOfFbp)),
           ...fbpCarveSpecs(fbp.lines.map((l) => ({ code: l.component.code, name: l.component.name, annual: Number(l.annualAmount) }))),
         ]
       : toStructureSpecs(revision);
+    const empOverrides = [...activeOverrides(overridesByEmp.get(emp.id) ?? [], run.periodStart, run.periodEnd).values()];
+    const specs = empOverrides.length
+      ? applyComponentOverrides(baseSpecs, empOverrides.map((o) => ({ component: o.component, monthlyAmount: o.monthlyAmount })))
+      : baseSpecs;
+    const wageType = wageTypeOf(revisionView(revision));
+    const autoUnits = wageType
+      ? unitsFromAttendance(wageType, (unitRecordsByEmp.get(emp.id) ?? []).map((r) => ({ status: r.status, payableValue: Number(r.payableValue), lopValue: Number(r.lopValue), effectiveHours: Number(r.effectiveHours) })))
+      : null;
+    const manualUnits = existing?.payableUnits === null || existing?.payableUnits === undefined ? null : Number(existing.payableUnits);
     let fbpUnclaimed = 0;
     if (fbp && lastMonthOfFy) {
       fbpUnclaimed = unclaimedFbp(fbp.lines.map((l) => {
@@ -514,6 +546,7 @@ export async function calculateRun(runId: string): Promise<{
         lopAdjustment: manualLop + (carried?.lateDays ?? 0),
         lopReversalDays: 0,
       },
+      wageBasis: wageType && revision?.rate ? { type: wageType, rate: Number(revision.rate), units: manualUnits ?? autoUnits ?? 0 } : null,
 
       variablePay: {
         // LOP reversed after a month closed comes back as arrears at that month's rate.
@@ -627,7 +660,7 @@ export async function calculateRun(runId: string): Promise<{
     allWarnings.push(
       ...result.warnings.map((w) => `${emp.employeeNumber} ${emp.firstName}: ${w}`),
     );
-    results.push({ employee: emp, result });
+    results.push({ employee: emp, result, autoUnits });
   }
 
   // --- Persist ----------------------------------------------------------
@@ -644,7 +677,7 @@ export async function calculateRun(runId: string): Promise<{
     })));
     if (carryRows.length) await tx.lopAdjustment.createMany({ data: carryRows });
 
-    for (const { employee, result } of results) {
+    for (const { employee, result, autoUnits } of results) {
       const existing = existingByEmployee.get(employee.id);
 
       if (!result) {
@@ -697,6 +730,7 @@ export async function calculateRun(runId: string): Promise<{
           lwfEmployer: result.lwf.employerContribution.toNumber(),
           tds: result.tds.toNumber(),
           annualCtc: result.structure.annualCtc.toNumber(),
+          autoPayableUnits: autoUnits ?? null,
           errors: result.warnings.length > 0 ? result.warnings : undefined,
           calculatedAt: new Date(),
         },
@@ -724,6 +758,7 @@ export async function calculateRun(runId: string): Promise<{
           lwfEmployer: result.lwf.employerContribution.toNumber(),
           tds: result.tds.toNumber(),
           annualCtc: result.structure.annualCtc.toNumber(),
+          autoPayableUnits: autoUnits ?? null,
           errors: result.warnings.length > 0 ? result.warnings : undefined,
           calculatedAt: new Date(),
         },

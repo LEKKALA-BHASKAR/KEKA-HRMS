@@ -27,8 +27,8 @@ export default async function TaxFormsPage({ searchParams }: { searchParams: Pro
   const [emp, files, decls] = await Promise.all([
     prisma.employee.findFirst({ where: { id: employeeId, tenantId: viewer.tenantId }, select: { dateOfJoining: true } }),
     prisma.storedFile.findMany({
-      where: { tenantId: viewer.tenantId, employeeId, relatedType: "Form16" },
-      orderBy: { createdAt: "desc" }, select: { id: true, relatedId: true, createdAt: true },
+      where: { tenantId: viewer.tenantId, employeeId, relatedType: { in: ["Form16", "Form16PartA"] } },
+      orderBy: { createdAt: "desc" }, select: { id: true, relatedId: true, createdAt: true, relatedType: true },
     }),
     prisma.investmentDeclaration.findMany({ where: { employeeId }, select: { fyStartYear: true, _count: { select: { items: true } }, hraDetail: { select: { id: true } } }, orderBy: { fyStartYear: "desc" } }),
   ]);
@@ -36,7 +36,13 @@ export default async function TaxFormsPage({ searchParams }: { searchParams: Pro
 
   // Form 16: completed years since joining, plus any year with a (provisional) file.
   const fileByFy = new Map<number, (typeof files)[number]>();
-  for (const f of files) { const y = Number(f.relatedId); if (Number.isFinite(y) && !fileByFy.has(y)) fileByFy.set(y, f); }
+  const partAByFy = new Map<number, (typeof files)[number]>();
+  for (const f of files) {
+    const y = Number(f.relatedId);
+    if (!Number.isFinite(y)) continue;
+    if (f.relatedType === "Form16PartA") { if (!partAByFy.has(y)) partAByFy.set(y, f); continue; }
+    if (!fileByFy.has(y)) fileByFy.set(y, f);
+  }
   const f16Years = [...new Set([
     ...Array.from({ length: Math.max(0, currentFy - Math.max(joinedFy, currentFy - 5)) }, (_, i) => currentFy - 1 - i),
     ...fileByFy.keys(),
@@ -44,6 +50,7 @@ export default async function TaxFormsPage({ searchParams }: { searchParams: Pro
   if (f16Years.length === 0) f16Years.push(currentFy);
   const f16 = f16Years.includes(Number(sp.f16)) ? Number(sp.f16) : f16Years[0];
   const f16File = fileByFy.get(f16) ?? null;
+  const partAFile = partAByFy.get(f16) ?? null;
 
   // Form 12BB: years with a declaration, always including the current one.
   const bbYears = [...new Set([currentFy, ...decls.map((d) => d.fyStartYear)])].filter((y) => y <= currentFy).sort((a, b) => b - a);
@@ -76,6 +83,14 @@ export default async function TaxFormsPage({ searchParams }: { searchParams: Pro
             <span>Form 16 has not been released by the admin for the selected financial year.</span>
           </div>
         )}
+        <div className={s.formPanelRow} style={{ marginTop: 12 }}>
+          {partAFile ? (
+            <a className={`btn ${s.outlineBtn}`} href={`/files/${partAFile.id}`} download>Form 16 Part A <IconDown width={17} height={17} /></a>
+          ) : (
+            <button type="button" className={`btn ${s.outlineBtn}`} disabled title="Part A has not been uploaded for this year">Form 16 Part A <IconDown width={17} height={17} /></button>
+          )}
+          <a className={`btn ${s.outlineBtn}`} href={`/finances/tax/forms/12ba?fy=${f16}`} download>Form 12BA <IconDown width={17} height={17} /></a>
+        </div>
         <div className={s.outsideBox}>
           Received Form 16 Outside? <Link className={s.link} href="/finances/tax/tax-filing">File your ITR <IconExternal width={14} height={14} /></Link>
         </div>

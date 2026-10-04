@@ -592,15 +592,19 @@ export async function computeSettlement(employeeId: string, opts: { waiveNoticeR
   // --- Gratuity.
   const headcount = await prisma.employee.count({ where: { tenantId: emp.tenantId, status: { notIn: ["EXITED"] } } });
   const actCovered = opts.gratuityActCovered ?? headcount >= 10;
+  // The tenant's gratuity settings (Payroll settings), when saved.
+  const gs = await prisma.payrollPreference.findUnique({ where: { tenantId: emp.tenantId } });
+  const gWageCodes = Array.isArray(gs?.gratuityWageCodes) ? (gs!.gratuityWageCodes as string[]) : null;
   const gratuity = calculateGratuity({
-    lastDrawnBasicDa: monthlyBasic + monthly("DA"), dateOfJoining: emp.dateOfJoining, lastWorkingDay: lwd,
+    lastDrawnBasicDa: gWageCodes ? gWageCodes.reduce((s, c) => s + monthly(c), 0) : monthlyBasic + monthly("DA"), dateOfJoining: emp.dateOfJoining, lastWorkingDay: lwd,
     actCovered, waiveMinimumService: emp.exitRecord.type === "DEATH",
+    ...(gs ? { minServiceYears: Number(gs.gratuityEligibilityYears), daysPerYear: gs.gratuityDaysPerYear, divisorOverride: actCovered && gs.gratuityDivisor !== 26 ? gs.gratuityDivisor : null, payoutCap: Number(gs.gratuityCap) } : {}),
   });
   if (gratuity.eligible && Number(gratuity.grossGratuity) > 0) {
     lines.push({
       group: "Others", label: "Gratuity", amount: Number(gratuity.grossGratuity), direction: "PAY",
       taxable: Number(gratuity.taxableAmount),
-      basis: `15 × ₹${Number(gratuity.wageBase).toFixed(0)} × ${gratuity.serviceYears} year(s) ÷ ${Number(gratuity.divisor)}; ${gratuity.notes.join("; ")}`,
+      basis: `${gs?.gratuityDaysPerYear ?? 15} × ₹${Number(gratuity.wageBase).toFixed(0)} × ${gratuity.serviceYears} year(s) ÷ ${Number(gratuity.divisor)}; ${gratuity.notes.join("; ")}`,
     });
   } else {
     notes.push(gratuity.notes[0] ?? "Not eligible for gratuity.");

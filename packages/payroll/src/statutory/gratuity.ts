@@ -36,6 +36,13 @@ export interface GratuityInput {
   waiveMinimumService?: boolean;
   /** Gratuity already received from previous employers, against the lifetime cap. */
   priorExemptionUsed?: Numeric;
+
+  /** Employer policy: years of service for eligibility (default 5; 4.8 = 4 years 240 days). */
+  minServiceYears?: number;
+  /** Employer policy: days' wages per completed year (default 15). */
+  daysPerYear?: number;
+  /** Employer policy: the most that is paid. */
+  payoutCap?: Numeric | null;
 }
 
 export interface GratuityResult {
@@ -84,12 +91,13 @@ export function calculateGratuity(input: GratuityInput): GratuityResult {
     input.lastWorkingDay,
   );
 
-  const meetsService = years >= GRATUITY_MIN_YEARS;
+  const minYears = input.minServiceYears ?? GRATUITY_MIN_YEARS;
+  const meetsService = years + months / 12 + 1e-9 >= minYears;
   const eligible = meetsService || input.waiveMinimumService === true;
 
   if (!eligible) {
     notes.push(
-      `Not eligible — ${years} year(s) ${months} month(s) of service, against a minimum of ${GRATUITY_MIN_YEARS} years`,
+      `Not eligible — ${years} year(s) ${months} month(s) of service, against a minimum of ${minYears} years`,
     );
     return {
       eligible: false,
@@ -129,15 +137,23 @@ export function calculateGratuity(input: GratuityInput): GratuityResult {
   if (input.workingDaysPerWeek === 5 && input.actCovered) {
     notes.push("Five-day working week — verify the divisor against your own gratuity policy");
   }
+  if (input.daysPerYear != null && input.daysPerYear !== 15) {
+    daysFactor = new Decimal(input.daysPerYear);
+    notes.push(`${input.daysPerYear} days' wages per year under the employer's policy`);
+  }
   if (input.divisorOverride != null) {
     divisor = money(input.divisorOverride);
     notes.push(`Divisor overridden to ${divisor.toFixed(0)}`);
   }
 
   // (15 x wages x completed years) / divisor
-  const grossGratuity = roundRupees(
+  let grossGratuity = roundRupees(
     wageBase.times(daysFactor).times(rounded).dividedBy(divisor),
   );
+  if (input.payoutCap != null && grossGratuity.greaterThan(money(input.payoutCap))) {
+    grossGratuity = roundRupees(money(input.payoutCap));
+    notes.push(`Capped at ${grossGratuity.toFixed(2)} under the gratuity settings`);
+  }
 
   // --- Tax exemption under s.10(10) --------------------------------------
   // Least of: actual received, the lifetime ceiling, and the formula amount.

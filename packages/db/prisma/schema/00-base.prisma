@@ -244,6 +244,16 @@ model Tenant {
   probationPolicies ProbationPolicy[]
   probations        EmployeeProbation[]
 
+  // --- Payroll depth (27-payroll-depth) ---
+  componentOverrides    EmployeeComponentOverride[]
+  payrollPreference     PayrollPreference?
+  taxWindowOverrides    TaxWindowOverride[]
+  tdsContractors        TdsContractor[]
+  contractorPayments    ContractorPayment[]
+  loanPolicyAssignments LoanPolicyAssignment[]
+  compBudgetScenarios   CompBudgetScenario[]
+  minimumWageRates      MinimumWageRate[]
+
   @@index([subdomain])
   @@map("tenants")
 }

@@ -8,12 +8,14 @@ import { scopedEmployeeWhere } from "@/lib/scope";
 import { PageHead, Card, Badge, Empty, Person, Stat, Progress } from "@/components/ui";
 import { LoanDecision, LoanOps, LoanCategoryForm, LoanRuleForm, LoanPolicyForm } from "../_forms/loans";
 import { Disclosure } from "../../org/forms";
+import { DepthForm } from "../_forms/depth";
+import { createLoanPolicyAction, assignLoanPolicyAction, removeLoanPolicyAssignmentAction } from "@/app/actions/payroll-depth";
 
 const P = PERMISSIONS;
-const TABS = { requests: "Requests", active: "Active", closed: "Closed", setup: "Categories & policy" } as const;
+const TABS = { requests: "Requests", active: "Active", closed: "Closed", setup: "Categories & policy", policies: "Policies & assignment" } as const;
 type Tab = keyof typeof TABS;
 
-export default async function LoansPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+export default async function LoansPage({ searchParams }: { searchParams: Promise<{ tab?: string; policy?: string }> }) {
   const viewer = await requireAuth(P.LOAN_MANAGE);
   const sp = await searchParams;
   const tab: Tab = (sp.tab && sp.tab in TABS ? sp.tab : "requests") as Tab;
@@ -117,19 +119,27 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
         </Card>
       ) : null}
 
-      {tab === "setup" ? <Setup tenantId={viewer.tenantId} /> : null}
+      {tab === "setup" ? <Setup tenantId={viewer.tenantId} policyId={sp.policy} /> : null}
+      {tab === "policies" ? <Policies tenantId={viewer.tenantId} scope={scope} /> : null}
     </>
   );
 }
 
-async function Setup({ tenantId }: { tenantId: string }) {
-  const [categories, policy] = await Promise.all([
+async function Setup({ tenantId, policyId }: { tenantId: string; policyId?: string }) {
+  const [categories, policies] = await Promise.all([
     prisma.loanCategory.findMany({ where: { tenantId }, orderBy: { name: "asc" } }),
-    prisma.loanPolicy.findFirst({ where: { tenantId, isActive: true }, include: { rules: true } }),
+    prisma.loanPolicy.findMany({ where: { tenantId, isActive: true }, include: { rules: true }, orderBy: { createdAt: "asc" } }),
   ]);
+  const policy = policies.find((p) => p.id === policyId) ?? policies[0] ?? null;
   const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
   return (
     <div className="stack gap-4">
+      {policies.length > 1 ? (
+        <div className="row gap-2 wrap">
+          <span className="text-xs subtle">Policy:</span>
+          {policies.map((p) => <Link key={p.id} className={`btn sm${p.id === policy?.id ? " primary" : ""}`} href={`/payroll/loans?tab=setup&policy=${p.id}`}>{p.name}</Link>)}
+        </div>
+      ) : null}
       {policy ? (
         <Card title={`Eligibility — ${policy.name}`}>
           <LoanPolicyForm policy={{ id: policy.id, requireProbationComplete: policy.requireProbationComplete, blockOnNoticePeriod: policy.blockOnNoticePeriod, minDaysFromJoining: policy.minDaysFromJoining, minAnnualSalary: n(policy.minAnnualSalary), maxAnnualSalary: n(policy.maxAnnualSalary) }} />
@@ -151,6 +161,91 @@ async function Setup({ tenantId }: { tenantId: string }) {
         );
       })}
       <Card title="New category"><Disclosure label="Add a loan category"><LoanCategoryForm /></Disclosure></Card>
+    </div>
+  );
+}
+
+/** Several loan policies, each assigned to pay groups or individual employees. */
+async function Policies({ tenantId, scope }: { tenantId: string; scope: Record<string, unknown> }) {
+  const [policies, payGroups, employees] = await Promise.all([
+    prisma.loanPolicy.findMany({
+      where: { tenantId }, orderBy: { createdAt: "asc" },
+      include: {
+        rules: { include: { category: { select: { name: true } } } },
+        assignments: { include: { payGroup: { select: { name: true } }, employee: { select: { displayName: true, employeeNumber: true } } } },
+      },
+    }),
+    prisma.payGroup.findMany({ where: { tenantId, isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.employee.findMany({ where: { ...scope, status: { notIn: ["EXITED"] } }, select: { id: true, displayName: true, employeeNumber: true }, orderBy: { employeeNumber: "asc" } }),
+  ]);
+  const unassigned = policies.filter((p) => p.assignments.length === 0);
+  return (
+    <div className="stack gap-4">
+      <Card title="How a policy is chosen" description="An employee's own assignment wins, then their pay group's; a policy assigned to no one covers everyone else." tight>
+        <div style={{ padding: 14 }} className="text-sm">
+          {unassigned.length ? <>Default for everyone else: <strong>{unassigned[0].name}</strong>{unassigned.length > 1 ? ` (and ${unassigned.length - 1} more unassigned — the oldest applies)` : ""}.</> : "Every policy is assigned, so employees outside those assignments cannot borrow."}
+        </div>
+      </Card>
+      {policies.map((p) => (
+        <Card key={p.id} title={p.name} description={[p.description, p.minDaysFromJoining ? `Eligible after ${Math.round(p.minDaysFromJoining / 30.4375)} month(s) of service` : "No service minimum", p.isActive ? null : "Inactive"].filter(Boolean).join(" · ")}
+          action={<Link className="btn sm" href={`/payroll/loans?tab=setup&policy=${p.id}`}>Edit rules</Link>}>
+          <div className="table-wrap" style={{ marginBottom: 12 }}>
+            <table className="data">
+              <thead><tr><th>Category</th><th className="num">Max amount</th><th className="num">Max % of CTC</th><th>Interest</th><th className="num">Max tenure</th></tr></thead>
+              <tbody>
+                {p.rules.length === 0 ? <tr><td colSpan={5} className="subtle">No category rules yet.</td></tr> : p.rules.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.category.name}</td>
+                    <td className="num">{r.maxAmount ? formatINR(Number(r.maxAmount)) : "—"}</td>
+                    <td className="num">{r.maxPercentOfSalary ? `${Number(r.maxPercentOfSalary)}%` : "—"}</td>
+                    <td>{r.interestType === "NONE" ? "Interest-free" : `${Number(r.interestRate ?? 0)}% ${r.interestType.toLowerCase()}`}</td>
+                    <td className="num">{r.maxInstallments} months</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="text-xs strong subtle" style={{ marginBottom: 6 }}>ASSIGNED TO</div>
+          {p.assignments.length === 0 ? <div className="text-sm subtle" style={{ marginBottom: 8 }}>No one specifically.</div> : (
+            <div className="stack gap-1" style={{ marginBottom: 8 }}>
+              {p.assignments.map((a) => (
+                <div key={a.id} className="row gap-2">
+                  <Badge tone={a.employeeId ? "info" : "brand"}>{a.employeeId ? "Employee" : "Pay group"}</Badge>
+                  <span className="text-sm">{a.employee ? `${a.employee.displayName} (${a.employee.employeeNumber})` : a.payGroup?.name}</span>
+                  <DepthForm action={removeLoanPolicyAssignmentAction} inline variant="ghost" submitLabel="Remove" hidden={{ id: a.id }} />
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="grid grid-2">
+            <DepthForm action={assignLoanPolicyAction} inline submitLabel="Assign pay group" variant="default" hidden={{ policyId: p.id }}>
+              <select className="select" name="payGroupId" required style={{ maxWidth: 220 }}>
+                <option value="">Pay group…</option>
+                {payGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+            </DepthForm>
+            <DepthForm action={assignLoanPolicyAction} inline submitLabel="Assign employee" variant="default" hidden={{ policyId: p.id }}>
+              <select className="select" name="employeeId" required style={{ maxWidth: 240 }}>
+                <option value="">Employee…</option>
+                {employees.map((e) => <option key={e.id} value={e.id}>{e.employeeNumber} · {e.displayName}</option>)}
+              </select>
+            </DepthForm>
+          </div>
+        </Card>
+      ))}
+      <Card title="New loan policy" description="Set its eligibility here; then add the per-category maximum amount, interest and tenure under Categories & policy.">
+        <DepthForm action={createLoanPolicyAction} submitLabel="Create policy">
+          <div className="grid grid-2">
+            <div className="field"><label className="label" htmlFor="lp-name">Name</label><input id="lp-name" className="input" name="name" required maxLength={120} placeholder="e.g. Senior staff loans" /></div>
+            <div className="field"><label className="label" htmlFor="lp-months">Eligible after (months of service)</label><input id="lp-months" className="input num" name="eligibilityMonths" type="number" min={0} max={120} placeholder="e.g. 6" /></div>
+            <div className="field"><label className="label" htmlFor="lp-desc">Description</label><input id="lp-desc" className="input" name="description" maxLength={300} /></div>
+            <div className="field"><label className="label" htmlFor="lp-copy">Copy category rules from</label>
+              <select id="lp-copy" className="select" name="copyFrom"><option value="">Start empty</option>{policies.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select>
+            </div>
+          </div>
+          <label className="checkbox-row"><input type="checkbox" name="requireProbationComplete" defaultChecked /><span className="text-sm">Only after probation is complete</span></label>
+        </DepthForm>
+      </Card>
     </div>
   );
 }

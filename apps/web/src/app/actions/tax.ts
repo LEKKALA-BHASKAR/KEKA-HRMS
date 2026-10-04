@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@keka/db";
-import { ageAtFyEnd, previousIncomeApplies } from "@keka/services";
+import { ageAtFyEnd, previousIncomeApplies, withTaxWindowOverrides } from "@keka/services";
 import { fyStartYear, formatINR } from "@keka/shared";
 import { requireViewer, type Viewer } from "@/lib/context";
 import { saveFile, sniffUpload, MAX_UPLOAD_BYTES } from "@/lib/storage";
@@ -48,9 +48,9 @@ async function context(viewer: Viewer) {
     where: { employeeId_fyStartYear: { employeeId, fyStartYear: fy } },
     include: { items: true },
   });
-  const windows = declarationWindows(emp.payGroup, {
+  const windows = await withTaxWindowOverrides(viewer.tenantId, employeeId, fy, declarationWindows(emp.payGroup, {
     fy, currentFy: fy, now, joinedOn: emp.dateOfJoining, locked: declaration?.status === "LOCKED", fyStartMonth: viewer.tenant.fyStartMonth,
-  });
+  }), { now, declarationLocked: declaration?.status === "LOCKED" });
   const regime = emp.statutoryProfile?.taxRegime ?? "NEW";
   return { employeeId, fy, emp, declaration, windows, regime, age: ageAtFyEnd(emp.dateOfBirth, fy) };
 }

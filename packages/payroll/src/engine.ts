@@ -45,6 +45,25 @@ export interface AttendanceInput {
   unitRate?: Numeric | null;
 }
 
+/**
+ * Daily-wage, hourly and piece-rate remuneration: pay is the rate times the
+ * units worked (payable days, payable hours or pieces), not a monthly
+ * entitlement prorated for LOP. When the structure has earnings, they are
+ * scaled so they add up to the wage — so Basic still drives PF — otherwise
+ * the wage is paid as one line.
+ */
+export interface WageBasisInput {
+  type: "DAILY" | "HOURLY" | "PIECE_RATE";
+  rate: Numeric;
+  units: Numeric;
+}
+
+export const WAGE_LINE: Record<WageBasisInput["type"], { code: string; name: string; unit: string }> = {
+  DAILY: { code: "DAILY_WAGES", name: "Daily Wages", unit: "day" },
+  HOURLY: { code: "HOURLY_WAGES", name: "Hourly Wages", unit: "hour" },
+  PIECE_RATE: { code: "UNIT_PAY", name: "Piece-rate Pay", unit: "unit" },
+};
+
 export interface VariablePayInput {
   /** Arrears from back-dated revisions, hold releases or LOP reversals. */
   arrears?: Numeric;
@@ -136,6 +155,8 @@ export interface CalculatePayrollInput {
   lastWorkingDay?: Date | null;
 
   attendance?: AttendanceInput;
+  /** Daily, hourly or piece-rate pay in place of the monthly structure. */
+  wageBasis?: WageBasisInput | null;
   variablePay?: VariablePayInput;
   statutory: StatutoryInput;
   tax: TaxInput;
@@ -306,6 +327,39 @@ export function calculatePayroll(input: CalculatePayrollInput): CalculatePayroll
     notes.push(`${units.toFixed(2)} unit(s) at ${rate.toFixed(2)}`);
   }
 
+  // Daily, hourly and piece-rate staff: rate x units replaces the prorated
+  // monthly earnings. The structure, when it has earnings, only splits it.
+  let wageThisMonth: Decimal | null = null;
+  if (input.wageBasis && !isUnitBased) {
+    const wb = input.wageBasis;
+    const units = nonNegative(wb.units);
+    const rate = nonNegative(wb.rate);
+    const wage = roundRupees(units.times(rate));
+    wageThisMonth = wage;
+    const meta = WAGE_LINE[wb.type];
+    const earningRows = structure.components.filter((c) => c.type === "EARNING" && !c.isOutsideCtc);
+    const full = earningRows.reduce((s, c) => s.plus(c.monthly), new Decimal(0));
+    const earningLineIdx = lines.map((l, i) => (l.type === "EARNING" && earningRows.some((c) => c.code === l.code) ? i : -1)).filter((i) => i >= 0);
+    if (full.greaterThan(0) && earningLineIdx.length > 0) {
+      const factor = wage.dividedBy(full);
+      let allotted = new Decimal(0);
+      earningLineIdx.forEach((idx, k) => {
+        const c = structure.byCode.get(lines[idx].code)!;
+        const amount = k === earningLineIdx.length - 1 ? wage.minus(allotted) : roundRupees(c.monthly.times(factor));
+        allotted = allotted.plus(amount);
+        lines[idx] = { ...lines[idx], fullAmount: amount, amount };
+        proratedByCode.set(c.code, amount);
+      });
+      notes.push(`${units.toFixed(2)} ${meta.unit}(s) at ${rate.toFixed(2)} = ${wage.toFixed(2)}, split across the structure's earnings`);
+    } else {
+      for (let i = lines.length - 1; i >= 0; i--) if (lines[i].type === "EARNING") lines.splice(i, 1);
+      lines.push({ code: meta.code, name: meta.name, type: "EARNING", fullAmount: wage, amount: wage, showOnPayslip: true, sequence: 1 });
+      proratedByCode.set(meta.code, wage);
+      notes.push(`${units.toFixed(2)} ${meta.unit}(s) at ${rate.toFixed(2)}`);
+    }
+    if (units.isZero()) warnings.push(`No payable ${meta.unit}s recorded — enter payable units in step 1`);
+  }
+
   // --- 4. Variable pay ---------------------------------------------------
   const vp = input.variablePay ?? {};
   const pushEarning = (code: string, name: string, amount: Numeric, seq: number, type: PayslipLineResult["type"] = "EARNING") => {
@@ -356,9 +410,13 @@ export function calculatePayroll(input: CalculatePayrollInput): CalculatePayroll
   const earningLines = () => lines.filter((l) => l.type === "EARNING");
 
   // PF wage: the structure components flagged as PF-qualifying, prorated.
-  const pfWageBase = structure.components
+  let pfWageBase = structure.components
     .filter((c) => c.affectsPfWage)
     .reduce((s, c) => s.plus(proratedByCode.get(c.code) ?? ZERO), new Decimal(0));
+  if (wageThisMonth && input.wageBasis && proratedByCode.has(WAGE_LINE[input.wageBasis.type].code)) {
+    // A single wage line stands in for Basic.
+    pfWageBase = wageThisMonth;
+  }
 
   const pf = calculatePf({
     pfWageBase,
@@ -368,7 +426,8 @@ export function calculatePayroll(input: CalculatePayrollInput): CalculatePayroll
     vpfAmount: input.statutory.vpfAmount,
     vpfPercent: input.statutory.vpfPercent,
     // The base is already prorated, so the ceiling must prorate to match.
-    prorationFactor,
+    // A wage paid by units is not prorated, so the full ceiling applies.
+    prorationFactor: wageThisMonth ? new Decimal(1) : prorationFactor,
     config: input.statutory.pfConfig,
   });
 
@@ -382,7 +441,8 @@ export function calculatePayroll(input: CalculatePayrollInput): CalculatePayroll
     return counts ? s.plus(l.amount) : s;
   }, new Decimal(0));
 
-  const fullMonthlyEsiGross = structure.components
+  // A wage paid by units is judged against the ESI limit on what was earned.
+  const fullMonthlyEsiGross = wageThisMonth ?? structure.components
     .filter((c) => c.affectsEsiGross)
     .reduce((s, c) => s.plus(c.monthly), new Decimal(0));
 
@@ -450,9 +510,10 @@ export function calculatePayroll(input: CalculatePayrollInput): CalculatePayroll
     // month, plus the regular monthly gross for every month still to come.
     const ytdTaxable = nonNegative(input.tax.ytdTaxableIncome);
     // Perquisites recur, so they are projected forward like salary.
-    const regularMonthlyGross = structure.components
+    // A wage paid by units is projected at this month's wage.
+    const regularMonthlyGross = (wageThisMonth ?? structure.components
       .filter((c) => c.type === "EARNING")
-      .reduce((s, c) => s.plus(c.monthly), new Decimal(0))
+      .reduce((s, c) => s.plus(c.monthly), new Decimal(0)))
       .plus(taxablePerquisites);
     const projectedRemaining = regularMonthlyGross.times(Math.max(0, remaining - 1));
     const projectedAnnualGross = ytdTaxable.plus(taxableThisMonth).plus(projectedRemaining);
@@ -577,7 +638,8 @@ export function calculatePayroll(input: CalculatePayrollInput): CalculatePayroll
     year: input.year,
     month: input.month,
     totalDays,
-    payableDays,
+    // Daily-wage staff are payable for the days they are paid for.
+    payableDays: input.wageBasis?.type === "DAILY" && wageThisMonth ? nonNegative(input.wageBasis.units) : payableDays,
     lopDays,
     prorationFactor,
     lines,

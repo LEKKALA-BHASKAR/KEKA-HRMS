@@ -1,8 +1,19 @@
 import type { ReactNode } from "react";
+import { isMyPayHidden } from "@keka/services";
+import { requireViewer } from "@/lib/context";
 import { SubTabs } from "@/components/subtabs";
+import { Card, Empty } from "@/components/ui";
 
-/** My Pay: the sub-tab row sits first on every page beneath it. */
-export default function MyPayLayout({ children }: { children: ReactNode }) {
+/** My Pay: the sub-tab row sits first on every page beneath it. Payroll settings can hide the page from employees. */
+export default async function MyPayLayout({ children }: { children: ReactNode }) {
+  const viewer = await requireViewer();
+  if (await isMyPayHidden(viewer.tenantId)) {
+    return (
+      <Card>
+        <Empty title="My Pay is not available">Your organisation has hidden this page. Contact your payroll team for your salary details and payslips.</Empty>
+      </Card>
+    );
+  }
   return (
     <>
       <SubTabs items={[

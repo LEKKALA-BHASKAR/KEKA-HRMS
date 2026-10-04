@@ -117,6 +117,7 @@ export default async function PayrollRunPage({
               </form>
             ) : null}
             <Link className="btn" href={`/payroll/register?run=${run.id}`}>Pay register</Link>
+            <Link className="btn" href={`/payroll/variance?run=${run.id}`}>Variance</Link>
           </>
         }
       />

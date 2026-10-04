@@ -2,12 +2,12 @@ import Link from "next/link";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatPeriod, formatINR } from "@keka/shared";
-import { requireAuth } from "@/lib/context";
-import { PageHead, Card, Money, Empty, Callout, RunStatusBadge, Badge } from "@/components/ui";
+import { registerData } from "@keka/services";
+import { requireAuth, can } from "@/lib/context";
+import { PageHead, Card, Empty, Callout, RunStatusBadge, Badge } from "@/components/ui";
 import { IconDownload } from "@/components/icons";
 
 const P = PERMISSIONS;
-const n = (v: unknown) => Number(v ?? 0);
 
 export default async function PayRegisterPage({
   searchParams,
@@ -32,51 +32,18 @@ export default async function PayRegisterPage({
     );
   }
 
-  const run = await prisma.payrollRun.findFirst({
-    where: { id: runId, tenantId: viewer.tenantId },
-    include: {
-      payGroup: { include: { payRegisterConfig: true } },
-      lines: {
-        orderBy: { employee: { employeeNumber: "asc" } },
-        include: {
-          employee: {
-            select: {
-              id: true, employeeNumber: true, displayName: true,
-              department: { select: { name: true } },
-              location: { select: { stateCode: true } },
-            },
-          },
-          lines: { orderBy: { sequence: "asc" } },
-        },
-      },
-    },
-  });
-  if (!run) return <Card><Empty title="Run not found" /></Card>;
-
-  // Column set is the union of every component that appeared, so the register
-  // is complete without hard-coding a component list.
-  const earningCodes = new Map<string, string>();
-  const deductionCodes = new Map<string, string>();
-  for (const line of run.lines) {
-    for (const c of line.lines) {
-      if (c.type === "EARNING" || c.type === "REIMBURSEMENT") earningCodes.set(c.code, c.name);
-      if (c.type === "DEDUCTION") deductionCodes.set(c.code, c.name);
-    }
-  }
-  const earningList = [...earningCodes.entries()];
-  const deductionList = [...deductionCodes.entries()];
-
-  const amountFor = (line: typeof run.lines[number], code: string) =>
-    n(line.lines.find((c) => c.code === code)?.amount);
-
-  const colTotal = (code: string) =>
-    run.lines.reduce((s, l) => s + amountFor(l, code), 0);
+  // Columns follow the pay group's saved layout (Customise), on screen and in the CSV.
+  const data = await registerData(viewer.tenantId, runId);
+  if (!data) return <Card><Empty title="Run not found" /></Card>;
+  const { run, columns, rows, totals } = data;
+  const cell = (v: string | number, numeric: boolean) =>
+    numeric && typeof v === "number" ? (v === 0 ? <span className="subtle">—</span> : formatINR(v, false)) : (v || <span className="subtle">—</span>);
 
   return (
     <>
       <PageHead
         title="Pay register"
-        subtitle={`${formatPeriod(run.year, run.month)} · ${run.payGroup.name} · ${run.lines.length} employees`}
+        subtitle={`${formatPeriod(run.year, run.month)} · ${run.payGroupName} · ${rows.length} employees`}
         actions={
           <>
             <form className="row gap-2">
@@ -90,10 +57,8 @@ export default async function PayRegisterPage({
               <button className="btn" type="submit">Go</button>
             </form>
             <RunStatusBadge status={run.status} />
-            <a
-              className="btn"
-              href={`/api/payroll/register.csv?run=${run.id}`}
-            >
+            {can(viewer, P.PAYROLL_SETTINGS) ? <Link className="btn" href={`/payroll/register/customise?payGroup=${run.payGroupId}`}>Customise columns</Link> : null}
+            <a className="btn" href={`/api/payroll/register.csv?run=${run.id}`}>
               <IconDownload width={15} height={15} />CSV
             </a>
           </>
@@ -113,74 +78,34 @@ export default async function PayRegisterPage({
           <table className="data" style={{ fontSize: 12 }}>
             <thead>
               <tr>
-                <th style={{ position: "sticky", left: 0, zIndex: 2 }}>Employee</th>
-                <th>Dept</th>
-                <th>St</th>
-                <th className="num">Days</th>
-                {earningList.map(([code, name]) => (
-                  <th key={code} className="num" title={name}>{name}</th>
+                {columns.map((c, i) => (
+                  <th key={c.key} className={c.numeric ? "num" : undefined} title={c.label}
+                    style={i === 0 ? { position: "sticky", left: 0, zIndex: 2 } : undefined}>{c.label}</th>
                 ))}
-                <th className="num">Gross</th>
-                {deductionList.map(([code, name]) => (
-                  <th key={code} className="num" title={name}>{name}</th>
-                ))}
-                <th className="num">Deductions</th>
-                <th className="num">Net pay</th>
               </tr>
             </thead>
             <tbody>
-              {run.lines.map((l) => (
-                <tr key={l.id}>
-                  <td style={{ position: "sticky", left: 0, background: "var(--surface)", zIndex: 1 }}>
-                    <Link href={`/employees/${l.employeeId}`}>
-                      <span className="mono text-xs">{l.employee.employeeNumber}</span>{" "}
-                      <span className="strong">{l.employee.displayName}</span>
-                    </Link>
-                    {l.payAction !== "PROCESS_AS_SALARY" ? (
-                      <Badge tone="warning">{l.payAction.replace(/_/g, " ").toLowerCase()}</Badge>
-                    ) : null}
-                  </td>
-                  <td className="text-xs">{l.employee.department?.name ?? "—"}</td>
-                  <td className="text-xs">{l.employee.location?.stateCode ?? "—"}</td>
-                  <td className="num">{n(l.payableDays).toFixed(1)}</td>
-                  {earningList.map(([code]) => (
-                    <td key={code} className="num">
-                      {amountFor(l, code) === 0
-                        ? <span className="subtle">—</span>
-                        : formatINR(amountFor(l, code), false)}
+              {rows.map((r) => (
+                <tr key={r.employeeId}>
+                  {columns.map((c, i) => (
+                    <td key={c.key} className={c.numeric ? "num" : c.key === "name" ? "strong" : "text-xs"}
+                      style={i === 0 ? { position: "sticky", left: 0, background: "var(--surface)", zIndex: 1 } : undefined}>
+                      {c.key === "name" ? (
+                        <Link href={`/employees/${r.employeeId}`}>{r.cells.name}</Link>
+                      ) : c.key === "payableDays" ? Number(r.cells.payableDays).toFixed(1) : cell(r.cells[c.key], c.numeric)}
+                      {c.key === "name" && r.payAction !== "PROCESS_AS_SALARY" ? (
+                        <> <Badge tone="warning">{r.payAction.replace(/_/g, " ").toLowerCase()}</Badge></>
+                      ) : null}
                     </td>
                   ))}
-                  <td className="num strong">{formatINR(n(l.grossEarnings), false)}</td>
-                  {deductionList.map(([code]) => (
-                    <td key={code} className="num">
-                      {amountFor(l, code) === 0
-                        ? <span className="subtle">—</span>
-                        : formatINR(amountFor(l, code), false)}
-                    </td>
-                  ))}
-                  <td className="num">{formatINR(n(l.totalDeductions), false)}</td>
-                  <td className={`num strong ${n(l.netPay) < 0 ? "neg" : ""}`}>
-                    {formatINR(n(l.netPay), false)}
-                  </td>
                 </tr>
               ))}
               <tr className="total-row">
-                <td style={{ position: "sticky", left: 0, zIndex: 1 }}>
-                  Total — {run.lines.length} employees
-                </td>
-                <td /><td />
-                <td className="num">
-                  {run.lines.reduce((s, l) => s + n(l.payableDays), 0).toFixed(1)}
-                </td>
-                {earningList.map(([code]) => (
-                  <td key={code} className="num">{formatINR(colTotal(code), false)}</td>
+                {columns.map((c, i) => (
+                  <td key={c.key} className={c.numeric ? "num" : undefined} style={i === 0 ? { position: "sticky", left: 0, zIndex: 1 } : undefined}>
+                    {i === 0 ? `Total — ${rows.length}` : totals[c.key] !== undefined ? (c.key === "payableDays" ? totals[c.key].toFixed(1) : formatINR(totals[c.key], false)) : null}
+                  </td>
                 ))}
-                <td className="num">{formatINR(n(run.totalGross), false)}</td>
-                {deductionList.map(([code]) => (
-                  <td key={code} className="num">{formatINR(colTotal(code), false)}</td>
-                ))}
-                <td className="num">{formatINR(n(run.totalDeductions), false)}</td>
-                <td className="num">{formatINR(n(run.totalNetPay), false)}</td>
               </tr>
             </tbody>
           </table>

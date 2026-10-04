@@ -4,7 +4,7 @@ import {
   resolveStructure, calculateAnnualTax, compareRegimes, calculateHraExemption,
   type AnnualTaxResult, type ResolvedStructure,
 } from "@keka/payroll";
-import { loadStatutoryTables, slabsFor, ageAtFyEnd, previousIncomeApplies } from "@keka/services";
+import { loadStatutoryTables, slabsFor, ageAtFyEnd, previousIncomeApplies, withTaxWindowOverrides } from "@keka/services";
 import { fyMonths, fyRange, fyStartYear } from "@keka/shared";
 import type { Viewer } from "@/lib/context";
 import { cappedDeductions, declarationWindows, regimeSwitchState, type DeductionTotals, type WindowState } from "./rules";
@@ -326,9 +326,9 @@ export async function loadTaxPicture(viewer: Viewer, fy: number): Promise<TaxPic
   for (const r of rows) if (r.kind === "projected") r.tds = perProjectedMonth;
 
   // --- Windows ----------------------------------------------------------------
-  const windows = declarationWindows(emp.payGroup, {
+  const windows = await withTaxWindowOverrides(viewer.tenantId, employeeId, fy, declarationWindows(emp.payGroup, {
     fy, currentFy, now, joinedOn: emp.dateOfJoining, locked: declaration?.status === "LOCKED", fyStartMonth,
-  });
+  }), { now, declarationLocked: declaration?.status === "LOCKED" });
   const pg = emp.payGroup;
   const regimeSwitch = regimeSwitchState(pg, profile?.regimeLockedAt ?? null, { isCurrentFy: isCurrent, now });
 

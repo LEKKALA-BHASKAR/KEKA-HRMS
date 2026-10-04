@@ -247,6 +247,11 @@ model Employee {
   // --- Keka parity: Analytics (22-analytics) ---
   attritionRiskScores AttritionRiskScore[]
 
+  // --- Payroll depth (27-payroll-depth) ---
+  componentOverrides    EmployeeComponentOverride[]
+  taxWindowOverrides    TaxWindowOverride[]
+  loanPolicyAssignments LoanPolicyAssignment[]
+
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
   @@index([tenantId, departmentId])
