@@ -16,6 +16,7 @@
  *   tsx scripts/jobs.ts timesheet-reminders   nightly; reminds and escalates unsubmitted timesheets (per the timesheet policy)
  *   tsx scripts/jobs.ts ledger-check          nightly; fails if any tenant's books do not balance
  *   tsx scripts/jobs.ts job-changes           nightly; applies approved promotions/transfers whose effective date has come
+ *   tsx scripts/jobs.ts change-requests       nightly; applies approved org, config and profile changes whose effective date has come
  *   tsx scripts/jobs.ts scheduled-reports     hourly (or nightly); emails the CSV of every scheduled report that is due
  *   tsx scripts/jobs.ts nightly               all of the nightly jobs (+ accrual on the 1st)
  *
@@ -93,6 +94,7 @@ async function main() {
     },
     invoices: async () => ({ markedOverdue: await svc.markOverdueInvoices() }),
     "job-changes": async () => svc.applyDueJobChanges(),
+    "change-requests": async () => svc.applyDueChangeRequests(),
     "scheduled-reports": async () => {
       const { runScheduledReports } = await import("../apps/web/src/lib/scheduled-reports");
       return runScheduledReports();
@@ -135,7 +137,7 @@ async function main() {
 
   let ok = true;
   if (cmd === "nightly") {
-    for (const name of ["auto-clock-out", "process-attendance", "leave-auto-approve", "shift-allowance", "job-changes", "journeys", "probation", "leave-year-end", "invoices", "timesheet-reminders", "ledger-check", "scheduled-reports", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
+    for (const name of ["auto-clock-out", "process-attendance", "leave-auto-approve", "shift-allowance", "job-changes", "change-requests", "journeys", "probation", "leave-year-end", "invoices", "timesheet-reminders", "ledger-check", "scheduled-reports", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
     if (new Date().getUTCDate() === 1) ok = (await record("accrue", jobs.accrue)) && ok;
   } else if (cmd && jobs[cmd]) {
     ok = await record(cmd, jobs[cmd]);

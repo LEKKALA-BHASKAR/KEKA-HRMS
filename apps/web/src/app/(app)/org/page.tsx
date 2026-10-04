@@ -135,6 +135,9 @@ export default async function OrgPage({
             {TAB_LABEL[t]}
           </Link>
         ))}
+        <Link href="/org/units" className="tab">Divisions &amp; teams</Link>
+        <Link href="/org/units?tab=managers" className="tab">Dotted-line managers</Link>
+        <Link href="/org/units?tab=changes" className="tab">Scheduled changes</Link>
       </div>
 
       {/* ================= LEGAL ENTITIES ================= */}

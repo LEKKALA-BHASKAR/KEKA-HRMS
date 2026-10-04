@@ -6,6 +6,7 @@ import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { formatDate } from "@keka/shared";
 import { requireViewer } from "@/lib/context";
 import { directoryWhere, DIRECTORY_SELECT, nameOf } from "@/lib/directory";
+import { directoryVisibilityWhere } from "@/lib/core-hr";
 import { SubTabs } from "@/components/subtabs";
 import { Avatar } from "@/components/avatar";
 import { Panel, Field } from "@/components/keka";
@@ -35,8 +36,9 @@ export default async function DirectoryProfilePage({ params }: { params: Promise
 
   // Directory fields only, and only for people the directory lists: someone
   // exited, preboarding or in another tenant simply does not exist here.
+  // The company's visibility settings (same legal entity / business unit) apply here too.
   const e = await prisma.employee.findFirst({
-    where: { ...directoryWhere(tenantId), id: personId },
+    where: { AND: [{ ...directoryWhere(tenantId), id: personId }, await directoryVisibilityWhere(viewer)] },
     select: DIRECTORY_SELECT,
   });
   if (!e) notFound();

@@ -21,11 +21,12 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
  * approve leave for this employee; HR is anyone who manages leave for them;
  * the rest resolve to one person from the org chart.
  */
-export const APPROVAL_ROLES = ["REPORTING_MANAGER", "SKIP_LEVEL_MANAGER", "DEPARTMENT_HEAD", "HR", "ANY"] as const;
+export const APPROVAL_ROLES = ["REPORTING_MANAGER", "SKIP_LEVEL_MANAGER", "DOTTED_LINE_MANAGER", "DEPARTMENT_HEAD", "HR", "ANY"] as const;
 export type ApprovalRole = (typeof APPROVAL_ROLES)[number];
 export const APPROVAL_ROLE_LABEL: Record<ApprovalRole, string> = {
   REPORTING_MANAGER: "Reporting manager",
   SKIP_LEVEL_MANAGER: "Manager's manager",
+  DOTTED_LINE_MANAGER: "Dotted-line manager",
   DEPARTMENT_HEAD: "Department head",
   HR: "HR",
   ANY: "Any approver",
@@ -79,6 +80,8 @@ export interface ChainPeople {
   managerId: string | null;
   skipManagerId: string | null;
   departmentHeadId: string | null;
+  /** The employee's dotted-line manager (32-core-hr-depth), if any. */
+  dottedLineManagerId?: string | null;
 }
 
 /**
@@ -92,6 +95,7 @@ export function resolveApprovalSteps(cfg: ApprovalChainConfig, people: ChainPeop
   const seat: Record<ApprovalRole, string | null> = {
     REPORTING_MANAGER: people.managerId,
     SKIP_LEVEL_MANAGER: people.skipManagerId,
+    DOTTED_LINE_MANAGER: people.dottedLineManagerId ?? null,
     DEPARTMENT_HEAD: people.departmentHeadId,
     HR: null,
     ANY: null,

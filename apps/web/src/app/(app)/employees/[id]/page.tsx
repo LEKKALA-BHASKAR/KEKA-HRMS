@@ -18,14 +18,17 @@ import {
 import { CustomFieldsForm } from "./custom-fields";
 import { NoticePolicyPicker } from "./notice";
 import { TimeTab, DocumentsTab, AssetsTab, ExpensesTab, PerformanceTab } from "./tabs";
+import { HrRecordsTab } from "./hr-records";
+import { isManagerOf } from "@/lib/core-hr";
 import { displayCustomValue, type CustomFieldKind } from "@keka/services";
 
 const P = PERMISSIONS;
 
 const TABS = [
   "about", "profile", "job", "time", "documents",
-  "assets", "finances", "expenses", "performance",
+  "assets", "finances", "expenses", "performance", "hr",
 ] as const;
+const TAB_LABEL: Partial<Record<(typeof TABS)[number], string>> = { hr: "Notes & records" };
 type Tab = (typeof TABS)[number];
 
 export default async function EmployeePage({
@@ -105,6 +108,8 @@ export default async function EmployeePage({
     assets: { ok: reach(P.ASSET_VIEW), permission: P.ASSET_VIEW },
     expenses: { ok: reach(P.EXPENSE_VIEW), permission: P.EXPENSE_VIEW },
     performance: { ok: reach(P.PERFORMANCE_VIEW), permission: P.PERFORMANCE_VIEW },
+    // Internal notes, secondary managers, ID card and change history: HR and the person's managers.
+    hr: { ok: !isSelf && (canEdit || await isManagerOf(viewer, employee.id)), permission: P.EMPLOYEE_UPDATE },
   };
   const visibleTabs = TABS.filter((t) => moduleAccess[t]?.ok ?? true);
   const refused = moduleAccess[tab] && !moduleAccess[tab]!.ok ? moduleAccess[tab]! : null;
@@ -205,7 +210,7 @@ export default async function EmployeePage({
       <div className="tabs">
         {visibleTabs.map((t) => (
           <Link key={t} href={tabHref(t)} className={`tab${tab === t ? " active" : ""}`}>
-            {t[0].toUpperCase() + t.slice(1)}
+            {TAB_LABEL[t] ?? t[0].toUpperCase() + t.slice(1)}
           </Link>
         ))}
       </div>
@@ -800,6 +805,9 @@ export default async function EmployeePage({
       ) : null}
       {tab === "expenses" && !refused ? (
         <ExpensesTab tenantId={viewer.tenantId} employeeId={employee.id} isSelf={isSelf} />
+      ) : null}
+      {tab === "hr" && !refused ? (
+        <HrRecordsTab viewer={viewer} employeeId={employee.id} isHr={canEdit} />
       ) : null}
       {tab === "performance" && !refused ? (
         <PerformanceTab tenantId={viewer.tenantId} employeeId={employee.id} isSelf={isSelf} seeOneOnOnes={isSelf || viewer.allReportIds.has(employee.id)} />

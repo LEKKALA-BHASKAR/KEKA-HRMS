@@ -71,6 +71,7 @@ export async function stepsForNewRequest(employeeId: string, leaveTypeId: string
     managerId: emp.reportingManagerId,
     skipManagerId: emp.reportingManager?.reportingManagerId ?? null,
     departmentHeadId: emp.department?.headId ?? null,
+    dottedLineManagerId: (await prisma.secondaryManager.findFirst({ where: { employeeId: emp.id, kind: "DOTTED_LINE", OR: [{ effectiveTo: null }, { effectiveTo: { gte: at } }] }, orderBy: { createdAt: "asc" }, select: { managerId: true } }))?.managerId ?? null,
   });
 }
 
