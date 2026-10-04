@@ -91,3 +91,12 @@ export * from "./time-leave-depth";
 export * from "./talent";
 export * from "./workforce-math";
 export * from "./workforce";
+// Money depth: expenses, travel, loans, benefits, compensation planning.
+export * from "./money-math";
+export * from "./expense-depth";
+export * from "./travel-depth";
+export * from "./loan-depth";
+export * from "./benefits";
+export * from "./comp-planning";
+export * from "./money-workflow";
+export * from "./money-audit";

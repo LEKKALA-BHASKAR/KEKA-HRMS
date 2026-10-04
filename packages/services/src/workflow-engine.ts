@@ -10,6 +10,8 @@ import {
   WORKFLOW_ENTITY_TYPES, dueAtFor, finalApprovers, nextApplicableStep, pickDefinition, stepOutcome, validateWorkflowSubmission,
   type RouteContext, type StepSpec, type ValidationRule, type WorkflowEntityType,
 } from "./governance-math";
+import { moneyBuiltInRoute } from "./money-math";
+import { applyMoneyEffect } from "./money-workflow";
 
 /**
  * The generic workflow engine.
@@ -49,6 +51,7 @@ export function builtInRoute(entityType: WorkflowEntityType, opts: { reviewerUse
     case "RETENTION_PURGE":
     case "POLICY_PUBLISH":
     case "CONSENT_PURPOSE": return [perm("Compliance manager", "admin.compliance.manage")];
+    default: return (moneyBuiltInRoute(entityType) ?? []) as StepSpec[];
   }
 }
 
@@ -230,6 +233,10 @@ async function applyEffect(req: { id: string; tenantId: string; entityType: stri
       if (!id) return;
       if (approved) await publishConsentPurpose(t, id, actorUserId);
       else await prisma.consentPurpose.updateMany({ where: { id, tenantId: t, status: "PENDING_APPROVAL" }, data: { status: "DRAFT" } });
+      return;
+    default:
+      // Expenses, travel, loans, benefits and compensation (money-workflow.ts).
+      await applyMoneyEffect(req, outcome, actorUserId);
       return;
   }
 }

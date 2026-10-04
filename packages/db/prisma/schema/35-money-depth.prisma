@@ -1,0 +1,854 @@
+// ---------------------------------------------------------------------------
+//  MONEY DEPTH: expenses, travel, loans, benefits and compensation planning.
+//
+//  Approvals for everything here run on the generic workflow engine
+//  (31-governance); each row that waits for one keeps the request id in
+//  workflowRequestId so the page can link to the request.
+// ---------------------------------------------------------------------------
+
+// --- Expenses ---------------------------------------------------------------
+
+/// Approval before money is spent: the claim made later can reference it.
+model ExpensePreApproval {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation("PreApprovalRequester", fields: [employeeId], references: [id], onDelete: Cascade)
+
+  number          String
+  purpose         String
+  categoryId      String?
+  estimatedAmount Decimal   @db.Decimal(18, 2)
+  expectedDate    DateTime?
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN | USED
+  status          String    @default("PENDING")
+  workflowRequestId String?
+  decidedAt       DateTime?
+  usedAmount      Decimal   @default(0) @db.Decimal(18, 2)
+
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, number])
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("expense_pre_approvals")
+}
+
+/// Mileage (per km by vehicle) and per-diem (per day by city tier) rates.
+/// A new rate waits for approval before claims use it.
+model ExpenseRate {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// MILEAGE | PER_DIEM
+  kind          String
+  /// Vehicle (CAR, TWO_WHEELER…) for mileage; city tier (TIER_1…, INTERNATIONAL) for per diem.
+  key           String
+  amount        Decimal  @db.Decimal(18, 2)
+  effectiveFrom DateTime
+  /// PENDING_APPROVAL | ACTIVE | REJECTED | RETIRED
+  status        String   @default("PENDING_APPROVAL")
+  workflowRequestId String?
+  note          String?
+  createdBy     String?
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, kind, key, effectiveFrom])
+  @@map("expense_rates")
+}
+
+/// A random sample of approved claims picked for post-approval audit.
+model ExpenseAuditSample {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name       String
+  periodFrom DateTime
+  periodTo   DateTime
+  ratePct    Decimal  @db.Decimal(6, 2)
+  seed       Int
+  population Int
+  /// OPEN | CLOSED
+  status     String   @default("OPEN")
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  items ExpenseAuditSampleItem[]
+
+  @@index([tenantId, createdAt])
+  @@map("expense_audit_samples")
+}
+
+model ExpenseAuditSampleItem {
+  id       String             @id @default(cuid())
+  sampleId String
+  sample   ExpenseAuditSample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+  claimId  String
+
+  /// PENDING | OK | ISSUE
+  outcome    String    @default("PENDING")
+  finding    String?
+  recoverAmount Decimal? @db.Decimal(18, 2)
+  reviewedBy String?
+  reviewedAt DateTime?
+
+  @@unique([sampleId, claimId])
+  @@map("expense_audit_sample_items")
+}
+
+// --- Travel -----------------------------------------------------------------
+
+/// Travel entitlements by band: class of travel, hotel and ground limits,
+/// booking lead time and what needs a second approval.
+model TravelPolicy {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name                    String
+  description             String?
+  /// Bands this policy covers; empty covers everyone not covered by another.
+  bandIds                 String[] @default([])
+  /// ECONOMY | PREMIUM_ECONOMY | BUSINESS | FIRST
+  domesticFlightClass     String   @default("ECONOMY")
+  internationalFlightClass String  @default("ECONOMY")
+  hotelCapPerNight        Decimal? @db.Decimal(18, 2)
+  groundDailyCap          Decimal? @db.Decimal(18, 2)
+  /// Book at least this many days ahead.
+  minAdvanceDays          Int      @default(0)
+  /// Estimated cost above which the trip needs the travel approval workflow.
+  secondApprovalAbove     Decimal? @db.Decimal(18, 2)
+  internationalNeedsSecondApproval Boolean @default(true)
+  requireInsuranceInternational   Boolean @default(true)
+  /// Passport must be valid this many months past the return date.
+  passportValidityMonths  Int      @default(6)
+  /// DRAFT | PENDING_APPROVAL | ACTIVE | RETIRED
+  status                  String   @default("DRAFT")
+  workflowRequestId       String?
+  /// A revision of an active policy replaces it once approved.
+  supersedesId            String?
+  createdBy               String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+  @@map("travel_policies")
+}
+
+/// The traveller's standing preferences for the travel desk.
+model TravelerProfile {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String   @unique
+  employee   Employee @relation("TravelerProfileOf", fields: [employeeId], references: [id], onDelete: Cascade)
+
+  seatPreference  String?
+  mealPreference  String?
+  frequentFlyer   String?
+  hotelPreference String?
+  passportNumber  String?
+  passportExpiry  DateTime?
+  passportCountry String?
+  notes           String?
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId])
+  @@map("traveler_profiles")
+}
+
+/// Trip purposes, so reports group trips by why they happened.
+model TripPurpose {
+  id         String  @id @default(cuid())
+  tenantId   String
+  tenant     Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code       String
+  name       String
+  isBillable Boolean @default(false)
+  isActive   Boolean @default(true)
+
+  @@unique([tenantId, code])
+  @@map("trip_purposes")
+}
+
+/// A travel advisory for a destination city or country.
+model DestinationRisk {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  destination String
+  /// LOW | MEDIUM | HIGH | CRITICAL
+  level       String
+  advisory    String?
+  /// CRITICAL destinations can be blocked outright.
+  blockTravel Boolean  @default(false)
+  updatedBy   String?
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, destination])
+  @@map("destination_risks")
+}
+
+/// One booking on a trip (a flight, a hotel stay…). Amendments keep the old
+/// row as AMENDED and point the new row at it.
+model TravelBooking {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tripId   String
+
+  /// FLIGHT | HOTEL | TRAIN | BUS | CAB | OTHER
+  kind          String
+  vendor        String
+  reference     String
+  travelClass   String?
+  startsAt      DateTime
+  endsAt        DateTime?
+  cost          Decimal   @db.Decimal(18, 2)
+  /// CONFIRMED | PENDING_APPROVAL | REJECTED | CANCELLED | AMENDED
+  status        String    @default("CONFIRMED")
+  inPolicy      Boolean   @default(true)
+  violation     String?
+  itineraryUrl  String?
+  amendedFromId String?
+  workflowRequestId String?
+  createdBy     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([tenantId, tripId])
+  @@map("travel_bookings")
+}
+
+/// Pre-travel checklist: visa, insurance, passport and the like.
+model TripChecklistItem {
+  id       String    @id @default(cuid())
+  tenantId String
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tripId   String
+  /// VISA | INSURANCE | PASSPORT | FOREX | OTHER
+  kind     String
+  label    String
+  done     Boolean   @default(false)
+  doneAt   DateTime?
+  doneBy   String?
+  fileUrl  String?
+
+  @@index([tripId])
+  @@map("trip_checklist_items")
+}
+
+/// A requested change to, or cancellation of, an approved trip.
+model TripChange {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tripId   String
+
+  /// CHANGE | CANCEL
+  kind        String
+  /// The fields that change: { departDate, returnDate, toCity, estimatedCost… }
+  changes     Json?
+  reason      String
+  /// PENDING | APPLIED | REJECTED | WITHDRAWN
+  status      String   @default("PENDING")
+  workflowRequestId String?
+  requestedBy String
+  decidedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, tripId])
+  @@map("trip_changes")
+}
+
+/// The money side of a finished trip: per diem, claims, company-paid
+/// bookings and the advance, netted to what is paid or recovered.
+model TravelSettlement {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tripId     String   @unique
+  employeeId String
+  employee   Employee @relation("TravelSettlementOf", fields: [employeeId], references: [id], onDelete: Cascade)
+
+  perDiemDays    Decimal @default(0) @db.Decimal(6, 1)
+  perDiemRate    Decimal @default(0) @db.Decimal(18, 2)
+  perDiemAmount  Decimal @default(0) @db.Decimal(18, 2)
+  claimsTotal    Decimal @default(0) @db.Decimal(18, 2)
+  bookingsTotal  Decimal @default(0) @db.Decimal(18, 2)
+  advanceAmount  Decimal @default(0) @db.Decimal(18, 2)
+  /// Positive: owed to the employee. Negative: recovered from them.
+  netAmount      Decimal @default(0) @db.Decimal(18, 2)
+  /// DRAFT | SUBMITTED | APPROVED | REJECTED
+  status         String  @default("DRAFT")
+  notes          String?
+  workflowRequestId String?
+  approvedAt     DateTime?
+  adhocId        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@map("travel_settlements")
+}
+
+// --- Loans --------------------------------------------------------------------
+
+/// Disbursal in tranches rather than all at once.
+model LoanTranche {
+  id       String    @id @default(cuid())
+  tenantId String
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  loanId   String
+  sequence Int
+  amount   Decimal   @db.Decimal(18, 2)
+  plannedOn DateTime
+  /// PLANNED | PAID | CANCELLED
+  status   String    @default("PLANNED")
+  paidAt   DateTime?
+  paidBy   String?
+
+  @@unique([loanId, sequence])
+  @@index([tenantId])
+  @@map("loan_tranches")
+}
+
+/// A change to a running loan: part prepayment, settlement in full,
+/// rescheduling, a skipped EMI or a manual balance adjustment. Employee
+/// requests wait for approval; admin adjustments apply at once.
+model LoanAdjustment {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  loanId   String
+
+  /// PREPAYMENT | SETTLEMENT | RESCHEDULE | SKIP | BALANCE
+  kind        String
+  amount      Decimal? @db.Decimal(18, 2)
+  /// RESCHEDULE: { installments }; SKIP: { year, month }.
+  details     Json?
+  reason      String
+  /// PENDING | APPLIED | REJECTED | WITHDRAWN
+  status      String   @default("PENDING")
+  workflowRequestId String?
+  requestedBy String
+  result      String?
+  appliedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, loanId])
+  @@index([tenantId, status])
+  @@map("loan_adjustments")
+}
+
+/// A proposed change to a loan product (a policy's rule for a category),
+/// applied only once approved.
+model LoanProductChange {
+  id         String @id @default(cuid())
+  tenantId   String
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  policyId   String
+  categoryId String
+
+  payload     Json
+  summary     String
+  /// PENDING | APPLIED | REJECTED | WITHDRAWN
+  status      String   @default("PENDING")
+  workflowRequestId String?
+  requestedBy String
+  decidedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, status])
+  @@map("loan_product_changes")
+}
+
+// --- Benefits ---------------------------------------------------------------
+
+/// An insurance, retirement or wellness plan employees enrol in.
+model BenefitPlan {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  code        String
+  name        String
+  /// HEALTH | LIFE | ACCIDENT | DENTAL | VISION | RETIREMENT | WELLNESS | OTHER
+  type        String
+  provider    String?
+  description String?
+  coverageAmount         Decimal? @db.Decimal(18, 2)
+  /// Monthly premium for employee-only cover.
+  monthlyPremium         Decimal  @default(0) @db.Decimal(18, 2)
+  /// { EMPLOYEE: 1, EMPLOYEE_SPOUSE: 1.8, FAMILY: 2.5 } — premium multipliers.
+  tierFactors            Json?
+  /// FLAT | PERCENT_OF_PREMIUM | MATCH_PERCENT_OF_BASIC
+  employerRule           String   @default("PERCENT_OF_PREMIUM")
+  employerValue          Decimal  @default(0) @db.Decimal(18, 2)
+  employerCap            Decimal? @db.Decimal(18, 2)
+  /// { minTenureDays, bandIds[], locationIds[], departmentIds[], workerTypeIds[], excludeProbation }
+  eligibility            Json?
+  waitingPeriodDays      Int      @default(0)
+  /// Relationships that may be covered: SPOUSE, CHILD, PARENT…
+  allowedRelations       String[] @default([])
+  maxDependents          Int      @default(0)
+  childMaxAge            Int?
+  requiresDependentProof Boolean  @default(true)
+  /// Name of the payroll deduction the employee share is taken under.
+  deductionName          String?
+  planYearStart          DateTime?
+  planYearEnd            DateTime?
+  renewalDate            DateTime?
+  previousPlanId         String?
+  /// DRAFT | PENDING_APPROVAL | ACTIVE | RETIRED
+  status                 String   @default("DRAFT")
+  workflowRequestId      String?
+  createdBy              String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  enrollments BenefitEnrollment[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@map("benefit_plans")
+}
+
+/// When employees may enrol: open enrolment for everyone, or a personal
+/// window after joining or a life event.
+model BenefitEnrollmentWindow {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name       String
+  /// OPEN | NEW_HIRE | LIFE_EVENT
+  kind       String   @default("OPEN")
+  opensOn    DateTime
+  closesOn   DateTime
+  planIds    String[] @default([])
+  /// For a personal window.
+  employeeId String?
+  announcedAt    DateTime?
+  lastReminderAt DateTime?
+  closedAt   DateTime?
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, closesOn])
+  @@map("benefit_enrollment_windows")
+}
+
+model BenefitEnrollment {
+  id         String      @id @default(cuid())
+  tenantId   String
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee    @relation("BenefitEnrollee", fields: [employeeId], references: [id], onDelete: Cascade)
+  planId     String
+  plan       BenefitPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  windowId   String?
+
+  /// EMPLOYEE | EMPLOYEE_SPOUSE | FAMILY
+  tier            String   @default("EMPLOYEE")
+  dependentIds    String[] @default([])
+  /// Retirement plans: employee contribution as % of basic.
+  contributionPct Decimal? @db.Decimal(6, 2)
+  employeeMonthly Decimal  @default(0) @db.Decimal(18, 2)
+  employerMonthly Decimal  @default(0) @db.Decimal(18, 2)
+  coverageStart   DateTime?
+  coverageEnd     DateTime?
+  /// PENDING_APPROVAL | ACTIVE | REJECTED | WAIVED | ENDED | CANCELLED
+  status          String   @default("PENDING_APPROVAL")
+  workflowRequestId String?
+  /// Last payroll month the employee share was pushed for, as YYYY*12+M-1.
+  deductedThrough Int?
+  endReason       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@index([planId])
+  @@map("benefit_enrollments")
+}
+
+/// Employee request to add or change a dependent, with proof for HR.
+model DependentRequest {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee @relation("DependentRequester", fields: [employeeId], references: [id], onDelete: Cascade)
+  dependentId String?
+
+  /// ADD | UPDATE | REMOVE
+  action       String   @default("ADD")
+  name         String
+  relationship String
+  dateOfBirth  DateTime?
+  proofUrl     String?
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN
+  status       String   @default("PENDING")
+  workflowRequestId String?
+  decidedAt    DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId, status])
+  @@map("dependent_requests")
+}
+
+/// Marriage, birth and the like: once approved, opens a personal window.
+model BenefitLifeEvent {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation("LifeEventOf", fields: [employeeId], references: [id], onDelete: Cascade)
+
+  /// MARRIAGE | BIRTH | ADOPTION | DIVORCE | DEATH_OF_DEPENDENT | OTHER
+  kind      String
+  eventDate DateTime
+  notes     String?
+  proofUrl  String?
+  /// PENDING | APPROVED | REJECTED
+  status    String   @default("PENDING")
+  workflowRequestId String?
+  windowId  String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, status])
+  @@map("benefit_life_events")
+}
+
+/// An employee outside a plan's eligibility asking to be let in.
+model BenefitEligibilityException {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation("BenefitExceptionFor", fields: [employeeId], references: [id], onDelete: Cascade)
+  planId     String
+
+  reason    String
+  /// Why the rules exclude them, at the time of asking.
+  ruleGaps  String?
+  /// PENDING | APPROVED | REJECTED
+  status    String   @default("PENDING")
+  workflowRequestId String?
+  decidedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, status])
+  @@map("benefit_eligibility_exceptions")
+}
+
+/// Employee premiums pushed to payroll, month by month (arrears included).
+model BenefitDeduction {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  enrollmentId String
+  year         Int
+  month        Int
+  amount       Decimal  @db.Decimal(18, 2)
+  /// REGULAR | ARREARS
+  kind         String   @default("REGULAR")
+  adhocId      String?
+  createdAt    DateTime @default(now())
+
+  @@unique([enrollmentId, year, month])
+  @@index([tenantId, year, month])
+  @@map("benefit_deductions")
+}
+
+/// A carrier census file generated, and the carrier's file reconciled against it.
+model BenefitCarrierFile {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId   String
+
+  /// EXPORT | RECONCILIATION
+  kind       String
+  rowCount   Int
+  /// Reconciliation result: { matched, missingAtCarrier[], extraAtCarrier[], premiumMismatches[] }
+  result     Json?
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, planId])
+  @@map("benefit_carrier_files")
+}
+
+// --- Compensation planning --------------------------------------------------
+
+/// A reusable plan setup: merit matrix, guardrails, eligibility and budget.
+model CompPlanTemplate {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name        String
+  /// [{ minRating, maxRating, pct }] plus defaultPct for the unrated.
+  meritMatrix Json
+  defaultPct  Decimal @default(0) @db.Decimal(6, 2)
+  /// { minPct, maxPct, reasonAbovePct, maxPromotionPct }
+  guardrails  Json?
+  /// { minTenureDays, excludeProbation, excludeNotice, monthsSinceLastIncrease }
+  eligibility Json?
+  budgetPct   Decimal @default(0) @db.Decimal(6, 2)
+  prorate     Boolean @default(true)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("comp_plan_templates")
+}
+
+/// A compensation planning round.
+model CompPlan {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name          String
+  templateId    String?
+  reviewCycleId String?
+  /// Increases take effect from here.
+  effectiveDate DateTime
+  /// Joiners after this date get a prorated increase.
+  periodStart   DateTime
+  meritMatrix   Json
+  defaultPct    Decimal @default(0) @db.Decimal(6, 2)
+  guardrails    Json?
+  eligibility   Json?
+  budgetPct     Decimal @default(0) @db.Decimal(6, 2)
+  prorate       Boolean @default(true)
+  /// DRAFT | PLANNING | CALIBRATION | PENDING_APPROVAL | APPROVED | APPLIED | REJECTED
+  status        String  @default("DRAFT")
+  workflowRequestId String?
+  approvedAt    DateTime?
+  appliedAt     DateTime?
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items CompPlanItem[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+  @@map("comp_plans")
+}
+
+model CompPlanItem {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId     String
+  plan       CompPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation("CompPlanFor", fields: [employeeId], references: [id], onDelete: Cascade)
+  /// The manager whose worksheet and pool this sits in.
+  ownerEmployeeId String?
+
+  currentCtc    Decimal @db.Decimal(18, 2)
+  rating        Decimal? @db.Decimal(9, 2)
+  eligible      Boolean @default(true)
+  ineligibleReason String?
+  meritPct      Decimal @default(0) @db.Decimal(6, 2)
+  promotionPct  Decimal @default(0) @db.Decimal(6, 2)
+  newPayGradeId String?
+  marketPct     Decimal @default(0) @db.Decimal(6, 2)
+  /// 0–1: share of the year in service, for joiners in the period.
+  prorationFactor Decimal @default(1) @db.Decimal(6, 4)
+  totalPct      Decimal @default(0) @db.Decimal(6, 2)
+  newCtc        Decimal @db.Decimal(18, 2)
+  compaBefore   Decimal? @db.Decimal(6, 3)
+  compaAfter    Decimal? @db.Decimal(6, 3)
+  note          String?
+  /// NONE | PENDING | APPROVED | REJECTED — guardrail breaches need one.
+  exceptionStatus String @default("NONE")
+  exceptionWorkflowId String?
+  /// DRAFT | APPLIED | SKIPPED
+  status        String  @default("DRAFT")
+  salaryRevisionId String?
+  updatedBy     String?
+  updatedAt     DateTime @updatedAt
+
+  @@unique([planId, employeeId])
+  @@index([tenantId])
+  @@map("comp_plan_items")
+}
+
+/// Increase budget handed to a manager for their team.
+model CompBudgetPool {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId   String
+  ownerEmployeeId String
+  amount   Decimal @db.Decimal(18, 2)
+  createdAt DateTime @default(now())
+
+  @@unique([planId, ownerEmployeeId])
+  @@map("comp_budget_pools")
+}
+
+model CompPoolTransfer {
+  id         String @id @default(cuid())
+  tenantId   String
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId     String
+  fromPoolId String
+  toPoolId   String
+  amount     Decimal @db.Decimal(18, 2)
+  reason     String
+  byUserId   String
+  createdAt  DateTime @default(now())
+
+  @@index([planId])
+  @@map("comp_pool_transfers")
+}
+
+/// A calibration meeting on a plan; changes made in it are logged against it.
+model CompCalibrationSession {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId   String
+  name     String
+  scheduledAt DateTime
+  /// Department scope, or the whole plan.
+  departmentId String?
+  notes    String?
+  /// OPEN | CLOSED
+  status   String @default("OPEN")
+  closedAt DateTime?
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@index([planId])
+  @@map("comp_calibration_sessions")
+}
+
+/// Every decision on a plan or line, with the before and after.
+model CompDecisionLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId    String
+  itemId    String?
+  sessionId String?
+  action    String
+  before    Json?
+  after     Json?
+  reason    String?
+  actorUserId String?
+  createdAt DateTime @default(now())
+
+  @@index([planId, createdAt])
+  @@map("comp_decision_logs")
+}
+
+/// A total-rewards statement: previewed by HR, then published to the employee.
+model CompStatement {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId     String
+  employeeId String
+  employee   Employee @relation("CompStatementFor", fields: [employeeId], references: [id], onDelete: Cascade)
+  content    Json
+  publishedAt    DateTime?
+  acknowledgedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@unique([planId, employeeId])
+  @@index([tenantId, employeeId])
+  @@map("comp_statements")
+}
+
+/// Pay ranges at a location run this much above or below the grade's range.
+model LocationPayDifferential {
+  id         String  @id @default(cuid())
+  tenantId   String
+  tenant     Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  locationId String
+  pct        Decimal @db.Decimal(6, 2)
+  updatedBy  String?
+  updatedAt  DateTime @updatedAt
+
+  @@unique([tenantId, locationId])
+  @@map("location_pay_differentials")
+}
+
+/// A proposed new range for a pay grade, applied once approved.
+model PayRangeChange {
+  id         String @id @default(cuid())
+  tenantId   String
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  payGradeId String
+  minAnnual  Decimal @db.Decimal(18, 2)
+  midAnnual  Decimal @db.Decimal(18, 2)
+  maxAnnual  Decimal @db.Decimal(18, 2)
+  reason     String
+  /// PENDING | APPLIED | REJECTED
+  status     String @default("PENDING")
+  workflowRequestId String?
+  requestedBy String
+  decidedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, status])
+  @@map("pay_range_changes")
+}
+
+/// A group of comparable roles for pay-equity analysis.
+model PayEquityCohort {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  departmentId  String?
+  bandId        String?
+  payGradeId    String?
+  designationId String?
+  locationId    String?
+  /// Gap (in %) above which the cohort is flagged.
+  thresholdPct Decimal @default(5) @db.Decimal(6, 2)
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("pay_equity_cohorts")
+}
+
+/// A change to one employee's allowance, applied as a component override
+/// once approved.
+model AllowanceChangeRequest {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee @relation("AllowanceChangeFor", fields: [employeeId], references: [id], onDelete: Cascade)
+  componentId String
+  currentMonthly Decimal? @db.Decimal(18, 2)
+  newMonthly  Decimal  @db.Decimal(18, 2)
+  effectiveFrom DateTime
+  reason      String
+  /// PENDING | APPLIED | REJECTED | WITHDRAWN
+  status      String   @default("PENDING")
+  workflowRequestId String?
+  overrideId  String?
+  requestedBy String
+  decidedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, status])
+  @@map("allowance_change_requests")
+}

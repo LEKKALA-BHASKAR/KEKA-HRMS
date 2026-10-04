@@ -39,7 +39,8 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
 
   return (
     <>
-      <PageHead title="Loans & advances" subtitle="Requests, repayment schedules, and EMIs recovered through payroll" />
+      <PageHead title="Loans & advances" subtitle="Requests, repayment schedules, and EMIs recovered through payroll"
+        actions={<><Link className="btn" href="/payroll/loans/portfolio">Portfolio & reports</Link></>} />
       <div className="grid grid-4" style={{ marginBottom: 16 }}>
         <Stat label="Awaiting approval" value={String(pending.length)} meta={formatINR(pending.reduce((s, l) => s + Number(l.principal), 0))} />
         <Stat label="Active loans" value={String(active.length)} meta="approved or repaying" />
@@ -63,8 +64,8 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                 <tbody>
                   {pending.map((l) => (
                     <tr key={l.id}>
-                      <td><Person name={l.employee.displayName ?? ""} meta={l.employee.employeeNumber} /></td>
-                      <td>{l.category.name}{l.category.code ? <div className="text-xs subtle">{l.category.code}</div> : null}</td>
+                      <td><Link href={`/payroll/loans/${l.id}`}><Person name={l.employee.displayName ?? ""} meta={l.employee.employeeNumber} /></Link></td>
+                      <td>{l.category.name}{l.category.code ? <div className="text-xs subtle">{l.category.code}</div> : null}{l.documentUrl ? <div><a className="text-xs" href={l.documentUrl}>Document</a></div> : null}</td>
                       <td className="num">{formatINR(Number(l.principal))}</td>
                       <td className="num">{l.installments}</td>
                       <td className="num">{formatINR(Number(l.emiAmount))}</td>
@@ -98,7 +99,7 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                       : null;
                     return (
                       <tr key={l.id}>
-                        <td><Person name={l.employee.displayName ?? ""} meta={l.employee.employeeNumber} /></td>
+                        <td><Link href={`/payroll/loans/${l.id}`}><Person name={l.employee.displayName ?? ""} meta={l.employee.employeeNumber} /></Link></td>
                         <td>{l.category.name}<div className="text-xs subtle">{l.interestType === "NONE" ? "interest-free" : `${Number(l.interestRate)}% ${l.interestType.toLowerCase()}`}</div></td>
                         <td className="num">{formatINR(Number(l.principal))}</td>
                         <td>
@@ -126,9 +127,10 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
 }
 
 async function Setup({ tenantId, policyId }: { tenantId: string; policyId?: string }) {
-  const [categories, policies] = await Promise.all([
+  const [categories, policies, pendingChanges] = await Promise.all([
     prisma.loanCategory.findMany({ where: { tenantId }, orderBy: { name: "asc" } }),
     prisma.loanPolicy.findMany({ where: { tenantId, isActive: true }, include: { rules: true }, orderBy: { createdAt: "asc" } }),
+    prisma.loanProductChange.findMany({ where: { tenantId, status: "PENDING" } }),
   ]);
   const policy = policies.find((p) => p.id === policyId) ?? policies[0] ?? null;
   const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
@@ -142,19 +144,20 @@ async function Setup({ tenantId, policyId }: { tenantId: string; policyId?: stri
       ) : null}
       {policy ? (
         <Card title={`Eligibility — ${policy.name}`}>
-          <LoanPolicyForm policy={{ id: policy.id, requireProbationComplete: policy.requireProbationComplete, blockOnNoticePeriod: policy.blockOnNoticePeriod, minDaysFromJoining: policy.minDaysFromJoining, minAnnualSalary: n(policy.minAnnualSalary), maxAnnualSalary: n(policy.maxAnnualSalary) }} />
+          <LoanPolicyForm policy={{ id: policy.id, requireProbationComplete: policy.requireProbationComplete, blockOnNoticePeriod: policy.blockOnNoticePeriod, minDaysFromJoining: policy.minDaysFromJoining, minAnnualSalary: n(policy.minAnnualSalary), maxAnnualSalary: n(policy.maxAnnualSalary), requireChangeApproval: policy.requireChangeApproval }} />
         </Card>
       ) : null}
       {categories.map((c) => {
         const rule = policy?.rules.find((r) => r.categoryId === c.id);
         return (
           <Card key={c.id} title={c.code ? `${c.name} · ${c.code}` : c.name} description={c.isConcessional ? `Concessional · benchmark ${Number(c.sbiBenchmarkRate ?? 0)}%` : undefined}>
-            <LoanCategoryForm category={{ id: c.id, name: c.name, code: c.code, description: c.description, isConcessional: c.isConcessional, sbiBenchmarkRate: n(c.sbiBenchmarkRate) }} />
+            <LoanCategoryForm category={{ id: c.id, name: c.name, code: c.code, description: c.description, isConcessional: c.isConcessional, sbiBenchmarkRate: n(c.sbiBenchmarkRate), isEmergency: c.isEmergency, emergencyMaxMonthsSalary: n(c.emergencyMaxMonthsSalary) }} />
             {policy ? (
               <>
                 <div className="divider" />
                 <div className="text-xs strong subtle" style={{ marginBottom: 8 }}>REPAYMENT RULE{rule ? "" : " — none yet, so this category cannot be requested"}</div>
-                <LoanRuleForm policyId={policy.id} categoryId={c.id} rule={rule ? { interestType: rule.interestType, interestRate: n(rule.interestRate), maxInstallments: rule.maxInstallments, commencementMonths: rule.commencementMonths, maxAmount: n(rule.maxAmount), maxPercentOfSalary: n(rule.maxPercentOfSalary) } : undefined} />
+                <LoanRuleForm policyId={policy.id} categoryId={c.id} rule={rule ? { interestType: rule.interestType, interestRate: n(rule.interestRate), maxInstallments: rule.maxInstallments, commencementMonths: rule.commencementMonths, maxAmount: n(rule.maxAmount), maxPercentOfSalary: n(rule.maxPercentOfSalary), requiresDocuments: rule.requiresDocuments, processingFeePct: n(rule.processingFeePct), processingFeeFlat: n(rule.processingFeeFlat) } : undefined} />
+                {pendingChanges.filter((ch) => ch.categoryId === c.id && ch.policyId === policy.id).map((ch) => <div key={ch.id} className="text-xs" style={{ color: "var(--warning)", marginTop: 6 }}>Waiting for approval: {ch.summary}</div>)}
               </>
             ) : null}
           </Card>

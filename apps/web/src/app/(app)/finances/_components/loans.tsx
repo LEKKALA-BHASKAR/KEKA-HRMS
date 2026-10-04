@@ -101,6 +101,11 @@ function ApplyLoanForm({ categories, months, onDone }: { categories: Array<{ id:
         <label className="label" htmlFor="loan-note">Note</label>
         <input id="loan-note" name="purpose" className="input" maxLength={500} placeholder="Provide the note for applying loan" value={form.purpose} onChange={set("purpose")} />
       </div>
+      <div className={s.fld}>
+        <label className="label" htmlFor="loan-doc">Supporting document</label>
+        <input id="loan-doc" name="document" type="file" accept="application/pdf,image/png,image/jpeg" className="text-xs" />
+        <div className="hint">Required for some loan types (quotation, medical estimate).</div>
+      </div>
 
       <div className={s.loanTiles}>
         <div className={s.loanTile}><div className={s.loanTileLabel}>Total Repayment Amount</div><div className={s.loanTileValue}>{inr0(preview?.total ?? 0)}</div></div>

@@ -195,6 +195,10 @@ model ExpenseCategory {
   /// Ordered approver role ids. Overrides the policy chain for this category.
   approverRoleIds      Json?
   isActive             Boolean  @default(true)
+  /// Money depth: paid as taxable earnings rather than a non-taxable reimbursement.
+  isTaxable            Boolean  @default(false)
+  /// STANDARD | MILEAGE (amount from km × rate) | PER_DIEM
+  kind                 String   @default("STANDARD")
 
   createdAt DateTime @default(now())
 
@@ -224,6 +228,18 @@ model ExpensePolicy {
   escalationAboveAmount Decimal? @db.Decimal(18, 2)
   isDefault             Boolean  @default(false)
   isActive              Boolean  @default(true)
+  /// Money depth. DRAFT | PENDING_APPROVAL | ACTIVE | RETIRED — a policy change applies once approved.
+  status                String   @default("ACTIVE")
+  workflowRequestId     String?
+  /// Who it covers; blank covers everyone. The most specific match wins.
+  departmentId          String?
+  locationId            String?
+  bandId                String?
+  /// Claims approved after this day of the month are paid the month after.
+  payrollCutoffDay      Int?
+  templateKey           String?
+  /// A revision of an active policy replaces it once approved.
+  supersedesId          String?
 
   createdAt DateTime @default(now())
 
@@ -286,6 +302,11 @@ model ExpenseClaim {
   paidInRunId   String?
   projectId     String?
   costCenterId  String?
+  /// Money depth: the pre-approval and trip the claim is made under.
+  preApprovalId String?
+  tripId        String?
+  /// Reason code given with a rejection.
+  rejectCode    String?
 
   submittedAt  DateTime?
   approvedBy   String?
@@ -329,6 +350,13 @@ model ExpenseClaimLine {
   /// Reason a line was reduced or refused.
   reviewNote String?
   isApproved Boolean?
+  /// Money depth: mileage lines, duplicate flags, reason codes, receipt checks.
+  distanceKm        Decimal?  @db.Decimal(10, 1)
+  vehicleType       String?
+  duplicateOfLineId String?
+  reasonCode        String?
+  receiptCheck      String?
+  receiptUpdatedAt  DateTime?
 
   @@index([claimId])
   @@index([categoryId])
@@ -423,6 +451,18 @@ model TravelRequest {
   bookingRef   String?
   bookedBy     String?
   bookedAt     DateTime?
+
+  /// Money depth: taxonomy, policy, checks and second-level approval.
+  purposeId          String?
+  policyId           String?
+  /// Policy breaches found when the trip was requested or changed.
+  violations         Json?
+  riskLevel          String?
+  destinationCountry String?
+  insuranceProvider  String?
+  insurancePolicyNo  String?
+  insuranceValidTo   DateTime?
+  workflowRequestId  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

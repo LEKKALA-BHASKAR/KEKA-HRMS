@@ -142,6 +142,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         { label: "Summary", href: "/team", paths: ["/team"] },
         isManager && can(viewer, P.LEAVE_APPROVE) && { label: "Leave", href: "/team/leave", count: counts.leave },
         isManager && can(viewer, P.ATTENDANCE_APPROVE) && { label: "Attendance", href: "/team/attendance", count: counts.attendance },
+        isManager && { label: "Compensation", href: "/team/compensation" },
       ]),
     });
     if (on("payroll")) sections.push({
@@ -151,6 +152,8 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         ...(opts.hideMyPay ? [] : [{ label: "My Pay", href: "/finances/pay", paths: ["/finances/pay", "/me/pay"] }]),
         { label: "Manage Tax", href: "/finances/tax", paths: ["/finances/tax", "/me/tax"] },
         { label: "Loans", href: "/finances/loans", paths: ["/finances/loans", "/me/loans"] },
+        { label: "Benefits", href: "/finances/benefits" },
+        { label: "Compensation", href: "/finances/compensation" },
       ],
     });
   }
@@ -297,6 +300,8 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     can(viewer, P.PAYROLL_RUN) && { label: "Flexible Benefits", href: "/payroll/fbp" },
     can(viewer, P.PAYROLL_RUN) && { label: "Perks", href: "/payroll/perks" },
     can(viewer, P.LOAN_MANAGE) && { label: "Loans", href: "/payroll/loans" },
+    can(viewer, P.BENEFIT_MANAGE) && { label: "Benefits", href: "/payroll/benefits" },
+    can(viewer, P.SALARY_REVISE) && { label: "Compensation", href: "/payroll/compensation" },
     can(viewer, P.TAX_DECLARATION_APPROVE) && { label: "Tax Proofs", href: "/payroll/tax-proofs" },
     can(viewer, P.TAX_DECLARATION_APPROVE) && { label: "Tax Admin", href: "/payroll/tax-admin" },
     can(viewer, P.SALARY_REVISE) && { label: "Salary Overrides", href: "/payroll/salary-overrides" },

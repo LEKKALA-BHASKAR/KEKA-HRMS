@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
+import { MONEY_WORKFLOW_ENTITY_TYPES } from "./money-math";
 
 /**
  * Pure helpers for governance: workflow routing (definition matching, step
@@ -25,6 +26,7 @@ export const WORKFLOW_ENTITY_TYPES = {
   COMPLIANCE_ITEM: "Compliance checklist sign-off",
   POLICY_PUBLISH: "Policy acknowledgement campaigns",
   CONSENT_PURPOSE: "Consent purpose publication",
+  ...MONEY_WORKFLOW_ENTITY_TYPES,
 } as const;
 export type WorkflowEntityType = keyof typeof WORKFLOW_ENTITY_TYPES;
 export const isWorkflowEntityType = (v: string): v is WorkflowEntityType => v in WORKFLOW_ENTITY_TYPES;

@@ -73,6 +73,7 @@ export const PERMISSIONS = {
   FNF_APPROVE: "payroll.fnf.approve",
   LOAN_MANAGE: "payroll.loan.manage",
   LOAN_APPROVE: "payroll.loan.approve",
+  BENEFIT_MANAGE: "payroll.benefit.manage",
   ACCOUNTING_MANAGE: "payroll.accounting.manage",
 
   // --- Time and leave -----------------------------------------------------
@@ -316,6 +317,7 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.FNF_APPROVE, label: "Approve settlements" },
       { key: PERMISSIONS.LOAN_MANAGE, label: "Manage loans" },
       { key: PERMISSIONS.LOAN_APPROVE, label: "Approve loans" },
+      { key: PERMISSIONS.BENEFIT_MANAGE, label: "Administer benefits" },
       { key: PERMISSIONS.ACCOUNTING_MANAGE, label: "Manage accounting export" },
     ],
   },

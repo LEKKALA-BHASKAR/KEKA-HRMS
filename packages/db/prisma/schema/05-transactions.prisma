@@ -301,6 +301,10 @@ model LoanCategory {
   isActive         Boolean  @default(true)
   /// Short code shown beside the name: "Personal (PL001)".
   code             String?
+  /// Money depth: an emergency salary advance — no tenure wait, capped at
+  /// this many months of gross salary, repaid within maxInstallments.
+  isEmergency              Boolean  @default(false)
+  emergencyMaxMonthsSalary Decimal? @db.Decimal(6, 2)
 
   createdAt DateTime @default(now())
 
@@ -334,6 +338,8 @@ model LoanPolicy {
   /// Auto-approve or skip a level after N days of inaction.
   autoApproveAfterDays Int?
   autoApproveAction    String? @default("APPROVE")
+  /// Money depth: changes to this policy's rules wait for approval.
+  requireChangeApproval Boolean @default(false)
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -366,6 +372,9 @@ model LoanPolicyRule {
   maxAmount          Decimal? @db.Decimal(18, 2)
   maxPercentOfSalary Decimal? @db.Decimal(9, 4)
   requiresDocuments  Boolean  @default(false)
+  /// Money depth: processing fee, a % of the principal and/or a flat amount.
+  processingFeePct   Decimal? @db.Decimal(6, 3)
+  processingFeeFlat  Decimal? @db.Decimal(18, 2)
 
   @@unique([policyId, categoryId])
   @@index([policyId])
@@ -423,6 +432,9 @@ model Loan {
   documentUrl  String?
   /// Why it was rejected, or a note on approval.
   decisionNote String?
+  /// Money depth: fee charged at disbursal, and disbursal in tranches.
+  processingFee Decimal  @default(0) @db.Decimal(18, 2)
+  hasTranches   Boolean  @default(false)
 
   schedule LoanInstallment[]
 
@@ -456,6 +468,8 @@ model LoanInstallment {
   status     InstallmentStatus @default(SCHEDULED)
   runId      String?
   deductedAt DateTime?
+  /// Money depth: when the overdue alert went out.
+  overdueAlertedAt DateTime?
 
   @@unique([loanId, sequence])
   @@index([loanId, year, month])
