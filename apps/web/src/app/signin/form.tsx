@@ -30,7 +30,7 @@ const initial: SignInState = {};
  * not the account exists (lockout included). Two-factor still redirects to
  * /signin/verify from inside the action.
  */
-export function SignInForm({ product = "Keka", next, sso, ssoError }: { product?: string; next?: string; sso?: { name: string; required: boolean } | null; ssoError?: string | null }) {
+export function SignInForm({ product = "BooS-HR", next, sso, ssoError }: { product?: string; next?: string; sso?: { name: string; required: boolean } | null; ssoError?: string | null }) {
   const [state, formAction, pending] = useActionState(signIn, initial);
   const [step, setStep] = useState<"email" | "password">("email");
   const [email, setEmail] = useState("");

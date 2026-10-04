@@ -92,7 +92,7 @@ export async function runScheduledReports(now: Date = new Date(), opts: { ids?: 
           data: recipients.map((to) => ({
             tenantId: s.tenantId, toAddress: to, subject: `${s.name} — ${day}`,
             textBody: `${out.title}: ${out.rows} row(s), as of ${day}. The CSV follows; save the lines below as a .csv file to open it in a spreadsheet.` +
-              `${clipped ? " The report is larger than an email allows, so it is cut short here; download it in full from Keka." : ""}\n\n${body}`,
+              `${clipped ? " The report is larger than an email allows, so it is cut short here; download it in full from BooS-HR." : ""}\n\n${body}`,
             relatedType: "ScheduledReport", relatedId: s.id,
           })),
         });

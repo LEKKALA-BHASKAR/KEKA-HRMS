@@ -14,7 +14,7 @@ import { PERSON_SELECT, toPerson, type PersonLite } from "../_lib/data";
 import s from "../home.module.css";
 import { profileChecks } from "@keka/services";
 
-export const metadata = { title: "Welcome — Keka" };
+export const metadata = { title: "Welcome — BooS-HR" };
 
 /**
  * Home → Welcome: the new-joiner page. Who you are, how complete your
@@ -197,8 +197,8 @@ export default async function WelcomePage() {
 
           {/* --- Explore --- */}
           <section className={s.card} aria-labelledby="explore">
-            <h2 id="explore" className={s.cardTitle}>Explore keka</h2>
-            <div className={s.cardSub}>Explore all things you can do in Keka</div>
+            <h2 id="explore" className={s.cardTitle}>Explore BooS-HR</h2>
+            <div className={s.cardSub}>Explore all things you can do in BooS-HR</div>
             <ul className={s.exploreGrid} style={{ listStyle: "none", padding: 0, marginBottom: 0 }}>
               {explore.map(({ href, title, text, Icon }) => (
                 <li key={href} style={{ display: "flex" }}>

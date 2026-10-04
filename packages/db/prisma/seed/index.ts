@@ -40,7 +40,7 @@ function log(step: string, detail = "") {
 }
 
 async function main() {
-  console.log("\nSeeding Keka platform\n" + "-".repeat(64));
+  console.log("\nSeeding BooS-HR platform\n" + "-".repeat(64));
 
   // ---------------------------------------------------------------------
   //  Reference data (tenant-independent statutory tables)

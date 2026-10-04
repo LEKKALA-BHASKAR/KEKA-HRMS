@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { readPendingSignIn } from "@/lib/session";
 import { VerifyForm } from "../auth-forms";
 
-export const metadata = { title: "Verify — Keka" };
+export const metadata = { title: "Verify — BooS-HR" };
 
 export default async function VerifyPage() {
   const pending = await readPendingSignIn();

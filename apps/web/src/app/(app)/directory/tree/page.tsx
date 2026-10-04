@@ -9,7 +9,7 @@ import { DIRECTORY_TABS } from "../tabs";
 import { OrgTree, type TreePerson } from "./org-tree";
 import s from "./tree.module.css";
 
-export const metadata = { title: "Organization Tree — Keka" };
+export const metadata = { title: "Organization Tree — BooS-HR" };
 
 /** The few directory fields a node shows — a strict subset of DIRECTORY_SELECT. */
 const { id, displayName, firstName, lastName, jobTitleName, photoUrl, reportingManagerId, department } = DIRECTORY_SELECT;

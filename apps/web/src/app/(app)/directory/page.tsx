@@ -11,7 +11,7 @@ import { DirectoryFilters, type FilterDef } from "./filters";
 import { CardMenu } from "./card-menu";
 import s from "./directory.module.css";
 
-export const metadata = { title: "Employee Directory — Keka" };
+export const metadata = { title: "Employee Directory — BooS-HR" };
 
 const PAGE_SIZE = 60;
 const MAX_SHOWN = 3000;

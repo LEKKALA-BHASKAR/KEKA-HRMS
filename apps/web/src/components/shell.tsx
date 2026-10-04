@@ -67,7 +67,7 @@ export function AppShell({ sections, user, company, notifications, actions, sett
     <div className="k-shell">
       <header className="k-topbar">
         <Link href="/" className="k-brand" aria-label="Home">
-          <span className="k-wordmark">keka</span>
+          <span className="k-wordmark">BooS-HR</span>
           <svg className="k-spark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8z" fill="currentColor" /></svg>
         </Link>
         <button type="button" className="k-topbar-btn k-rail-toggle" aria-label="Open navigation" aria-expanded={railOpen} onClick={() => setRailOpen((v) => !v)}><IconMenu /></button>

@@ -6,7 +6,7 @@ import type { MetadataRoute } from "next";
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Keka — Clock in",
+    name: "BooS-HR — Clock in",
     short_name: "Clock in",
     description: "Clock in and out from your phone",
     start_url: "/me/clock",

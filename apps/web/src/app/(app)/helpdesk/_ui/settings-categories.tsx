@@ -259,7 +259,7 @@ function PredefinedForm({ options, onDone }: { options: CategoryOptions["predefi
   useEffect(() => { if (state.ok) onDone(); }, [state, onDone]);
   return (
     <form action={action}>
-      <div className={s.band}>Start from Keka&apos;s common categories. You can rename them and set heads afterwards.</div>
+      <div className={s.band}>Start from the common categories. You can rename them and set heads afterwards.</div>
       <FormBanner state={state.ok ? {} : state} />
       <div className={s.radioCol}>
         {options.map((o) => (

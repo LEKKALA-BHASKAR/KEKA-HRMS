@@ -4,7 +4,7 @@ import { ResetForm } from "../auth-forms";
 import { AuthLayout } from "../auth-layout";
 import s from "../auth.module.css";
 
-export const metadata = { title: "Choose a password — Keka" };
+export const metadata = { title: "Choose a password — BooS-HR" };
 
 export default async function ResetPage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {
   const { token } = await searchParams;

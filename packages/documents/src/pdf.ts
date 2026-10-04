@@ -187,7 +187,7 @@ export class PdfDoc {
     const pdfDate = `D:${d.toISOString().replace(/[-:T]/g, "").slice(0, 14)}Z`;
     objects.push({
       num: infoNum,
-      body: (key) => Buffer.from(`<< /Title ${str(this.meta.title, infoNum)(key)} /Producer ${str("Keka HR", infoNum)(key)}${this.meta.author ? ` /Author ${str(this.meta.author, infoNum)(key)}` : ""} /CreationDate ${str(pdfDate, infoNum)(key)} >>`),
+      body: (key) => Buffer.from(`<< /Title ${str(this.meta.title, infoNum)(key)} /Producer ${str("BooS-HR", infoNum)(key)}${this.meta.author ? ` /Author ${str(this.meta.author, infoNum)(key)}` : ""} /CreationDate ${str(pdfDate, infoNum)(key)} >>`),
     });
     if (enc) {
       // The encryption dictionary itself is never encrypted.

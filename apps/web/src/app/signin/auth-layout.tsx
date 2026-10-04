@@ -19,7 +19,7 @@ export function AuthLayout({ title, subtitle, children }: { title: ReactNode; su
           {children}
         </div>
         <footer className={s.footer}>
-          <span className={s.wordmark} aria-label="Keka">keka</span>
+          <span className={s.wordmark} aria-label="BooS-HR">BooS-HR</span>
           <span className={s.footerText}>HR &amp; Payroll for your whole organisation.</span>
         </footer>
       </main>

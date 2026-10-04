@@ -94,7 +94,7 @@ export async function webhookOpAction(_prev: ActionState, formData: FormData): P
   if (!ep) return { ok: false, message: "Webhook not found." };
   let res: { ok: boolean; message: string };
   if (op === "ping") {
-    const queued = await emitEvent(viewer.tenantId, "ping", { message: "Test event from Keka" }, id);
+    const queued = await emitEvent(viewer.tenantId, "ping", { message: "Test event from BooS-HR" }, id);
     res = queued ? { ok: true, message: "Test event queued. It is sent within a few minutes." } : { ok: false, message: "Resume the webhook before sending a test." };
   } else if (op === "pause" || op === "resume") res = await setWebhookActive(viewer.tenantId, id, op === "resume");
   else if (op === "delete") res = await deleteWebhook(viewer.tenantId, id);

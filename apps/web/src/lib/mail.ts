@@ -17,7 +17,7 @@ export const fileTransport: OutboxTransport = {
   async send(m) {
     await mkdir(MAIL_DIR, { recursive: true });
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const head = [`To: ${m.to}`, `From: Keka <no-reply@keka.local>`, `Subject: ${m.subject}`, `Date: ${new Date().toUTCString()}`, "MIME-Version: 1.0"];
+    const head = [`To: ${m.to}`, `From: BooS-HR <no-reply@boos-hr.local>`, `Subject: ${m.subject}`, `Date: ${new Date().toUTCString()}`, "MIME-Version: 1.0"];
     const files = m.attachmentFileIds?.length ? await prisma.storedFile.findMany({ where: { id: { in: m.attachmentFileIds } } }) : [];
     let eml: string;
     if (files.length === 0) {

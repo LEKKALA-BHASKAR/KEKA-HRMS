@@ -6,7 +6,7 @@ import { tenantFromHost } from "@/lib/tenant-host";
 import { SSO_ERRORS } from "../auth/sso/_lib";
 import { SignInForm } from "./form";
 
-export const metadata = { title: "Sign in — Keka" };
+export const metadata = { title: "Sign in — BooS-HR" };
 
 
 export default async function SignInPage({ searchParams }: { searchParams: Promise<{ next?: string | string[]; sso?: string }> }) {
