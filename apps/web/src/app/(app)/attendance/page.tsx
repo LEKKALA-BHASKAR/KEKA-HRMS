@@ -416,7 +416,7 @@ async function PoliciesTab({ tenantId, edit }: { tenantId: string; edit?: string
 
 async function AssignTab({ tenantId }: { tenantId: string }) {
   const today = istToday().date;
-  const [employees, policies, shifts, weeklyOffs, current] = await Promise.all([
+  const [employees, policies, shifts, weeklyOffs, current, holidayCalendars] = await Promise.all([
     prisma.employee.findMany({ where: { tenantId, status: { notIn: ["EXITED", "INACTIVE"] } }, select: { id: true, displayName: true, employeeNumber: true }, orderBy: { employeeNumber: "asc" } }),
     prisma.attendancePolicy.findMany({ where: { tenantId, isActive: true }, orderBy: { name: "asc" } }),
     prisma.shift.findMany({ where: { tenantId, isActive: true }, orderBy: { startTime: "asc" } }),
@@ -425,6 +425,7 @@ async function AssignTab({ tenantId }: { tenantId: string }) {
       where: { employee: { tenantId }, effectiveFrom: { lte: today }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: today } }] },
       orderBy: { effectiveFrom: "desc" },
     }),
+    prisma.holidayCalendar.findMany({ where: { tenantId }, orderBy: [{ year: "desc" }, { name: "asc" }], select: { id: true, name: true, year: true } }),
   ]);
   const cur = new Map<string, (typeof current)[number]>();
   for (const c of current) if (!cur.has(c.employeeId)) cur.set(c.employeeId, c);
@@ -459,7 +460,8 @@ async function AssignTab({ tenantId }: { tenantId: string }) {
       <Card title="Assign" description="Effective-dated: the previous assignment closes the day before">
         <AssignTimePolicyForm
           employees={employees.map((e) => ({ value: e.id, label: `${e.employeeNumber} — ${e.displayName}` }))}
-          policies={opt(policies)} shifts={opt(shifts)} weeklyOffs={opt(weeklyOffs)} />
+          policies={opt(policies)} shifts={opt(shifts)} weeklyOffs={opt(weeklyOffs)}
+          calendars={holidayCalendars.map((c) => ({ value: c.id, label: `${c.name} (${c.year})` }))} />
       </Card>
     </div>
   );

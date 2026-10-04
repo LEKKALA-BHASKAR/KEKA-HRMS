@@ -536,6 +536,24 @@ model BgvCheck {
   reportUrl   String?
   findings    String?
 
+  // --- Verification depth (37-join-depth) ---
+  packageId               String?
+  vendorId                String?
+  /// LOW | NORMAL | HIGH | URGENT
+  priority                String         @default("NORMAL")
+  assigneeUserId          String?
+  slaDueAt                DateTime?
+  consentRequestedAt      DateTime?
+  consentGivenAt          DateTime?
+  consentExpiresAt        DateTime?
+  /// A closing result awaiting approval (CLEAR | DISCREPANCY | FAILED).
+  proposedStatus          String?
+  resultWorkflowRequestId String?
+  escalationLevel         Int            @default(0)
+  escalatedAt             DateTime?
+  amendedAt               DateTime?
+  items                   BgvCheckItem[]
+
   @@index([tenantId, status])
   @@index([employeeId])
   @@map("bgv_checks")

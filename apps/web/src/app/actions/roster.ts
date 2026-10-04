@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { prisma } from "@keka/db";
 import { PERMISSIONS as P } from "@keka/rbac";
-import { setRoster, applyRosterPattern, copyRosterWeek, rosterDate, type RosterValue } from "@keka/services";
+import { setRoster, applyRosterPattern, copyRosterWeek, rosterDate, notify, type RosterValue } from "@keka/services";
 import { requireAuth } from "@/lib/context";
 import { scopedEmployeeWhere } from "@/lib/scope";
 import { actionDone as done, parseForm, writeAudit, toErrorState, zId, zName, zOptionalId, type ActionState } from "@/lib/forms";
@@ -36,8 +36,17 @@ export async function saveRosterAction(_prev: ActionState, formData: FormData): 
   try {
     const res = await setRoster(viewer.tenantId, writes);
     if (!res.ok) return { ok: false, message: res.message };
-    if (res.changed) await writeAudit(viewer, { module: "ATTENDANCE", action: "UPDATE", entityType: "ShiftAssignment", entityId: null, summary: res.message });
-    return done(["/attendance/roster"], res.message);
+    if (res.changed) {
+      await writeAudit(viewer, { module: "ATTENDANCE", action: "UPDATE", entityType: "ShiftAssignment", entityId: null, summary: res.message });
+      // Shift change notifications: tell people whose upcoming days changed.
+      const today = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
+      const upcoming = [...new Set(writes.filter((w) => w.date >= today).map((w) => w.employeeId))];
+      if (upcoming.length) {
+        const users = await prisma.employee.findMany({ where: { tenantId: viewer.tenantId, id: { in: upcoming } }, select: { userId: true } });
+        await notify({ tenantId: viewer.tenantId, userIds: users.map((u) => u.userId), kind: "ATTENDANCE", title: "Your roster has changed", body: "Check your upcoming shifts.", link: "/me/shifts" });
+      }
+    }
+    return done(["/attendance/roster", "/me/shifts"], res.message);
   } catch (err) {
     return toErrorState(err);
   }

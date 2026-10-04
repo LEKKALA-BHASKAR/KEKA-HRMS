@@ -288,6 +288,38 @@ model Tenant {
   contingentWorkers   ContingentWorker[]
   contractorRateCards ContractorRateCard[]
 
+  // --- Joining & time depth (37-join-depth) ---
+  joinSetting              JoinSetting?
+  preboardingTemplates     PreboardingTemplate[]
+  preboardingTasks         PreboardingTask[]
+  newHireForms             NewHireForm[]
+  newHireFormSubmissions   NewHireFormSubmission[]
+  prejoinMessages          PrejoinMessage[]
+  prejoinMessageLogs       PrejoinMessageLog[]
+  preboardingProvisions    PreboardingProvision[]
+  onboardingBuddies        OnboardingBuddy[]
+  orientationSessions      OrientationSession[]
+  onboardingMilestones     OnboardingMilestone[]
+  journeyTemplateRevisions JourneyTemplateRevision[]
+  bgvVendors               BgvVendor[]
+  bgvPackages              BgvPackage[]
+  bgvCheckItems            BgvCheckItem[]
+  bgvCaseEvents            BgvCaseEvent[]
+  shiftSwapRequests        ShiftSwapRequest[]
+  openShifts               OpenShift[]
+  shiftPreferences         ShiftPreference[]
+  staffingRules            StaffingRule[]
+  rosterPublications       RosterPublication[]
+  timeConfigChanges        TimeConfigChange[]
+  holidayCalendarRevisions HolidayCalendarRevision[]
+  holidayRules             HolidayRule[]
+  holidayDayTypes          HolidayDayType[]
+  shutdownPeriods          ShutdownPeriod[]
+  calendarExceptions       CalendarException[]
+  overtimeRules            OvertimeRule[]
+  overtimeExceptions       OvertimeException[]
+  overtimeAlerts           OvertimeAlert[]
+
   // --- Engage depth (34-engage-depth) ---
   engageSetting         EngageSetting?
   surveySchedules       SurveySchedule[]

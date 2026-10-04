@@ -5,7 +5,7 @@ import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import {
   initiateExit, decideExit, withdrawExit, draftSettlement, finalizeSettlement,
   startJourney, setJourneyTask, runAutoChecks,
-  updateTicket, parsePeriod,
+  updateTicket, parsePeriod, startWorkflow, snapshotJourneyTemplate,
 } from "@keka/services";
 import * as hd from "./helpdesk";
 import { foreignReference } from "@/lib/ownership";
@@ -178,9 +178,20 @@ export async function setTaskAction(_prev: ActionState, formData: FormData): Pro
   });
   if (!task) return { ok: false, message: "Task not found." };
   if (!(await mayActOnTask(viewer, task))) return { ok: false, message: "This task belongs to someone else." };
+  const base = task.journey.trigger === "EXIT" ? "/exits" : "/onboarding";
+  // Tasks that need sign-off go through the workflow engine; approval marks them done.
+  if (status === "DONE" && task.needsApproval && task.status === "PENDING") {
+    if (task.approvalStatus === "PENDING") return { ok: false, message: "This task is already waiting for sign-off." };
+    const note = String(formData.get("note") ?? "") || null;
+    const wf = await startWorkflow({ tenantId: viewer.tenantId, entityType: "JOURNEY_TASK", entityId: task.id, title: `Sign off: ${task.title}`, details: note, requesterUserId: viewer.user.id, subjectEmployeeId: task.journey.employeeId });
+    if (!wf.ok) return { ok: false, message: wf.message };
+    await prisma.journeyTask.update({ where: { id: task.id }, data: { workflowRequestId: wf.requestId, ...(wf.message === "Approved automatically." ? {} : { approvalStatus: "PENDING" }), ...(note ? { note } : {}) } });
+    await writeAudit(viewer, { module: "LIFECYCLE", action: "UPDATE", entityType: "JourneyTask", entityId: task.id, summary: `Sent "${task.title}" for sign-off` });
+    return done([base, `/onboarding/${task.journeyId}`, "/inbox", "/"], wf.message === "Approved automatically." ? "Signed off." : "Sent for sign-off.");
+  }
   const res = await setJourneyTask({ taskId, status, byUserId: viewer.user.id, note: String(formData.get("note") ?? "") || null });
   if (!res.ok) return { ok: false, message: res.message };
-  const base = task.journey.trigger === "EXIT" ? "/exits" : "/onboarding";
+  await writeAudit(viewer, { module: "LIFECYCLE", action: "UPDATE", entityType: "JourneyTask", entityId: task.id, summary: `"${task.title}" marked ${status.toLowerCase()}` });
   return done([base, `/onboarding/${task.journeyId}`, "/inbox", "/"], res.message);
 }
 
@@ -210,6 +221,7 @@ export async function startJourneyAction(_prev: ActionState, formData: FormData)
   if (!(await reaches(viewer, d.employeeId, P.ONBOARDING_MANAGE))) return { ok: false, message: "This employee is outside your scope." };
   const res = await startJourney({ ...d, templateId: d.templateId ?? undefined, createdBy: viewer.user.id });
   if (!res.journeyId) return { ok: false, message: "No active template matches. Create one for this trigger first, or pick a template." };
+  if (res.created) await writeAudit(viewer, { module: "LIFECYCLE", action: "CREATE", entityType: "Journey", entityId: res.journeyId, summary: `Started a ${d.trigger.toLowerCase()} journey with ${res.tasks} task(s)` });
   return done(["/onboarding"], res.created ? `Started with ${res.tasks} task(s).` : "That journey already exists — opened it instead.");
 }
 
@@ -220,6 +232,7 @@ const templateSchema = z.object({
   trigger: z.enum(["JOINING", "CONFIRMATION", "PROMOTION", "TRANSFER", "EXIT", "MANUAL"]),
   departmentId: zOptionalId(),
   locationId: zOptionalId(),
+  jobTitle: zOptional(120),
   isActive: zBool(),
 });
 
@@ -231,13 +244,16 @@ export async function saveTemplateAction(_prev: ActionState, formData: FormData)
   const foreign = await foreignReference(viewer.tenantId, { department: d.departmentId, location: d.locationId });
   if (foreign) return { ok: false, message: foreign };
   try {
+    let templateId = id;
     if (id) {
       const u = await prisma.journeyTemplate.updateMany({ where: { id, tenantId: viewer.tenantId }, data: d });
       if (u.count === 0) return { ok: false, message: "Template not found." };
     } else {
-      await prisma.journeyTemplate.create({ data: { ...d, tenantId: viewer.tenantId, isActive: true } });
+      templateId = (await prisma.journeyTemplate.create({ data: { ...d, tenantId: viewer.tenantId, isActive: true } })).id;
     }
-    return done(["/onboarding"], id ? `Saved ${d.name}.` : `Created ${d.name}. Add its tasks below.`);
+    const v = await snapshotJourneyTemplate(viewer.tenantId, templateId!, viewer.user.id, id ? "Template settings changed" : "Template created");
+    await writeAudit(viewer, { module: "LIFECYCLE", action: id ? "UPDATE" : "CREATE", entityType: "JourneyTemplate", entityId: templateId, summary: `${id ? "Saved" : "Created"} journey template ${d.name} (v${v})`, newValue: d });
+    return done(["/onboarding", `/onboarding/templates/${templateId}`], id ? `Saved ${d.name}.` : `Created ${d.name}. Add its tasks below.`);
   } catch (err) {
     return toErrorState(err, Object.fromEntries([...formData.entries()].map(([k, v]) => [k, String(v)])));
   }
@@ -251,6 +267,7 @@ const taskTemplateSchema = z.object({
   category: z.enum(["DOCUMENTS", "ASSETS", "ACCESS", "TRAINING", "MEETING", "PAYROLL", "COMPLIANCE", "OTHER"]),
   autoCheck: zOptional(40),
   isRequired: zBool(),
+  needsApproval: zBool(),
 });
 
 export async function addTemplateTaskAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -261,14 +278,20 @@ export async function addTemplateTaskAction(_prev: ActionState, formData: FormDa
   const t = await prisma.journeyTemplate.findFirst({ where: { id: d.templateId, tenantId: viewer.tenantId }, include: { _count: { select: { tasks: true } } } });
   if (!t) return { ok: false, message: "Template not found." };
   await prisma.journeyTaskTemplate.create({ data: { ...d, sortOrder: t._count.tasks } });
-  return done(["/onboarding"], `Added "${d.title}". New journeys will include it; running ones are unchanged.`);
+  const v = await snapshotJourneyTemplate(viewer.tenantId, t.id, viewer.user.id, `Added task "${d.title}"`);
+  await writeAudit(viewer, { module: "LIFECYCLE", action: "CREATE", entityType: "JourneyTaskTemplate", entityId: t.id, summary: `${t.name} v${v}: added "${d.title}"` });
+  return done(["/onboarding", `/onboarding/templates/${t.id}`], `Added "${d.title}". New journeys will include it; running ones are unchanged.`);
 }
 
 export async function deleteTemplateTaskAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const viewer = await requireAuth(P.ONBOARDING_MANAGE);
   const id = String(formData.get("id"));
-  const d = await prisma.journeyTaskTemplate.deleteMany({ where: { id, template: { tenantId: viewer.tenantId } } });
-  return d.count ? done(["/onboarding"], "Removed.") : { ok: false, message: "Task not found." };
+  const k = await prisma.journeyTaskTemplate.findFirst({ where: { id, template: { tenantId: viewer.tenantId } }, include: { template: { select: { id: true, name: true } } } });
+  if (!k) return { ok: false, message: "Task not found." };
+  await prisma.journeyTaskTemplate.delete({ where: { id } });
+  const v = await snapshotJourneyTemplate(viewer.tenantId, k.template.id, viewer.user.id, `Removed task "${k.title}"`);
+  await writeAudit(viewer, { module: "LIFECYCLE", action: "DELETE", entityType: "JourneyTaskTemplate", entityId: k.template.id, summary: `${k.template.name} v${v}: removed "${k.title}"` });
+  return done(["/onboarding", `/onboarding/templates/${k.template.id}`], "Removed.");
 }
 
 // ---------------------------------------------------------------------------

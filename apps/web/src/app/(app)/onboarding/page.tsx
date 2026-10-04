@@ -8,6 +8,7 @@ import { scopedEmployeeWhere } from "@/lib/scope";
 import { PageHead, Card, Badge, Empty, Person, Stat, Progress } from "@/components/ui";
 import { StartJourneyForm, TemplateForm, AddTemplateTaskForm, DeleteTemplateTaskButton } from "../_lifecycle/forms";
 import { Disclosure } from "../org/forms";
+import { OnboardingNav } from "./_join/nav";
 
 const P = PERMISSIONS;
 
@@ -21,10 +22,7 @@ export default async function OnboardingPage({ searchParams }: { searchParams: P
   return (
     <>
       <PageHead title="Journeys" subtitle="Onboarding, confirmation, promotion and transfer — every task an event sets in motion" />
-      <div className="tabs">
-        <Link className="tab active" href="/onboarding">Journeys</Link>
-        <Link className="tab" href="/onboarding/preboarding">Preboarding</Link>
-      </div>
+      <OnboardingNav viewer={viewer} active="journeys" />
       <div className="tabs">
         <Link href="/onboarding" className={`tab${view === "active" ? " active" : ""}`}>In progress</Link>
         <Link href="/onboarding?tab=done" className={`tab${view === "done" ? " active" : ""}`}>Completed</Link>
@@ -126,7 +124,8 @@ async function Templates({ tenantId, selected }: { tenantId: string; selected?: 
         </div>
       </Card>
       {t ? (
-        <Card tight title={t.name} description={`${t.description ?? ""} · used by ${t._count.journeys} journey(s)`}>
+        <Card tight title={t.name} description={`${t.description ?? ""} · used by ${t._count.journeys} journey(s)${t.jobTitle ? ` · role: ${t.jobTitle}` : ""} · v${t.version}`}
+          action={<Link className="btn sm" href={`/onboarding/templates/${t.id}`}>Designer &amp; history</Link>}>
           <div style={{ padding: 18, borderBottom: "1px solid var(--border)" }}>
             <Disclosure label="Edit template" variant="default">
               <TemplateForm key={t.id} template={t} departments={dOpts} locations={lOpts} />

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { ENGAGE_WORKFLOW_TYPES } from "./engage-depth-math";
+import { JOIN_WORKFLOW_TYPES } from "./join-depth-math";
 
 /**
  * Pure helpers for governance: workflow routing (definition matching, step
@@ -28,6 +29,8 @@ export const WORKFLOW_ENTITY_TYPES = {
   CONSENT_PURPOSE: "Consent purpose publication",
   // Engage depth (engage-depth.ts applies their outcomes).
   ...ENGAGE_WORKFLOW_TYPES,
+  // Joining & time depth (join-depth.ts applies their outcomes).
+  ...JOIN_WORKFLOW_TYPES,
 } as const;
 export type WorkflowEntityType = keyof typeof WORKFLOW_ENTITY_TYPES;
 export const isWorkflowEntityType = (v: string): v is WorkflowEntityType => v in WORKFLOW_ENTITY_TYPES;

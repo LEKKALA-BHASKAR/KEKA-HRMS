@@ -324,8 +324,8 @@ export function AttendancePolicyForm({ policy }: { policy?: PolicyValues }) {
 }
 
 export function AssignTimePolicyForm({
-  employees, policies, shifts, weeklyOffs,
-}: { employees: Option[]; policies: Option[]; shifts: Option[]; weeklyOffs: Option[] }) {
+  employees, policies, shifts, weeklyOffs, calendars = [],
+}: { employees: Option[]; policies: Option[]; shifts: Option[]; weeklyOffs: Option[]; calendars?: Option[] }) {
   const today = new Date().toISOString().slice(0, 10);
   return (
     <ActionForm action={assignTimePolicy} submitLabel="Assign">
@@ -345,6 +345,9 @@ export function AssignTimePolicyForm({
             </Field>
             <Field label="Weekly-off pattern" name="weeklyOffPolicyId" state={state}>
               <SelectInput name="weeklyOffPolicyId" state={state} options={weeklyOffs} placeholder="Tenant default" />
+            </Field>
+            <Field label="Holiday calendar" name="holidayCalendarId" state={state} hint="Blank keeps each person's current calendar">
+              <SelectInput name="holidayCalendarId" state={state} options={[{ value: "NONE", label: "By location / default" }, ...calendars]} placeholder="Keep current" />
             </Field>
             <Field label="Effective from" name="effectiveFrom" state={state}>
               <TextInput name="effectiveFrom" type="date" state={state} defaultValue={today} />

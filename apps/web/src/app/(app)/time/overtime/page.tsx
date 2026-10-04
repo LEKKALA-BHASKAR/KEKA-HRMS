@@ -34,7 +34,8 @@ export default async function OvertimePage({ searchParams }: { searchParams: Pro
 
   return (
     <>
-      <PageHead title="Overtime" subtitle="Overtime going into payroll, by pay month. Approved overtime requests land here; you can also add hours directly." />
+      <PageHead title="Overtime" subtitle="Overtime going into payroll, by pay month. Approved overtime requests land here; you can also add hours directly."
+        actions={<a className="btn" href="/time/overtime/rules">Rules, alerts &amp; reconciliation</a>} />
       <div className="grid grid-3">
         <Stat label="Hours to pay" value={toPay.reduce((s, e) => s + Number(e.hours), 0).toFixed(2)} />
         <Stat label="Amount to pay" value={<Money value={toPay.reduce((s, e) => s + Number(e.amount), 0)} />} />

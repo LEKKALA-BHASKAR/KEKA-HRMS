@@ -1,0 +1,822 @@
+// ============================================================================
+//  BooS-HR — Joining & time depth
+// ============================================================================
+//  Preboarding (task plans, new-hire forms, pre-joining messages, provisioning
+//  and asset reservations), onboarding depth (buddies, orientation sessions,
+//  30/60/90 milestones, template revisions), background verification depth
+//  (vendors, packages, per-check items, case timeline), shift & roster depth
+//  (swaps, open shifts, preferences, staffing rules, roster publishing,
+//  approved configuration changes), holiday calendars (revisions with
+//  approval, rules, day types, shutdowns, exception queue) and overtime rules
+//  (tiers, caps, eligibility, exceptions and alerts).
+//
+//  Employee references are plain ids, always read through a tenant-scoped
+//  query. Approvals run through the generic workflow engine (31-governance);
+//  each record keeps its workflowRequestId.
+// ============================================================================
+
+/// Per-tenant knobs for the joining, roster, holiday and overtime depth.
+model JoinSetting {
+  id       String @id @default(cuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Remind a hire about pending preboarding tasks every N days (0 = never).
+  preboardingReminderDays Int     @default(3)
+  /// Stop after this many reminders per task.
+  preboardingReminderMax  Int     @default(3)
+  /// Default turnaround for a background check, in days.
+  bgvDefaultSlaDays       Int     @default(10)
+  /// Candidate consent to verification is valid for this many days.
+  bgvConsentValidDays     Int     @default(90)
+  /// A pending journey task this many days overdue is escalated one level.
+  journeyEscalationDays   Int     @default(2)
+  swapRequiresApproval    Boolean @default(true)
+  swapMinNoticeHours      Int     @default(24)
+  swapSameDepartmentOnly  Boolean @default(true)
+  swapMaxPerMonth         Int     @default(4)
+  /// Minimum hours between the end of one shift and the start of the next.
+  minRestHours            Int     @default(11)
+  /// Holiday count validation on publish (0 = no limit).
+  holidayMinCount         Int     @default(0)
+  holidayMaxCount         Int     @default(0)
+  /// Remind about comp-off credit this many days before it lapses.
+  compOffReminderDays     Int     @default(7)
+  /// A single day's overtime above this is flagged as an anomaly.
+  otAnomalyDailyMinutes   Int     @default(360)
+
+  updatedAt DateTime @updatedAt
+
+  @@map("join_settings")
+}
+
+// ---------------------------------------------------------------------------
+//  PREBOARDING
+// ---------------------------------------------------------------------------
+
+/// A preboarding plan: what a hire does before day one. The most specific
+/// active template (job title, then department, then location) applies.
+model PreboardingTemplate {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  departmentId String?
+  locationId   String?
+  jobTitle     String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  items PreboardingTemplateItem[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("preboarding_templates")
+}
+
+model PreboardingTemplateItem {
+  id                String              @id @default(cuid())
+  templateId        String
+  template          PreboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  title             String
+  description       String?
+  /// FORM | DOCUMENT | POLICY | BANK | TAX | BENEFITS | EMERGENCY | TRAINING | LOCATION | CUSTOM
+  kind              String              @default("CUSTOM")
+  /// The new-hire form, policy (OrgDocument) or course the task points at.
+  refId             String?
+  daysBeforeJoining Int                 @default(7)
+  requiresApproval  Boolean             @default(false)
+  sortOrder         Int                 @default(0)
+
+  @@index([templateId])
+  @@map("preboarding_template_items")
+}
+
+/// One thing a hire must do before joining.
+model PreboardingTask {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId        String
+  templateItemId    String?
+  title             String
+  description       String?
+  kind              String    @default("CUSTOM")
+  refId             String?
+  dueDate           DateTime
+  requiresApproval  Boolean   @default(false)
+  /// PENDING | SUBMITTED | DONE | APPROVED | REJECTED | WAIVED
+  status            String    @default("PENDING")
+  /// What the hire answered (location confirmation, notes…).
+  response          Json?
+  /// Policy tasks: when the hire opened the document (reading verification).
+  viewedAt          DateTime?
+  submittedAt       DateTime?
+  decidedAt         DateTime?
+  decidedBy         String?
+  decisionNote      String?
+  workflowRequestId String?
+  remindersSent     Int       @default(0)
+  lastRemindedAt    DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("preboarding_tasks")
+}
+
+/// A configurable new-hire data collection form.
+model NewHireForm {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  /// [{ key, label, type: TEXT|NUMBER|DATE|SELECT|YESNO, required, options[] }]
+  fields      Json
+  version     Int      @default(1)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  submissions NewHireFormSubmission[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("new_hire_forms")
+}
+
+model NewHireFormSubmission {
+  id                String      @id @default(cuid())
+  tenantId          String
+  tenant            Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  formId            String
+  form              NewHireForm @relation(fields: [formId], references: [id], onDelete: Cascade)
+  employeeId        String
+  taskId            String?
+  formVersion       Int         @default(1)
+  answers           Json
+  /// SUBMITTED | APPROVED | REJECTED
+  status            String      @default("SUBMITTED")
+  workflowRequestId String?
+  submittedAt       DateTime    @default(now())
+  decidedAt         DateTime?
+  decidedBy         String?
+  decisionNote      String?
+
+  @@index([tenantId, status])
+  @@index([formId])
+  @@index([employeeId])
+  @@map("new_hire_form_submissions")
+}
+
+/// A pre-joining message sent to hires a set number of days before they join.
+model PrejoinMessage {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name              String
+  /// WELCOME | INFO | REMINDER
+  kind              String   @default("WELCOME")
+  subject           String
+  /// Placeholders: {{name}} {{first_name}} {{joining_date}} {{manager}} {{location}}
+  body              String
+  daysBeforeJoining Int      @default(7)
+  /// DRAFT | PENDING_APPROVAL | ACTIVE | REJECTED | ARCHIVED
+  status            String   @default("DRAFT")
+  workflowRequestId String?
+  createdBy         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+  @@map("prejoin_messages")
+}
+
+/// Every pre-joining communication sent: scheduled messages, manual sends,
+/// task reminders and manager introductions.
+model PrejoinMessageLog {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messageId  String?
+  employeeId String
+  /// SCHEDULED | MANUAL | REMINDER | INTRO
+  kind       String
+  subject    String
+  body       String?
+  toAddress  String?
+  outboxId   String?
+  sentBy     String?
+  sentAt     DateTime @default(now())
+
+  @@index([tenantId, sentAt])
+  @@index([employeeId])
+  @@map("prejoin_message_logs")
+}
+
+/// IT accounts, access and equipment a hire needs on day one. ASSET requests
+/// with an assetId hold that asset (RESERVED) until it is handed over.
+model PreboardingProvision {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId     String
+  /// IT_ACCOUNT | ACCESS | ASSET | EQUIPMENT
+  kind           String
+  item           String
+  details        String?
+  assetId        String?
+  neededBy       DateTime
+  /// IT | ADMIN | FINANCE | HR
+  ownerTeam      String    @default("IT")
+  /// REQUESTED | IN_PROGRESS | RESERVED | FULFILLED | CANCELLED
+  status         String    @default("REQUESTED")
+  assigneeUserId String?
+  requestedBy    String?
+  note           String?
+  fulfilledAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("preboarding_provisions")
+}
+
+// ---------------------------------------------------------------------------
+//  ONBOARDING
+// ---------------------------------------------------------------------------
+
+/// A buddy for a new hire. The buddy accepts through the workflow inbox.
+model OnboardingBuddy {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId        String
+  buddyEmployeeId   String
+  startsOn          DateTime
+  endsOn            DateTime
+  goals             String?
+  /// PROPOSED | ACTIVE | DECLINED | COMPLETED | CANCELLED
+  status            String    @default("PROPOSED")
+  workflowRequestId String?
+  assignedBy        String?
+  acceptedAt        DateTime?
+  completedAt       DateTime?
+  feedbackRating    Int?
+  feedbackNote      String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  checkins OnboardingBuddyCheckin[]
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@index([buddyEmployeeId])
+  @@map("onboarding_buddies")
+}
+
+model OnboardingBuddyCheckin {
+  id           String          @id @default(cuid())
+  buddyId      String
+  buddy        OnboardingBuddy @relation(fields: [buddyId], references: [id], onDelete: Cascade)
+  heldOn       DateTime
+  note         String
+  byEmployeeId String?
+  createdAt    DateTime        @default(now())
+
+  @@index([buddyId])
+  @@map("onboarding_buddy_checkins")
+}
+
+/// Orientation sessions and onboarding meetings (manager introductions,
+/// team meets, IT set-up, check-ins). Scheduling needs approval.
+model OrientationSession {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title             String
+  /// ORIENTATION | MANAGER_INTRO | TEAM_MEET | IT_SETUP | CHECKIN
+  kind              String   @default("ORIENTATION")
+  startsAt          DateTime
+  endsAt            DateTime
+  location          String?
+  meetingLink       String?
+  hostEmployeeId    String?
+  capacity          Int?
+  agenda            String?
+  /// A training course attendees take as part of the session.
+  courseId          String?
+  /// DRAFT | PENDING_APPROVAL | SCHEDULED | COMPLETED | CANCELLED | REJECTED
+  status            String   @default("DRAFT")
+  workflowRequestId String?
+  createdBy         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  attendees OrientationAttendee[]
+
+  @@index([tenantId, startsAt])
+  @@map("orientation_sessions")
+}
+
+model OrientationAttendee {
+  id          String             @id @default(cuid())
+  sessionId   String
+  session     OrientationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  employeeId  String
+  /// INVITED | CONFIRMED | DECLINED | ATTENDED | NO_SHOW
+  status      String             @default("INVITED")
+  respondedAt DateTime?
+
+  @@unique([sessionId, employeeId])
+  @@index([employeeId])
+  @@map("orientation_attendees")
+}
+
+/// First-week and 30/60/90-day checkpoints: the manager's review and the
+/// new hire's own feedback.
+model OnboardingMilestone {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId    String
+  /// WEEK_1 | DAY_30 | DAY_60 | DAY_90
+  kind          String
+  dueDate       DateTime
+  objectives    String?
+  /// PENDING | COMPLETED | MISSED
+  status        String    @default("PENDING")
+  managerRating Int?
+  managerNote   String?
+  managerDoneAt DateTime?
+  hireRating    Int?
+  hireComment   String?
+  hireDoneAt    DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@unique([employeeId, kind])
+  @@index([tenantId, dueDate])
+  @@map("onboarding_milestones")
+}
+
+/// A snapshot of a journey template each time it changes.
+model JourneyTemplateRevision {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  templateId String
+  version    Int
+  snapshot   Json
+  summary    String
+  changedBy  String?
+  createdAt  DateTime @default(now())
+
+  @@index([templateId])
+  @@map("journey_template_revisions")
+}
+
+// ---------------------------------------------------------------------------
+//  BACKGROUND VERIFICATION
+// ---------------------------------------------------------------------------
+
+model BgvVendor {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  contactEmail String?
+  slaDays      Int      @default(7)
+  checkTypes   String[] @default([])
+  /// { "IDENTITY": 300, "EMPLOYMENT": 900, ... } — cost per check.
+  costPerCheck Json?
+  /// The vendor's own stages a check moves through, in order.
+  stages       String[] @default([])
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("bgv_vendors")
+}
+
+/// A verification package: a named bundle of checks, a vendor and an SLA.
+model BgvPackage {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  checkTypes  String[] @default([])
+  vendorId    String?
+  slaDays     Int?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("bgv_packages")
+}
+
+/// One check within a background verification case (identity, employment…).
+model BgvCheckItem {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bgvCheckId        String
+  bgvCheck          BgvCheck  @relation(fields: [bgvCheckId], references: [id], onDelete: Cascade)
+  checkType         String
+  /// PENDING | IN_PROGRESS | PENDING_REVIEW | VERIFIED | DISCREPANCY | FAILED | UNABLE_TO_VERIFY | WAIVED
+  status            String    @default("PENDING")
+  /// An adverse result awaiting review.
+  proposedStatus    String?
+  /// Check-specific particulars: document type, employer and period, institution and degree…
+  details           Json?
+  reasonCode        String?
+  /// MINOR | MAJOR | CRITICAL
+  severity          String?
+  findings          String?
+  vendorStage       String?
+  slaDueAt          DateTime?
+  cost              Decimal?  @db.Decimal(12, 2)
+  recheckOfId       String?
+  workflowRequestId String?
+  completedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([bgvCheckId])
+  @@index([tenantId, status])
+  @@map("bgv_check_items")
+}
+
+/// The timeline of a verification case — the audit trail shown on the case.
+model BgvCaseEvent {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bgvCheckId  String
+  kind        String
+  note        String?
+  actorUserId String?
+  createdAt   DateTime @default(now())
+
+  @@index([bgvCheckId])
+  @@index([tenantId, createdAt])
+  @@map("bgv_case_events")
+}
+
+// ---------------------------------------------------------------------------
+//  SHIFT & ROSTER
+// ---------------------------------------------------------------------------
+
+/// Employee-to-employee shift swap, or a shift offered on the marketplace.
+model ShiftSwapRequest {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requesterId        String
+  requesterDate      DateTime
+  requesterShiftId   String?
+  counterpartId      String?
+  counterpartDate    DateTime?
+  counterpartShiftId String?
+  isMarketplace      Boolean   @default(false)
+  reason             String?
+  /// OPEN | PENDING_PEER | PENDING_APPROVAL | APPROVED | REJECTED | DECLINED | CANCELLED
+  status             String    @default("PENDING_PEER")
+  workflowRequestId  String?
+  peerRespondedAt    DateTime?
+  decidedAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([requesterId])
+  @@index([counterpartId])
+  @@map("shift_swap_requests")
+}
+
+/// An unfilled shift slot employees can bid for.
+model OpenShift {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shiftId      String
+  date         DateTime
+  slots        Int      @default(1)
+  departmentId String?
+  locationId   String?
+  note         String?
+  /// OPEN | FILLED | CANCELLED
+  status       String   @default("OPEN")
+  createdBy    String?
+  createdAt    DateTime @default(now())
+
+  bids OpenShiftBid[]
+
+  @@index([tenantId, date])
+  @@map("open_shifts")
+}
+
+model OpenShiftBid {
+  id          String    @id @default(cuid())
+  openShiftId String
+  openShift   OpenShift @relation(fields: [openShiftId], references: [id], onDelete: Cascade)
+  employeeId  String
+  note        String?
+  /// BID | AWARDED | REJECTED | WITHDRAWN
+  status      String    @default("BID")
+  createdAt   DateTime  @default(now())
+  decidedAt   DateTime?
+
+  @@unique([openShiftId, employeeId])
+  @@map("open_shift_bids")
+}
+
+model ShiftPreference {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId        String   @unique
+  preferredShiftIds String[] @default([])
+  /// 0 = Sunday … 6 = Saturday.
+  avoidWeekdays     Int[]    @default([])
+  maxNightsPerWeek  Int?
+  note              String?
+  updatedAt         DateTime @updatedAt
+
+  @@index([tenantId])
+  @@map("shift_preferences")
+}
+
+/// Minimum and maximum headcount on a shift (by department / location / weekday).
+model StaffingRule {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  shiftId      String?
+  departmentId String?
+  locationId   String?
+  /// 0 = Sunday … 6 = Saturday; empty = every day.
+  weekdays     Int[]    @default([])
+  minStaff     Int      @default(0)
+  maxStaff     Int?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId])
+  @@map("staffing_rules")
+}
+
+/// A roster period sent for approval and published to employees. The
+/// snapshot is the roster as published, for revision comparison.
+model RosterPublication {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title             String
+  fromDate          DateTime
+  toDate            DateTime
+  departmentId      String?
+  locationId        String?
+  /// DRAFT | PENDING_APPROVAL | PUBLISHED | REJECTED | WITHDRAWN
+  status            String    @default("DRAFT")
+  /// [{ employeeId, date, shiftId, off }]
+  snapshot          Json?
+  assignmentCount   Int       @default(0)
+  version           Int       @default(1)
+  workflowRequestId String?
+  submittedBy       String?
+  publishedAt       DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@map("roster_publications")
+}
+
+/// A change to time configuration that takes effect only once approved:
+/// a workweek (weekly-off pattern), a shift cycle, or a calendar assignment.
+model TimeConfigChange {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// WORKWEEK | SHIFT_CYCLE | CALENDAR_ASSIGNMENT
+  kind              String
+  targetId          String?
+  summary           String
+  payload           Json
+  /// PENDING_APPROVAL | APPLIED | REJECTED | WITHDRAWN
+  status            String    @default("PENDING_APPROVAL")
+  workflowRequestId String?
+  requestedBy       String?
+  appliedAt         DateTime?
+  appliedId         String?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@map("time_config_changes")
+}
+
+// ---------------------------------------------------------------------------
+//  HOLIDAYS & CALENDARS
+// ---------------------------------------------------------------------------
+
+/// A proposed version of a holiday calendar. Publishing (after approval)
+/// writes it to the live calendar from its effective date on.
+model HolidayCalendarRevision {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// The live calendar it replaces; null creates a new calendar.
+  calendarId        String?
+  name              String
+  year              Int
+  country           String?
+  state             String?
+  locationIds       String[]  @default([])
+  /// [{ name, date: "YYYY-MM-DD", isOptional, dayType }]
+  holidays          Json
+  /// Holidays before this date are left as they are.
+  effectiveFrom     DateTime?
+  version           Int       @default(1)
+  /// DRAFT | PENDING_APPROVAL | PUBLISHED | REJECTED | WITHDRAWN
+  status            String    @default("DRAFT")
+  note              String?
+  workflowRequestId String?
+  createdBy         String?
+  submittedAt       DateTime?
+  publishedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@map("holiday_calendar_revisions")
+}
+
+/// Holiday rules: weekend substitution, holiday count limits, holiday-work pay.
+model HolidayRule {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name              String
+  /// SUBSTITUTE_WEEKEND | COUNT_LIMIT | HOLIDAY_WORK_PAY
+  kind              String
+  calendarId        String?
+  config            Json
+  /// PENDING_APPROVAL | ACTIVE | REJECTED | RETIRED
+  status            String   @default("PENDING_APPROVAL")
+  workflowRequestId String?
+  createdBy         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([tenantId])
+  @@map("holiday_rules")
+}
+
+/// Custom day types holidays are tagged with (national, festival, company event…).
+model HolidayDayType {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code        String
+  name        String
+  color       String?
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, code])
+  @@map("holiday_day_types")
+}
+
+/// A company shutdown: applying it adds its working days as holidays.
+model ShutdownPeriod {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  fromDate      DateTime
+  toDate        DateTime
+  calendarId    String
+  reason        String?
+  /// DRAFT | APPLIED | CANCELLED
+  status        String    @default("DRAFT")
+  holidaysAdded Int       @default(0)
+  appliedAt     DateTime?
+  createdBy     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([tenantId])
+  @@map("shutdown_periods")
+}
+
+/// The calendar exception queue: conflicts found by the calendar checks.
+model CalendarException {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key         String
+  kind        String
+  summary     String
+  /// OPEN | RESOLVED | DISMISSED
+  status      String    @default("OPEN")
+  note        String?
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  resolvedAt  DateTime?
+  resolvedBy  String?
+
+  @@unique([tenantId, key])
+  @@map("calendar_exceptions")
+}
+
+// ---------------------------------------------------------------------------
+//  OVERTIME
+// ---------------------------------------------------------------------------
+
+/// How overtime is priced and limited for the employees it covers.
+model OvertimeRule {
+  id                     String   @id @default(cuid())
+  tenantId               String
+  tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name                   String
+  /// Higher wins when several rules cover an employee.
+  priority               Int      @default(0)
+  /// DRAFT | PENDING_APPROVAL | ACTIVE | REJECTED | RETIRED
+  status                 String   @default("DRAFT")
+  /// Eligibility; empty lists mean "any".
+  bandIds                String[] @default([])
+  payGradeIds            String[] @default([])
+  shiftIds               String[] @default([])
+  locationIds            String[] @default([])
+  /// { WORKDAY: [{ upTo: 120, multiplier: 1.5 }, { upTo: null, multiplier: 2 }], WEEKLY_OFF: [...], HOLIDAY: [...] }
+  tiers                  Json
+  /// [{ start: "22:00", end: "06:00", multiplier: 0.25 }] — premium on top for minutes in the window.
+  windows                Json?
+  weeklyThresholdMinutes Int?
+  dailyCapMinutes        Int?
+  weeklyCapMinutes       Int?
+  monthlyCapMinutes      Int?
+  minMinutes             Int      @default(0)
+  requirePreApproval     Boolean  @default(false)
+  postFactoDays          Int?
+  alertMonthlyMinutes    Int?
+  workflowRequestId      String?
+  createdBy              String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@map("overtime_rules")
+}
+
+/// Overtime above a cap, paid only once approved.
+model OvertimeException {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId        String
+  year              Int
+  month             Int
+  excessMinutes     Int
+  reason            String
+  ruleId            String?
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN
+  status            String    @default("PENDING")
+  workflowRequestId String?
+  overtimeEntryId   String?
+  raisedBy          String?
+  decidedAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@map("overtime_exceptions")
+}
+
+/// Overtime threshold / anomaly alerts and comp-off expiry reminders (deduplicated per period).
+model OvertimeAlert {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId     String
+  /// THRESHOLD | ANOMALY_DAILY | ANOMALY_SPIKE | ANOMALY_NO_REQUEST | COMPOFF_EXPIRY
+  kind           String
+  periodKey      String
+  detail         String
+  /// OPEN | ACKNOWLEDGED
+  status         String    @default("OPEN")
+  acknowledgedBy String?
+  acknowledgedAt DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@unique([tenantId, employeeId, kind, periodKey])
+  @@index([tenantId, status])
+  @@map("overtime_alerts")
+}

@@ -454,8 +454,9 @@ export async function addHoliday(_prev: ActionState, formData: FormData): Promis
     where: { date: parsed.data.date, request: { tenantId: viewer.tenantId, status: { in: ["PENDING", "APPROVED"] } } },
   });
   try {
-    await prisma.holiday.create({ data: parsed.data });
-    return done(["/leave", "/me/leave"],
+    const h = await prisma.holiday.create({ data: parsed.data });
+    await writeAudit(viewer, { module: "LEAVE", action: "CREATE", entityType: "Holiday", entityId: h.id, summary: `Added holiday ${h.name} (${h.date.toISOString().slice(0, 10)}) to ${cal.name}` });
+    return done(["/leave", "/me/leave", "/time/holidays"],
       `Added ${parsed.data.name}.` + (affected > 0
         ? ` ${affected} existing leave day(s) fall on it and were counted as working days — review them.`
         : ""));
@@ -467,10 +468,11 @@ export async function addHoliday(_prev: ActionState, formData: FormData): Promis
 export async function deleteHoliday(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const viewer = await requireAuth(P.HOLIDAY_MANAGE);
   const id = String(formData.get("id"));
-  const h = await prisma.holiday.findUnique({ where: { id }, include: { calendar: { select: { tenantId: true } } } });
+  const h = await prisma.holiday.findUnique({ where: { id }, include: { calendar: { select: { tenantId: true, name: true } } } });
   if (!h || h.calendar.tenantId !== viewer.tenantId) return { ok: false, message: "Holiday not found." };
   await prisma.holiday.delete({ where: { id } });
-  return done(["/leave", "/me/leave"], `Removed ${h.name}.`);
+  await writeAudit(viewer, { module: "LEAVE", action: "DELETE", entityType: "Holiday", entityId: id, summary: `Removed holiday ${h.name} (${h.date.toISOString().slice(0, 10)}) from ${h.calendar.name}` });
+  return done(["/leave", "/me/leave", "/time/holidays"], `Removed ${h.name}.`);
 }
 
 export async function addHolidayCalendar(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -491,7 +493,8 @@ export async function addHolidayCalendar(_prev: ActionState, formData: FormData)
         copied++;
       }
     }
-    return done(["/leave"], copied > 0
+    await writeAudit(viewer, { module: "LEAVE", action: "CREATE", entityType: "HolidayCalendar", entityId: cal.id, summary: `Created holiday calendar ${name} ${year}${copied ? ` with ${copied} holiday(s) copied` : ""}` });
+    return done(["/leave", "/time/holidays"], copied > 0
       ? `Created ${name} with ${copied} holiday(s) copied to the same dates. Festivals that follow the lunar calendar will need their dates corrected.`
       : `Created ${name}.`);
   } catch (err) {
@@ -766,13 +769,15 @@ export async function saveShift(_prev: ActionState, formData: FormData): Promise
   }
   const data = { ...d, maxSlotMinutes: d.maxSlotMinutes == null ? null : Math.round(d.maxSlotMinutes), daySchedule: days.schedule ?? Prisma.DbNull };
   try {
+    let shiftId = id;
     if (id) {
       const u = await prisma.shift.updateMany({ where: { id, tenantId: viewer.tenantId }, data });
       if (u.count === 0) return { ok: false, message: "Shift not found." };
     } else {
-      await prisma.shift.create({ data: { ...data, tenantId: viewer.tenantId } });
+      shiftId = (await prisma.shift.create({ data: { ...data, tenantId: viewer.tenantId } })).id;
     }
-    return done(["/attendance"], `Saved ${d.name}.`);
+    await writeAudit(viewer, { module: "ATTENDANCE", action: id ? "UPDATE" : "CREATE", entityType: "Shift", entityId: shiftId, summary: `${id ? "Updated" : "Created"} shift ${d.name} (${d.startTime}–${d.endTime})` });
+    return done(["/attendance", "/time/shifts"], `Saved ${d.name}.`);
   } catch (err) {
     return toErrorState(err, parsed.data as never);
   }
@@ -832,6 +837,9 @@ export async function assignTimePolicy(_prev: ActionState, formData: FormData): 
   const attendancePolicyId = String(formData.get("attendancePolicyId") ?? "") || null;
   const shiftId = String(formData.get("shiftId") ?? "") || null;
   const weeklyOffPolicyId = String(formData.get("weeklyOffPolicyId") ?? "") || null;
+  // Holiday calendar: blank keeps each employee's current assignment; NONE clears it (location/default resolution).
+  const calRaw = String(formData.get("holidayCalendarId") ?? "");
+  if (calRaw && calRaw !== "NONE" && !(await prisma.holidayCalendar.count({ where: { id: calRaw, tenantId: viewer.tenantId } }))) return { ok: false, message: "Holiday calendar not found." };
   const trackAttendance = formData.get("trackAttendance") === "on";
   const effRaw = String(formData.get("effectiveFrom") ?? "");
   if (employeeIds.length === 0) return { ok: false, message: "Select at least one employee." };
@@ -843,17 +851,19 @@ export async function assignTimePolicy(_prev: ActionState, formData: FormData): 
   if (foreign) return { ok: false, message: foreign };
 
   for (const employeeId of employeeIds) {
+    const current = await prisma.employeeTimePolicy.findFirst({ where: { employeeId, effectiveTo: null }, orderBy: { effectiveFrom: "desc" }, select: { holidayCalendarId: true } });
+    const holidayCalendarId = calRaw === "NONE" ? null : calRaw || current?.holidayCalendarId || null;
     await prisma.employeeTimePolicy.updateMany({
       where: { employeeId, effectiveTo: null, effectiveFrom: { lt: effectiveFrom } },
       data: { effectiveTo: new Date(effectiveFrom.getTime() - 86_400_000) },
     });
     await prisma.employeeTimePolicy.create({
-      data: { employeeId, attendancePolicyId, shiftId, weeklyOffPolicyId, trackAttendance, effectiveFrom },
+      data: { employeeId, attendancePolicyId, shiftId, weeklyOffPolicyId, holidayCalendarId, trackAttendance, effectiveFrom },
     });
   }
   await writeAudit(viewer, {
     module: "ATTENDANCE", action: "UPDATE", entityType: "EmployeeTimePolicy",
-    summary: `Assigned a time policy to ${employeeIds.length} employee(s) from ${effectiveFrom.toISOString().slice(0, 10)}`,
+    summary: `Assigned a time policy to ${employeeIds.length} employee(s) from ${effectiveFrom.toISOString().slice(0, 10)}${calRaw ? `; holiday calendar ${calRaw === "NONE" ? "cleared" : calRaw}` : ""}`,
   });
   return done(["/attendance"], `Assigned to ${employeeIds.length} employee(s) from ${effectiveFrom.toISOString().slice(0, 10)}.`);
 }

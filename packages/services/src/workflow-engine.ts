@@ -3,6 +3,8 @@ import { notify, usersWithPermission } from "./lifecycle";
 import { emitEvent } from "./webhooks";
 import { engageBuiltInRoute, applyEngageEffect } from "./engage-depth";
 import { isEngageWorkflowType } from "./engage-depth-math";
+import { joinBuiltInRoute, applyJoinEffect } from "./join-depth";
+import { isJoinWorkflowType } from "./join-depth-math";
 import { fireRequestAutomations } from "./automation";
 import {
   applyAccessRequest, applyChangeRequest, completeComplianceItem, activatePolicyCampaign, publishConsentPurpose,
@@ -51,7 +53,7 @@ export function builtInRoute(entityType: WorkflowEntityType, opts: { reviewerUse
     case "RETENTION_PURGE":
     case "POLICY_PUBLISH":
     case "CONSENT_PURPOSE": return [perm("Compliance manager", "admin.compliance.manage")];
-    default: return engageBuiltInRoute(entityType, opts);
+    default: return isJoinWorkflowType(entityType) ? joinBuiltInRoute(entityType, opts) : engageBuiltInRoute(entityType, opts);
   }
 }
 
@@ -236,6 +238,7 @@ async function applyEffect(req: { id: string; tenantId: string; entityType: stri
       return;
     default:
       if (isEngageWorkflowType(req.entityType)) await applyEngageEffect(req, outcome, actorUserId);
+      else if (isJoinWorkflowType(req.entityType)) await applyJoinEffect(req, outcome, actorUserId);
       return;
   }
 }

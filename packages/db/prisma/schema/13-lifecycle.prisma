@@ -50,6 +50,10 @@ model JourneyTemplate {
   locationId   String?
   /// When several templates match a trigger, the most specific wins.
   isActive     Boolean        @default(true)
+  /// Role-specific path: only hires with this job title (37-join-depth).
+  jobTitle     String?
+  /// Bumped on every change; snapshots in JourneyTemplateRevision.
+  version      Int            @default(1)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -78,6 +82,8 @@ model JourneyTaskTemplate {
   /// A system check that marks the task done by itself, e.g. ASSETS_RETURNED.
   autoCheck   String?
   sortOrder   Int             @default(0)
+  /// Completion is reviewed through the workflow engine (37-join-depth).
+  needsApproval Boolean       @default(false)
 
   @@index([templateId])
   @@map("journey_task_templates")
@@ -105,6 +111,12 @@ model Journey {
   createdAt   DateTime  @default(now())
   completedAt DateTime?
 
+  // --- Onboarding depth (37-join-depth) ---
+  /// Plan sign-off: PENDING_APPROVAL | APPROVED | REJECTED
+  planStatus            String?
+  planWorkflowRequestId String?
+  certificateIssuedAt   DateTime?
+
   tasks JourneyTask[]
 
   @@unique([employeeId, trigger, anchorDate])
@@ -131,6 +143,15 @@ model JourneyTask {
   completedBy        String?
   note               String?
   sortOrder          Int               @default(0)
+
+  // --- Onboarding depth (37-join-depth) ---
+  needsApproval           Boolean   @default(false)
+  /// PENDING_APPROVAL | APPROVED | REJECTED
+  approvalStatus          String?
+  workflowRequestId       String?
+  escalationLevel         Int       @default(0)
+  escalatedAt             DateTime?
+  delegatedFromEmployeeId String?
 
   @@index([journeyId])
   @@index([assigneeEmployeeId, status])

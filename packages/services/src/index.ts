@@ -95,3 +95,5 @@ export * from "./core-hr-depth-math";
 export * from "./core-hr-depth";
 export * from "./engage-depth-math";
 export * from "./engage-depth";
+export * from "./join-depth-math";
+export * from "./join-depth";
