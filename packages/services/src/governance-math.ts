@@ -25,6 +25,14 @@ export const WORKFLOW_ENTITY_TYPES = {
   COMPLIANCE_ITEM: "Compliance checklist sign-off",
   POLICY_PUBLISH: "Policy acknowledgement campaigns",
   CONSENT_PURPOSE: "Consent purpose publication",
+  HELPDESK_CASE: "Helpdesk case decisions (policy exceptions)",
+  KB_ARTICLE: "Knowledge base article publication",
+  ER_FINDINGS: "Investigation findings sign-off",
+  ER_ACTION: "Disciplinary action approval",
+  ER_RESOLUTION: "Grievance & complaint resolution sign-off",
+  DOCUMENT_FOLDER_ACCESS: "Confidential document folder access",
+  LETTER_TEMPLATE: "Letter template approval",
+  ASSET_DISPOSAL: "Asset disposal",
 } as const;
 export type WorkflowEntityType = keyof typeof WORKFLOW_ENTITY_TYPES;
 export const isWorkflowEntityType = (v: string): v is WorkflowEntityType => v in WORKFLOW_ENTITY_TYPES;
@@ -378,6 +386,8 @@ export const RETENTION_DATA_TYPES = {
   WEBHOOK_DELIVERIES: { label: "Webhook delivery log", min: 7, actions: ["PURGE"] },
   AUDIT_LOGS: { label: "Audit log", min: 365, actions: ["PURGE"] },
   EXITED_EMPLOYEES: { label: "Personal data of exited employees", min: 365, actions: ["ANONYMISE"] },
+  ER_CASES: { label: "Closed employee relations cases", min: 365, actions: ["PURGE"] },
+  DOCUMENT_VERSIONS: { label: "Superseded document versions", min: 90, actions: ["PURGE"] },
 } as const;
 export type RetentionDataType = keyof typeof RETENTION_DATA_TYPES;
 export const isRetentionDataType = (v: string): v is RetentionDataType => v in RETENTION_DATA_TYPES;

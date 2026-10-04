@@ -12,7 +12,7 @@ export interface CategoryValue {
   id: string; name: string; description: string | null; isActive: boolean; tickets: number;
   audienceType: "ALL" | "EMPLOYEES" | "GROUPS";
   audience: { employeeIds: string[]; departmentIds: string[]; locationIds: string[]; businessUnitIds: string[] };
-  defaultAssigneeUserId: string | null; agentUserIds: string[]; assignMode: "HEAD" | "ROUND_ROBIN" | "UNASSIGNED";
+  defaultAssigneeUserId: string | null; agentUserIds: string[]; assignMode: "HEAD" | "ROUND_ROBIN" | "LEAST_LOADED" | "UNASSIGNED";
   businessHoursId: string | null; enableOnHold: boolean; firstResponseHours: number; slaHours: number; defaultPriority: string | null;
   subcategories: Array<{ id: string; name: string; description: string | null; head: string | null; isActive: boolean }>;
 }
@@ -181,7 +181,7 @@ function CategoryForm({ value, options, onDone }: { value: CategoryValue | null;
       <div className={s.formField}>
         <div className={s.formLabel}>Assign new tickets to</div>
         <div className={s.radioCol}>
-          {([["HEAD", "The category head"], ["ROUND_ROBIN", "Agents in turn (round robin)"], ["UNASSIGNED", "Nobody — agents pick them up"]] as const).map(([v, l]) => (
+          {([["HEAD", "The category head"], ["ROUND_ROBIN", "Agents in turn (round robin)"], ["LEAST_LOADED", "The agent with the fewest open tickets"], ["UNASSIGNED", "Nobody — agents pick them up"]] as const).map(([v, l]) => (
             <label key={v}><input type="radio" name="assignMode" value={v} checked={mode === v} onChange={() => setMode(v)} /> {l}</label>
           ))}
         </div>

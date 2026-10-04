@@ -138,9 +138,9 @@ async function main() {
 
     await signInAs(admin.email);
     const adminLayout = await layout();
-    check("A manager sees all nine tabs", ["Summary", "Assigned Assets", "Asset Requests", "Asset Acknowledgement", "Asset List", "Asset Categories &amp; Asset Types", "Reports", "Settings", "Damage Recovery"].every((t) => adminLayout.includes(t)));
+    check("A manager sees all ten tabs", ["Summary", "Assigned Assets", "Asset Requests", "Asset Acknowledgement", "Asset List", "Asset Categories &amp; Asset Types", "Operations", "Reports", "Settings", "Damage Recovery"].every((t) => adminLayout.includes(t)));
     const hrefs = [...adminLayout.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
-    check("Every tab links to a page that exists", hrefs.length === 9 && hrefs.every((h) => ["/assets", "/assets/assigned", "/assets/requests", "/assets/acknowledgements", "/assets/list", "/assets/categories", "/assets/reports", "/assets/settings", "/assets/recovery"].includes(h)), hrefs.join(" "));
+    check("Every tab links to a page that exists", hrefs.length === 10 && hrefs.every((h) => ["/assets", "/assets/assigned", "/assets/requests", "/assets/acknowledgements", "/assets/list", "/assets/categories", "/assets/operations", "/assets/reports", "/assets/settings", "/assets/recovery"].includes(h)), hrefs.join(" "));
 
     // -------------------------------------------------------------------------
     section("Every page renders for a manager");

@@ -8,6 +8,8 @@ export function HelpdeskTabs({ canSettings, active }: { canSettings: boolean; ac
     <SubTabs active={active} items={[
       { label: "Summary", href: "/helpdesk" },
       { label: "Tickets", href: "/helpdesk/tickets" },
+      { label: "Knowledge base", href: "/helpdesk/knowledge" },
+      { label: "Operations", href: "/helpdesk/operations" },
       { label: "Reports", href: "/helpdesk/reports" },
       ...(canSettings ? [{ label: "Settings", href: "/helpdesk/settings/categories" }] : []),
     ]} />

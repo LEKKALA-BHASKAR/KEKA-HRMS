@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@keka/db";
-import { applySalaryRevision, decideApproval, withdrawApprovalRequest, settleJobChangeApproval } from "@keka/services";
+import { applySalaryRevision, decideApproval, withdrawApprovalRequest, settleJobChangeApproval, fireLetterTriggers } from "@keka/services";
 import { requireViewer } from "@/lib/context";
 import { actionDone as done, writeAudit, type ActionState } from "@/lib/forms";
 
@@ -18,7 +18,12 @@ async function applyOutcome(r: { action: string; outcome: string; runId: string 
     if (r.outcome === "REJECTED" || r.outcome === "WITHDRAWN") await prisma.payrollRun.update({ where: { id: r.runId }, data: { status: "IN_PROGRESS" } });
   }
   if (r.action === "COMPENSATION_CHANGE" && r.revisionId) {
-    if (r.outcome === "APPROVED") return prisma.$transaction((tx) => applySalaryRevision(r.revisionId!, tx));
+    if (r.outcome === "APPROVED") {
+      const applied = await prisma.$transaction((tx) => applySalaryRevision(r.revisionId!, tx));
+      const rev = await prisma.salaryRevision.findUnique({ where: { id: r.revisionId }, select: { employeeId: true, employee: { select: { tenantId: true } } } });
+      if (rev) await fireLetterTriggers(rev.employee.tenantId, "SALARY_REVISION_APPLIED", rev.employeeId, byUserId).catch(() => undefined);
+      return applied;
+    }
     if (r.outcome === "REJECTED" || r.outcome === "WITHDRAWN") await prisma.salaryRevision.update({ where: { id: r.revisionId }, data: { status: "REJECTED" } });
   }
   return null;

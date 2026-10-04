@@ -1,0 +1,1016 @@
+// ============================================================================
+//  Cases & documents depth: helpdesk knowledge base and case operations,
+//  employee relations (grievance & disciplinary), document versions and
+//  multi-signer e-signature, HR letter operations, asset operations.
+// ============================================================================
+//  Employee and user references are plain ids (indexed), resolved in the
+//  service layer within the tenant, so these models add no back-relations to
+//  Employee or User.
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+//  HELPDESK: knowledge base
+// ---------------------------------------------------------------------------
+
+model KbCategory {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  articles KbArticle[]
+
+  @@unique([tenantId, name])
+  @@map("kb_categories")
+}
+
+model KbArticle {
+  id                 String      @id @default(cuid())
+  tenantId           String
+  tenant             Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoryId         String?
+  category           KbCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  /// Ticket category this answers; drives suggestions when raising a ticket.
+  helpdeskCategoryId String?
+  /// Linked organisation policy (OrgDocument id).
+  policyDocumentId   String?
+  title              String
+  /// Plain text / light markdown.
+  body               String
+  /// Comma-separated search keywords.
+  keywords           String?
+  /// DRAFT | PENDING_APPROVAL | PUBLISHED | ARCHIVED
+  status             String      @default("DRAFT")
+  version            Int         @default(1)
+  authorUserId       String
+  ownerUserId        String?
+  publishedAt        DateTime?
+  publishedByUserId  String?
+  /// Review cadence: owner is reminded on or after this date.
+  reviewDueOn        DateTime?
+  reviewRemindedAt   DateTime?
+  workflowRequestId  String?
+  views              Int         @default(0)
+  helpfulYes         Int         @default(0)
+  helpfulNo          Int         @default(0)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  revisions KbArticleRevision[]
+  feedback  KbArticleFeedback[]
+  tickets   HelpdeskTicketArticle[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, helpdeskCategoryId])
+  @@map("kb_articles")
+}
+
+model KbArticleRevision {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  articleId    String
+  article      KbArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  version      Int
+  title        String
+  body         String
+  editedByUserId String
+  note         String?
+  createdAt    DateTime  @default(now())
+
+  @@unique([articleId, version])
+  @@map("kb_article_revisions")
+}
+
+model KbArticleFeedback {
+  id        String    @id @default(cuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  articleId String
+  article   KbArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  userId    String
+  helpful   Boolean
+  comment   String?
+  createdAt DateTime  @default(now())
+
+  @@unique([articleId, userId])
+  @@map("kb_article_feedback")
+}
+
+/// An article linked to a ticket (suggested to the raiser, or sent by an agent).
+model HelpdeskTicketArticle {
+  id             String         @id @default(cuid())
+  tenantId       String
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ticketId       String
+  ticket         HelpdeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  articleId      String
+  article        KbArticle      @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  linkedByUserId String
+  createdAt      DateTime       @default(now())
+
+  @@unique([ticketId, articleId])
+  @@map("helpdesk_ticket_articles")
+}
+
+// ---------------------------------------------------------------------------
+//  HELPDESK: SLA by priority, escalation rules, triage, tasks, templates
+// ---------------------------------------------------------------------------
+
+/// Overrides the category's targets for a priority. categoryId null = every category.
+model HelpdeskSlaPolicy {
+  id                 String         @id @default(cuid())
+  tenantId           String
+  tenant             Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoryId         String?
+  priority           TicketPriority
+  firstResponseHours Int
+  resolutionHours    Int
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([tenantId, priority])
+  @@map("helpdesk_sla_policies")
+}
+
+model HelpdeskEscalationRule {
+  id             String          @id @default(cuid())
+  tenantId       String
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  /// null = every category.
+  categoryId     String?
+  /// null = every priority.
+  priority       TicketPriority?
+  /// FIRST_RESPONSE_BREACH | RESOLUTION_BREACH | UNASSIGNED | NO_UPDATE
+  trigger        String
+  /// Hours after the trigger point (breach, raise, last update) before escalating.
+  afterHours     Int             @default(0)
+  /// The escalation level this rule takes a ticket to (1, 2, 3…).
+  level          Int             @default(1)
+  /// CATEGORY_HEAD | ASSIGNEE_MANAGER | USER
+  escalateTo     String          @default("CATEGORY_HEAD")
+  escalateUserId String?
+  /// Reassign the ticket to the escalation target.
+  reassign       Boolean         @default(false)
+  /// Raise the ticket's priority to this.
+  raisePriority  TicketPriority?
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+
+  escalations HelpdeskTicketEscalation[]
+
+  @@unique([tenantId, name])
+  @@map("helpdesk_escalation_rules")
+}
+
+model HelpdeskTicketEscalation {
+  id                String                  @id @default(cuid())
+  tenantId          String
+  tenant            Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ticketId          String
+  ticket            HelpdeskTicket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  ruleId            String?
+  rule              HelpdeskEscalationRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  level             Int
+  escalatedToUserId String?
+  reason            String
+  /// Manual escalations carry who did it.
+  byUserId          String?
+  acknowledgedAt    DateTime?
+  createdAt         DateTime                @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([ticketId])
+  @@map("helpdesk_ticket_escalations")
+}
+
+/// Keyword rules applied when a ticket is raised: set priority and severity.
+model HelpdeskTriageRule {
+  id          String          @id @default(cuid())
+  tenantId    String
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  /// Comma-separated; any match in subject or description fires the rule.
+  keywords    String
+  categoryId  String?
+  setPriority TicketPriority?
+  /// S1 (critical) … S4 (minor)
+  setSeverity String?
+  sortOrder   Int             @default(0)
+  isActive    Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+
+  @@unique([tenantId, name])
+  @@map("helpdesk_triage_rules")
+}
+
+model HelpdeskTicketTask {
+  id             String         @id @default(cuid())
+  tenantId       String
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ticketId       String
+  ticket         HelpdeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  title          String
+  assigneeUserId String?
+  dueOn          DateTime?
+  doneAt         DateTime?
+  doneByUserId   String?
+  sortOrder      Int            @default(0)
+  createdAt      DateTime       @default(now())
+
+  @@index([ticketId])
+  @@map("helpdesk_ticket_tasks")
+}
+
+/// An agent's template for logging a case: category, wording and a task checklist.
+model HelpdeskCaseTemplate {
+  id          String          @id @default(cuid())
+  tenantId    String
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  categoryId  String
+  subject     String
+  description String
+  priority    TicketPriority?
+  /// ["Collect payslips", "Check attendance", …]
+  tasks       Json?
+  isActive    Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+
+  @@unique([tenantId, name])
+  @@map("helpdesk_case_templates")
+}
+
+// ---------------------------------------------------------------------------
+//  EMPLOYEE RELATIONS: grievance, complaint, disciplinary
+// ---------------------------------------------------------------------------
+
+model ErSettings {
+  id                   String   @id @default(cuid())
+  tenantId             String   @unique
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  allowAnonymous       Boolean  @default(true)
+  appealWindowDays     Int      @default(15)
+  showCauseDays        Int      @default(7)
+  /// Months a warning stays active (counts towards the ladder).
+  warningValidityMonths Int     @default(12)
+  /// Months after closure a case is kept before retention may purge it.
+  retentionMonths      Int      @default(84)
+  updatedAt            DateTime @updatedAt
+
+  @@map("er_settings")
+}
+
+model ErCaseTemplate {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  /// GRIEVANCE | COMPLAINT | DISCIPLINARY
+  kind            String
+  category        String
+  severity        String   @default("MEDIUM")
+  description     String?
+  /// Investigation checklist: ["Interview complainant", …]
+  checklist       Json?
+  /// Letter template used for the show-cause / warning notice.
+  letterTemplateId String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("er_case_templates")
+}
+
+model ErCase {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// ER-1001, per tenant.
+  number             Int
+  /// GRIEVANCE | COMPLAINT | DISCIPLINARY
+  kind               String
+  category           String
+  /// LOW | MEDIUM | HIGH | CRITICAL
+  severity           String    @default("MEDIUM")
+  title              String
+  description        String
+  incidentDate       DateTime?
+  incidentLocation   String?
+  /// null for an anonymous report.
+  reporterEmployeeId String?
+  isAnonymous        Boolean   @default(false)
+  /// SHA-256 of the anonymous tracking code.
+  trackingCodeHash   String?   @unique
+  /// The employee the case is about (respondent / accused).
+  subjectEmployeeId  String?
+  /// INTAKE | WEB | HELPDESK | MANAGER
+  source             String    @default("WEB")
+  /// NEW | UNDER_REVIEW | INVESTIGATION | HEARING | PENDING_DECISION | ACTION_TAKEN | RESOLVED | CLOSED | APPEALED
+  status             String    @default("NEW")
+  isConfidential     Boolean   @default(true)
+  ownerUserId        String?
+  templateId         String?
+  /// Grievance policy (OrgDocument id) the case is raised under.
+  policyDocumentId   String?
+  /// Resolution
+  resolution         String?
+  /// UPHELD | PARTIALLY_UPHELD | NOT_UPHELD | WITHDRAWN | ACTION_TAKEN | NO_ACTION
+  outcome            String?
+  /// NONE | PENDING | APPROVED | REJECTED
+  resolutionStatus   String    @default("NONE")
+  resolutionRequestId String?
+  resolvedAt         DateTime?
+  closedAt           DateTime?
+  retainUntil        DateTime?
+  createdByUserId    String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  access        ErCaseAccess[]
+  notes         ErCaseNote[]
+  investigation ErInvestigation?
+  witnesses     ErWitness[]
+  evidence      ErEvidence[]
+  hearings      ErHearing[]
+  actions       ErAction[]
+  appeals       ErAppeal[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId, kind, status])
+  @@index([tenantId, subjectEmployeeId])
+  @@index([tenantId, reporterEmployeeId])
+  @@map("er_cases")
+}
+
+/// The confidential access list.
+model ErCaseAccess {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  caseId          String
+  case            ErCase   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  userId          String
+  /// OWNER | INVESTIGATOR | PANEL | VIEWER
+  role            String   @default("VIEWER")
+  grantedByUserId String?
+  createdAt       DateTime @default(now())
+
+  @@unique([caseId, userId])
+  @@index([tenantId, userId])
+  @@map("er_case_access")
+}
+
+/// Case timeline: notes, status changes and the employee's formal responses.
+model ErCaseNote {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  caseId       String
+  case         ErCase   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  /// NOTE | SYSTEM | RESPONSE | REPORTER
+  kind         String   @default("NOTE")
+  body         String
+  /// Null for an anonymous reporter's addition.
+  authorUserId String?
+  authorLabel  String
+  createdAt    DateTime @default(now())
+
+  @@index([caseId, createdAt])
+  @@map("er_case_notes")
+}
+
+model ErInvestigation {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  caseId             String    @unique
+  case               ErCase    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  investigatorUserId String
+  scope              String?
+  startedOn          DateTime
+  dueOn              DateTime?
+  /// OPEN | FINDINGS_SUBMITTED | ACCEPTED | RETURNED
+  status             String    @default("OPEN")
+  findings           String?
+  /// SUBSTANTIATED | PARTIALLY_SUBSTANTIATED | UNSUBSTANTIATED | INCONCLUSIVE
+  conclusion         String?
+  recommendation     String?
+  submittedAt        DateTime?
+  workflowRequestId  String?
+  acceptedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  tasks ErInvestigationTask[]
+
+  @@index([tenantId, status])
+  @@map("er_investigations")
+}
+
+model ErInvestigationTask {
+  id              String          @id @default(cuid())
+  tenantId        String
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  investigationId String
+  investigation   ErInvestigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  title           String
+  dueOn           DateTime?
+  doneAt          DateTime?
+  doneByUserId    String?
+  sortOrder       Int             @default(0)
+  createdAt       DateTime        @default(now())
+
+  @@index([investigationId])
+  @@map("er_investigation_tasks")
+}
+
+model ErWitness {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  caseId        String
+  case          ErCase    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  employeeId    String?
+  name          String
+  contact       String?
+  statement     String?
+  interviewedOn DateTime?
+  addedByUserId String
+  createdAt     DateTime  @default(now())
+
+  @@index([caseId])
+  @@map("er_witnesses")
+}
+
+model ErEvidence {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  caseId        String
+  case          ErCase    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?
+  /// StoredFile (relatedType "ErEvidence").
+  fileId        String?
+  sha256        String?
+  collectedOn   DateTime?
+  addedByUserId String
+  createdAt     DateTime  @default(now())
+
+  @@index([caseId])
+  @@map("er_evidence")
+}
+
+model ErHearing {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  caseId        String
+  case          ErCase   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  scheduledAt   DateTime
+  location      String?
+  /// User ids on the panel.
+  panelUserIds  Json?
+  /// SCHEDULED | HELD | ADJOURNED | CANCELLED
+  status        String   @default("SCHEDULED")
+  minutes       String?
+  /// What the employee said at the hearing.
+  employeeStatement String?
+  attendees     String?
+  createdByUserId String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([caseId])
+  @@index([tenantId, scheduledAt])
+  @@map("er_hearings")
+}
+
+/// A disciplinary action or outcome against an employee.
+model ErAction {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  caseId            String
+  case              ErCase    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  employeeId        String
+  /// SHOW_CAUSE | VERBAL_WARNING | WRITTEN_WARNING | FINAL_WARNING | SUSPENSION | TERMINATION | COUNSELLING | NO_ACTION
+  actionType        String
+  summary           String
+  effectiveOn       DateTime
+  /// Warnings stop counting after this date.
+  expiresOn         DateTime?
+  suspensionFrom    DateTime?
+  suspensionTo      DateTime?
+  suspensionPaid    Boolean   @default(false)
+  /// Show cause: the employee must respond by this date.
+  responseDueOn     DateTime?
+  employeeResponse  String?
+  respondedAt       DateTime?
+  acknowledgedAt    DateTime?
+  /// Final warning issued without an active written warning: the reason.
+  ladderOverride    String?
+  /// DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | ISSUED | REVOKED
+  status            String    @default("DRAFT")
+  workflowRequestId String?
+  letterTemplateId  String?
+  /// GeneratedDocument (the notice letter).
+  letterId          String?
+  /// HrActivity WARNING entry on the employee's timeline.
+  hrActivityId      String?
+  issuedAt          DateTime?
+  revokedAt         DateTime?
+  revokeReason      String?
+  createdByUserId   String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  appeals ErAppeal[]
+
+  @@index([tenantId, employeeId, status])
+  @@index([caseId])
+  @@map("er_actions")
+}
+
+model ErAppeal {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  caseId             String
+  case               ErCase    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  actionId           String?
+  action             ErAction? @relation(fields: [actionId], references: [id], onDelete: SetNull)
+  filedByEmployeeId  String
+  grounds            String
+  filedAt            DateTime  @default(now())
+  /// FILED | UNDER_REVIEW | UPHELD | OVERTURNED | MODIFIED | WITHDRAWN
+  status             String    @default("FILED")
+  reviewerUserId     String?
+  decision           String?
+  decidedAt          DateTime?
+  createdAt          DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@index([caseId])
+  @@map("er_appeals")
+}
+
+// ---------------------------------------------------------------------------
+//  DOCUMENTS: versions, folder access, bulk upload, sharing
+// ---------------------------------------------------------------------------
+
+model DocumentVersion {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// EMPLOYEE (EmployeeDocument) | ORG (OrgDocument)
+  documentKind   String
+  documentId     String
+  version        Int
+  fileUrl        String?
+  fileSize       Int?
+  mimeType       String?
+  issuedOn       DateTime?
+  expiresOn      DateTime?
+  /// The status the document had while this version was current.
+  status         String?
+  label          String?
+  uploadedBy     String?
+  uploadedAt     DateTime?
+  note           String?
+  createdAt      DateTime  @default(now())
+
+  @@unique([documentKind, documentId, version])
+  @@index([tenantId, documentKind, documentId])
+  @@map("document_versions")
+}
+
+/// A named user's access to a folder, beyond the folder's role lists.
+model DocumentFolderAccess {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  folderId          String
+  userId            String
+  canEdit           Boolean   @default(false)
+  expiresAt         DateTime?
+  /// PENDING (requested) | ACTIVE | REJECTED | REVOKED
+  status            String    @default("ACTIVE")
+  reason            String?
+  workflowRequestId String?
+  grantedByUserId   String?
+  createdAt         DateTime  @default(now())
+
+  @@unique([folderId, userId])
+  @@index([tenantId, userId])
+  @@map("document_folder_access")
+}
+
+/// Time-limited share of one employee document with a named user.
+model DocumentShare {
+  id               String    @id @default(cuid())
+  tenantId         String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  documentId       String
+  sharedWithUserId String
+  expiresAt        DateTime
+  allowDownload    Boolean   @default(true)
+  note             String?
+  sharedByUserId   String
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([tenantId, sharedWithUserId])
+  @@index([documentId])
+  @@map("document_shares")
+}
+
+model DocumentBulkUpload {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  documentTypeId String
+  total          Int      @default(0)
+  matched        Int      @default(0)
+  failed         Int      @default(0)
+  /// [{ file, employeeNumber, ok, message }]
+  results        Json?
+  createdByUserId String
+  createdAt      DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@map("document_bulk_uploads")
+}
+
+// ---------------------------------------------------------------------------
+//  E-SIGNATURE: envelopes with ordered signers
+// ---------------------------------------------------------------------------
+
+model SignatureEnvelope {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// ES-1001, per tenant.
+  number            Int
+  title             String
+  message           String?
+  /// StoredFile (relatedType "SignatureEnvelope") of the document to sign.
+  fileId            String?
+  /// Or a generated letter (GeneratedDocument id).
+  letterId          String?
+  /// SHA-256 of the document as sent.
+  contentHash       String
+  /// Signers sign one after another in order; otherwise all at once.
+  sequential        Boolean   @default(true)
+  /// DRAFT | SENT | COMPLETED | DECLINED | VOIDED | EXPIRED
+  status            String    @default("DRAFT")
+  /// The employee the document is about (for access).
+  employeeId        String?
+  reminderEveryDays Int?      @default(3)
+  expiresOn         DateTime?
+  sentAt            DateTime?
+  completedAt       DateTime?
+  voidReason        String?
+  createdByUserId   String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  recipients SignatureRecipient[]
+  events     SignatureEvent[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId, status])
+  @@map("signature_envelopes")
+}
+
+model SignatureRecipient {
+  id                String            @id @default(cuid())
+  tenantId          String
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  envelopeId        String
+  envelope          SignatureEnvelope @relation(fields: [envelopeId], references: [id], onDelete: Cascade)
+  order             Int
+  userId            String
+  name              String
+  email             String?
+  /// SIGNER | APPROVER | CC
+  role              String            @default("SIGNER")
+  /// WAITING | PENDING | SIGNED | DECLINED | DELEGATED | SKIPPED
+  status            String            @default("WAITING")
+  viewedAt          DateTime?
+  signedAt          DateTime?
+  typedName         String?
+  signatureFileId   String?
+  ip                String?
+  userAgent         String?
+  declineReason     String?
+  delegatedFromId   String?
+  remindedAt        DateTime?
+  remindCount       Int               @default(0)
+  createdAt         DateTime          @default(now())
+
+  @@index([tenantId, userId, status])
+  @@index([envelopeId])
+  @@map("signature_recipients")
+}
+
+model SignatureEvent {
+  id          String            @id @default(cuid())
+  tenantId    String
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  envelopeId  String
+  envelope    SignatureEnvelope @relation(fields: [envelopeId], references: [id], onDelete: Cascade)
+  recipientId String?
+  /// CREATED | SENT | VIEWED | SIGNED | DECLINED | DELEGATED | REMINDED | VOIDED | COMPLETED | EXPIRED
+  kind        String
+  actorUserId String?
+  ip          String?
+  note        String?
+  createdAt   DateTime          @default(now())
+
+  @@index([envelopeId, createdAt])
+  @@map("signature_events")
+}
+
+// ---------------------------------------------------------------------------
+//  HR LETTERS: numbering, batches, triggers, template revisions, settings
+// ---------------------------------------------------------------------------
+
+model LetterSettings {
+  id                      String   @id @default(cuid())
+  tenantId                String   @unique
+  tenant                  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// New and edited templates need a second person's approval before use.
+  requireTemplateApproval Boolean  @default(false)
+  /// Months between owner reviews of a template.
+  reviewEveryMonths       Int      @default(12)
+  /// Furthest back a letter may be dated, in days.
+  maxBackdateDays         Int      @default(30)
+  updatedAt               DateTime @updatedAt
+
+  @@map("letter_settings")
+}
+
+model LetterNumberSeries {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  /// null = every category not covered by another series.
+  category   String?
+  /// Tokens: {YYYY} {YY} {MM} {CAT}
+  prefix     String   @default("HR/{YYYY}/")
+  digits     Int      @default(4)
+  nextNumber Int      @default(1)
+  /// Restart numbering every calendar year.
+  yearlyReset Boolean @default(true)
+  lastYear   Int?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("letter_number_series")
+}
+
+model LetterBatch {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  templateId      String
+  total           Int      @default(0)
+  generated       Int      @default(0)
+  failed          Int      @default(0)
+  /// [{ employeeId, ok, letterId?, message }]
+  results         Json?
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@map("letter_batches")
+}
+
+/// Generate a letter automatically when something happens to an employee.
+model LetterTrigger {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// EXIT_COMPLETED | SALARY_REVISION_APPLIED | CONFIRMED
+  event      String
+  templateId String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@unique([tenantId, event, templateId])
+  @@map("letter_triggers")
+}
+
+model DocumentTemplateRevision {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  templateId     String
+  version        Int
+  name           String
+  category       String
+  body           String
+  workflow       String?
+  editedByUserId String?
+  createdAt      DateTime @default(now())
+
+  @@unique([templateId, version])
+  @@map("document_template_revisions")
+}
+
+// ---------------------------------------------------------------------------
+//  ASSETS: checklists, maintenance, pools and reservations, stock,
+//  disposal, reconciliation
+// ---------------------------------------------------------------------------
+
+model AssetChecklistTemplate {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// ISSUE | RETURN
+  kind       String
+  name       String
+  /// null = every category.
+  categoryId String?
+  /// [{ label, required }]
+  items      Json
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("asset_checklist_templates")
+}
+
+model AssetChecklistRun {
+  id               String   @id @default(cuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignmentId     String
+  assetId          String
+  kind             String
+  templateId       String?
+  /// [{ label, required, done, note }]
+  items            Json
+  completedByUserId String
+  completedAt      DateTime @default(now())
+
+  @@unique([assignmentId, kind])
+  @@index([tenantId, assetId])
+  @@map("asset_checklist_runs")
+}
+
+model AssetMaintenance {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  tenant              Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetId             String
+  /// PREVENTIVE | REPAIR | INSPECTION
+  kind                String
+  title               String
+  description         String?
+  /// Repair raised by the employee holding it.
+  reportedByEmployeeId String?
+  scheduledOn         DateTime
+  /// REQUESTED | SCHEDULED | IN_PROGRESS | DONE | CANCELLED
+  status              String    @default("SCHEDULED")
+  vendor              String?
+  cost                Decimal?  @db.Decimal(18, 2)
+  completedOn         DateTime?
+  /// Preventive cadence: the next visit is booked on completion.
+  intervalMonths      Int?
+  /// Asset status before it went to repair, restored on completion.
+  priorStatus         String?
+  remindedAt          DateTime?
+  createdByUserId     String
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([tenantId, status, scheduledOn])
+  @@index([assetId])
+  @@map("asset_maintenance")
+}
+
+model AssetPool {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  locationId  String?
+  /// Longest a single reservation may run.
+  maxDays     Int      @default(14)
+  createdAt   DateTime @default(now())
+
+  assets Asset[]
+
+  @@unique([tenantId, name])
+  @@map("asset_pools")
+}
+
+model AssetReservation {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetId      String
+  employeeId   String
+  fromDate     DateTime
+  toDate       DateTime
+  purpose      String
+  /// REQUESTED | APPROVED | REJECTED | CHECKED_OUT | RETURNED | CANCELLED
+  status       String    @default("REQUESTED")
+  decidedByUserId String?
+  decidedAt    DateTime?
+  decisionNote String?
+  checkedOutAt DateTime?
+  returnedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([tenantId, assetId, status])
+  @@index([tenantId, employeeId])
+  @@map("asset_reservations")
+}
+
+model AssetStockThreshold {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetTypeId  String
+  minAvailable Int
+  lastAlertAt  DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@unique([tenantId, assetTypeId])
+  @@map("asset_stock_thresholds")
+}
+
+model AssetDisposal {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetId           String
+  /// SCRAP | SALE | DONATION | RECYCLE | WRITE_OFF
+  method            String
+  reason            String
+  bookValue         Decimal?  @db.Decimal(18, 2)
+  expectedValue     Decimal?  @db.Decimal(18, 2)
+  realisedValue     Decimal?  @db.Decimal(18, 2)
+  buyer             String?
+  /// PENDING_APPROVAL | APPROVED | REJECTED | COMPLETED | CANCELLED
+  status            String    @default("PENDING_APPROVAL")
+  workflowRequestId String?
+  requestedByUserId String
+  completedAt       DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@index([assetId])
+  @@map("asset_disposals")
+}
+
+model AssetReconciliation {
+  id              String    @id @default(cuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  locationId      String?
+  /// OPEN | CLOSED
+  status          String    @default("OPEN")
+  startedByUserId String
+  closedAt        DateTime?
+  createdAt       DateTime  @default(now())
+
+  lines AssetReconciliationLine[]
+
+  @@index([tenantId, status])
+  @@map("asset_reconciliations")
+}
+
+model AssetReconciliationLine {
+  id               String              @id @default(cuid())
+  tenantId         String
+  tenant           Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reconciliationId String
+  reconciliation   AssetReconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+  assetId          String
+  expectedStatus   String
+  expectedHolder   String?
+  expectedLocation String?
+  /// null = not checked yet.
+  found            Boolean?
+  foundCondition   String?
+  foundLocation    String?
+  note             String?
+  checkedAt        DateTime?
+  checkedByUserId  String?
+
+  @@unique([reconciliationId, assetId])
+  @@map("asset_reconciliation_lines")
+}

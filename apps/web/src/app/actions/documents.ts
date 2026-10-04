@@ -2,6 +2,7 @@
 
 import { prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
+import { snapshotEmployeeDocument } from "@keka/services";
 import { requireViewer, can } from "@/lib/context";
 import { saveFile, sniffUpload, MAX_UPLOAD_BYTES } from "@/lib/storage";
 import { writeAudit, actionDone as done, type ActionState } from "@/lib/forms";
@@ -44,6 +45,8 @@ export async function uploadDocumentAction(_prev: ActionState, formData: FormDat
   });
   const expiresRaw = String(formData.get("expiresOn") ?? "");
   const needsCheck = doc.documentType?.requireVerification ?? true;
+  // The file being replaced is kept as a version (Documents › Library › Versions).
+  if (doc.fileUrl) await snapshotEmployeeDocument(doc.id, "Replaced by a new upload");
   await prisma.employeeDocument.update({
     where: { id: doc.id },
     data: {
@@ -51,7 +54,7 @@ export async function uploadDocumentAction(_prev: ActionState, formData: FormDat
       status: needsCheck ? "PENDING_VERIFICATION" : "VERIFIED",
       uploadedBy: viewer.user.id, uploadedAt: new Date(), rejectReason: null,
       ...(needsCheck ? { verifiedAt: null, verifiedBy: null } : { verifiedAt: new Date() }),
-      ...(/^\d{4}-\d{2}-\d{2}$/.test(expiresRaw) ? { expiresOn: new Date(`${expiresRaw}T00:00:00Z`) } : {}),
+      ...(/^\d{4}-\d{2}-\d{2}$/.test(expiresRaw) ? { expiresOn: new Date(`${expiresRaw}T00:00:00Z`), expiryNoticeStage: 0, renewalRequestedAt: null } : {}),
     },
   });
   await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "EmployeeDocument", entityId: doc.id, summary: `Uploaded ${doc.name} (${Math.round(data.length / 1024)} KB)` });

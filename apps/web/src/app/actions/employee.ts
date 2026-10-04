@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { selectStructureForCtc } from "@keka/payroll";
-import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision, requestJobChange, jobChangeLabel, jobChangeDue, beyondPlanWarning, employeeOnHold } from "@keka/services";
+import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision, requestJobChange, jobChangeLabel, jobChangeDue, beyondPlanWarning, employeeOnHold, fireLetterTriggers } from "@keka/services";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
 import {
@@ -597,6 +597,8 @@ export async function reviseSalary(_prev: ActionState, formData: FormData): Prom
     });
     const pending = approval.required && approval.status === "PENDING";
     const applied = pending ? null : await prisma.$transaction((tx) => applySalaryRevision(revision.id, tx));
+    // Salary letters configured to follow an applied revision (Documents › Letter automation).
+    if (applied) await fireLetterTriggers(viewer.tenantId, "SALARY_REVISION_APPLIED", d.employeeId, viewer.user.id).catch(() => undefined);
 
     await writeAudit(viewer, {
       module: "PAYROLL", action: "UPDATE", entityType: "SalaryRevision", entityId: d.employeeId,

@@ -224,6 +224,7 @@ export function RateTicket({ ticketId, current }: { ticketId: string; current: n
             style={{ background: "none", border: 0, cursor: "pointer", fontSize: 24, lineHeight: 1, color: n <= value ? "#f2b23a" : "var(--border-strong)" }}>★</button>
         ))}
       </div>
+      <textarea name="comment" className="textarea" rows={2} maxLength={1000} placeholder="Anything we could have done better? (optional, sent with your rating)" style={{ marginTop: 6 }} />
       <Msg state={state} />
     </form>
   );

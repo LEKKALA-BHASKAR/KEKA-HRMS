@@ -170,6 +170,8 @@ enum HelpdeskAssignMode {
   /// Rotate through HelpdeskCategoryAgent rows (cursor: lastAssignedUserId).
   ROUND_ROBIN
   UNASSIGNED
+  /// The category agent with the fewest open tickets (33-cases-docs).
+  LEAST_LOADED
 }
 
 model HelpdeskCategory {
@@ -257,6 +259,25 @@ model HelpdeskTicket {
 
   comments  HelpdeskComment[]
   followers HelpdeskTicketFollower[]
+
+  // --- Case operations (33-cases-docs) ---
+  /// S1 (critical) … S4 (minor), from triage rules or the agent.
+  severity            String?
+  /// WEB | EMAIL | PHONE | WALK_IN | CHAT — how the case reached HR.
+  channel             String                     @default("WEB")
+  /// Agent who logged it on the employee's behalf.
+  loggedByUserId      String?
+  mergedIntoId        String?
+  splitFromId         String?
+  escalationLevel     Int                        @default(0)
+  lastEscalatedAt     DateTime?
+  /// NONE | PENDING | APPROVED | REJECTED — a decision the case needs (policy exception…).
+  approvalStatus      String                     @default("NONE")
+  approvalRequestId   String?
+  satisfactionComment String?
+  articles            HelpdeskTicketArticle[]
+  tasks               HelpdeskTicketTask[]
+  escalations         HelpdeskTicketEscalation[]
 
   @@unique([tenantId, number])
   @@index([tenantId, status])

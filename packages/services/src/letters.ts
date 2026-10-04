@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { prisma } from "@keka/db";
+import { prisma, type Prisma } from "@keka/db";
 import { notify } from "./lifecycle";
 import { OFFER_PLACEHOLDERS } from "./offers-math";
+import { applyConditionals, formatLetterNumber, nextSeriesNumber, cdAddMonths, issueDateProblem } from "./cases-docs-math";
 
 /**
  * HR letters: templates with {{placeholders}}, generated per employee with
@@ -25,7 +26,7 @@ export const LETTER_WORKFLOWS = {
 } as const;
 export type LetterWorkflow = keyof typeof LETTER_WORKFLOWS;
 
-export const LETTER_CATEGORIES = ["OFFER", "APPOINTMENT", "CONFIRMATION", "PROMOTION", "TRANSFER", "SALARY_REVISION", "WARNING", "RELIEVING", "EXPERIENCE", "CUSTOM"] as const;
+export const LETTER_CATEGORIES = ["OFFER", "APPOINTMENT", "CONFIRMATION", "PROMOTION", "TRANSFER", "SALARY_REVISION", "WARNING", "SHOW_CAUSE", "RELIEVING", "EXPERIENCE", "CUSTOM"] as const;
 
 /** Every placeholder a template can use, with what it resolves to. */
 export const LETTER_PLACEHOLDERS: Record<string, string> = {
@@ -47,6 +48,17 @@ export const LETTER_PLACEHOLDERS: Record<string, string> = {
   signatory_name: "Legal entity's signatory",
   signatory_designation: "Signatory's designation",
   today: "Date the letter is generated",
+  letter_number: "The letter's reference number (from a numbering series)",
+  issue_date: "The date the letter is issued on",
+  valid_until: "The date the letter is valid until",
+  case_number: "Disciplinary letters: the case reference (ER-1001)",
+  case_title: "Disciplinary letters: the case title",
+  action_type: "Disciplinary letters: the action (written warning, suspension…)",
+  action_summary: "Disciplinary letters: what the action is for",
+  effective_date: "Disciplinary letters: when the action takes effect",
+  response_due_date: "Show-cause letters: the date a reply is due",
+  suspension_from: "Suspension letters: first day of suspension",
+  suspension_to: "Suspension letters: last day of suspension",
 };
 
 export const LETTER_STATUS_LABEL: Record<string, string> = {
@@ -63,7 +75,10 @@ export function hashBody(body: string): string {
 }
 
 export function templatePlaceholders(body: string): string[] {
-  return [...new Set([...body.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((m) => m[1]!))];
+  // Values ({{key}}) and the keys conditional sections test ({{#if key}}, {{#unless key}}).
+  const plain = [...body.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((m) => m[1]!).filter((k) => k !== "else");
+  const cond = [...body.matchAll(/\{\{#(?:if|unless)\s+(\w+)\s*\}\}/g)].map((m) => m[1]!);
+  return [...new Set([...plain, ...cond])];
 }
 
 function steps(workflow: string | null | undefined): string[] {
@@ -112,7 +127,7 @@ export async function letterValues(tenantId: string, employeeId: string, today =
  */
 export function renderLetter(body: string, values: Record<string, string>): { html: string; missing: string[] } {
   const missing: string[] = [];
-  const html = body.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, key: string) => {
+  const html = applyConditionals(body, values).replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, key: string) => {
     const v = values[key];
     if (v === undefined || v === "") { missing.push(key); return `[${key.toUpperCase()} NOT AVAILABLE]`; }
     return escapeHtml(v);
@@ -122,6 +137,8 @@ export function renderLetter(body: string, values: Record<string, string>): { ht
 
 export async function saveLetterTemplate(input: {
   tenantId: string; id?: string | null; name: string; category: string; body: string; workflow: string; archived?: boolean;
+  /** 33-cases-docs: who edited, the owner, department scope and an archive reason. */
+  userId?: string | null; ownerUserId?: string | null; departmentIds?: string[] | null; archivedReason?: string | null;
 }): Promise<R & { id?: string; unknown?: string[] }> {
   const name = input.name.trim();
   if (!name) return { ok: false, message: "Name the template." };
@@ -129,45 +146,108 @@ export async function saveLetterTemplate(input: {
   if (!(input.workflow in LETTER_WORKFLOWS)) return { ok: false, message: "Pick a workflow." };
   if (!(LETTER_CATEGORIES as readonly string[]).includes(input.category)) return { ok: false, message: "Pick a category." };
   if (/<\s*(script|iframe|object|embed)\b|\son\w+\s*=|javascript:/i.test(input.body)) return { ok: false, message: "Letters cannot contain scripts, embedded frames or event handlers." };
+  const opens = (input.body.match(/\{\{#(?:if|unless)\s/g) ?? []).length, closes = (input.body.match(/\{\{\/(?:if|unless)\}\}/g) ?? []).length;
+  if (opens !== closes) return { ok: false, message: "Every {{#if …}} section needs a matching {{/if}}." };
   const placeholders = templatePlaceholders(input.body);
   // Offer letters are filled from the candidate and offer, which adds a few placeholders.
   const unknown = placeholders.filter((p) => !(p in LETTER_PLACEHOLDERS) && !(input.category === "OFFER" && p in OFFER_PLACEHOLDERS));
   if (unknown.length) return { ok: false, unknown, message: `Unknown placeholder${unknown.length === 1 ? "" : "s"}: ${unknown.map((u) => `{{${u}}}`).join(", ")}.` };
   const clash = await prisma.documentTemplate.findFirst({ where: { tenantId: input.tenantId, name, ...(input.id ? { NOT: { id: input.id } } : {}) }, select: { id: true } });
   if (clash) return { ok: false, message: "Another template already has that name." };
-  const data = { name, category: input.category, body: input.body, placeholders, workflow: input.workflow || null, isArchived: !!input.archived };
+  if (input.ownerUserId && !(await prisma.user.count({ where: { id: input.ownerUserId, tenantId: input.tenantId } }))) return { ok: false, message: "Template owner not found." };
+  const departmentIds = (input.departmentIds ?? []).filter(Boolean);
+  if (departmentIds.length && (await prisma.department.count({ where: { id: { in: departmentIds }, tenantId: input.tenantId } })) !== departmentIds.length) return { ok: false, message: "Department not found." };
+  const settings = await prisma.letterSettings.findUnique({ where: { tenantId: input.tenantId } });
+  const needsApproval = !!settings?.requireTemplateApproval;
+  const archived = !!input.archived;
+  const data = {
+    name, category: input.category, body: input.body, placeholders, workflow: input.workflow || null, isArchived: archived,
+    ...(input.ownerUserId !== undefined ? { ownerUserId: input.ownerUserId || null } : {}),
+    ...(input.departmentIds !== undefined ? { departmentIds: departmentIds.length ? departmentIds : undefined } : {}),
+  };
   if (input.id) {
-    const found = await prisma.documentTemplate.findFirst({ where: { id: input.id, tenantId: input.tenantId }, select: { id: true } });
+    const found = await prisma.documentTemplate.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
     if (!found) return { ok: false, message: "Template not found." };
-    await prisma.documentTemplate.update({ where: { id: found.id }, data });
-    return { ok: true, id: found.id, message: `Saved "${name}". Letters already generated keep their original text.` };
+    if (found.approvalStatus === "PENDING_APPROVAL") return { ok: false, message: "This template is awaiting approval. Wait for the decision before editing it." };
+    const changed = found.body !== input.body || found.name !== name || found.category !== input.category || (found.workflow ?? "") !== input.workflow;
+    const version = changed ? found.version + 1 : found.version;
+    await prisma.documentTemplate.update({
+      where: { id: found.id },
+      data: {
+        ...data, version, ...(input.departmentIds !== undefined && !departmentIds.length ? { departmentIds: [] } : {}),
+        ...(changed && needsApproval ? { approvalStatus: "DRAFT", approvedAt: null, approvedByUserId: null } : {}),
+        ...(archived && !found.isArchived ? { archivedAt: new Date(), archivedReason: input.archivedReason?.trim() || null } : !archived ? { archivedAt: null, archivedReason: null } : {}),
+      },
+    });
+    if (changed) await prisma.documentTemplateRevision.create({ data: { tenantId: input.tenantId, templateId: found.id, version, name, category: input.category, body: input.body, workflow: input.workflow || null, editedByUserId: input.userId ?? null } });
+    return { ok: true, id: found.id, message: `Saved "${name}"${changed ? ` as version ${version}` : ""}.${changed && needsApproval ? " Submit it for approval before it is used again." : ""} Letters already generated keep their original text.` };
   }
-  const row = await prisma.documentTemplate.create({ data: { tenantId: input.tenantId, ...data } });
-  return { ok: true, id: row.id, message: `Created "${name}".` };
+  const row = await prisma.documentTemplate.create({
+    data: {
+      tenantId: input.tenantId, ...data, ownerUserId: input.ownerUserId || input.userId || null, approvalStatus: needsApproval ? "DRAFT" : "APPROVED",
+      nextReviewOn: cdAddMonths(new Date(), settings?.reviewEveryMonths ?? 12), ...(archived ? { archivedAt: new Date(), archivedReason: input.archivedReason?.trim() || null } : {}),
+    },
+  });
+  await prisma.documentTemplateRevision.create({ data: { tenantId: input.tenantId, templateId: row.id, version: 1, name, category: input.category, body: input.body, workflow: input.workflow || null, editedByUserId: input.userId ?? null } });
+  return { ok: true, id: row.id, message: `Created "${name}".${needsApproval ? " Submit it for approval before generating letters from it." : ""}` };
+}
+
+/** Assign the next number from the tenant's series for this category, inside the caller's transaction. */
+export async function allocateLetterNumber(tx: Prisma.TransactionClient, tenantId: string, category: string, at: Date): Promise<string | null> {
+  const series = (await tx.letterNumberSeries.findFirst({ where: { tenantId, category, isActive: true } })) ?? (await tx.letterNumberSeries.findFirst({ where: { tenantId, category: null, isActive: true } }));
+  if (!series) return null;
+  await tx.$executeRaw`SELECT id FROM letter_number_series WHERE id = ${series.id} FOR UPDATE`;
+  const fresh = await tx.letterNumberSeries.findUniqueOrThrow({ where: { id: series.id } });
+  const n = nextSeriesNumber(fresh, at);
+  await tx.letterNumberSeries.update({ where: { id: series.id }, data: { nextNumber: n.next, lastYear: n.year } });
+  return formatLetterNumber(fresh.prefix, fresh.digits, n.use, at, category);
 }
 
 export async function generateLetter(input: {
   tenantId: string; templateId: string; employeeId: string; issuedByEmployeeId: string | null; issuedByUserId: string; approverUserIds?: string[];
-}): Promise<R & { id?: string; missing?: string[] }> {
+  /** 33-cases-docs: extra placeholder values (disciplinary letters), dating, a batch or trigger it belongs to. */
+  extraValues?: Record<string, string>; issuedOn?: Date | null; validUntil?: Date | null; batchId?: string | null; triggerEvent?: string | null;
+}): Promise<R & { id?: string; missing?: string[]; letterNumber?: string | null }> {
   const template = await prisma.documentTemplate.findFirst({ where: { id: input.templateId, tenantId: input.tenantId, isArchived: false } });
   if (!template) return { ok: false, message: "Template not found." };
-  const values = await letterValues(input.tenantId, input.employeeId);
+  if (template.approvalStatus !== "APPROVED") return { ok: false, message: `"${template.name}" has not been approved for use yet.` };
+  const scope = Array.isArray(template.departmentIds) ? (template.departmentIds as string[]) : [];
+  if (scope.length) {
+    const e = await prisma.employee.findFirst({ where: { id: input.employeeId, tenantId: input.tenantId }, select: { departmentId: true } });
+    if (!e || !e.departmentId || !scope.includes(e.departmentId)) return { ok: false, message: `"${template.name}" is limited to other departments.` };
+  }
+  const values = await letterValues(input.tenantId, input.employeeId, input.issuedOn ?? new Date());
   if (!values) return { ok: false, message: "Employee not found." };
-  const { html, missing } = renderLetter(template.body, values);
+  const issuedOn = input.issuedOn ?? new Date();
+  if (input.issuedOn) {
+    // Backdating is limited by the tenant's letter settings (Documents › Letters admin › Settings).
+    const maxBackdateDays = (await prisma.letterSettings.findUnique({ where: { tenantId: input.tenantId }, select: { maxBackdateDays: true } }))?.maxBackdateDays ?? 30;
+    const problem = issueDateProblem(input.issuedOn, new Date(), maxBackdateDays);
+    if (problem) return { ok: false, message: problem };
+  }
+  if (input.validUntil && input.validUntil < issuedOn) return { ok: false, message: "A letter cannot expire before it is issued." };
   const needsApproval = steps(template.workflow).includes("APPROVE");
   const status = needsApproval ? "PENDING_APPROVAL" : employeeStage(template.workflow);
-  const row = await prisma.generatedDocument.create({
-    data: {
-      templateId: template.id, employeeId: input.employeeId, renderedBody: html, contentHash: hashBody(html), workflow: template.workflow,
-      status, issuedBy: input.issuedByEmployeeId, issuedByUserId: input.issuedByUserId,
-    },
+  const created = await prisma.$transaction(async (tx) => {
+    const letterNumber = await allocateLetterNumber(tx, input.tenantId, template.category, issuedOn);
+    const all = { ...values, ...(input.extraValues ?? {}), letter_number: letterNumber ?? "", issue_date: fmtDate(issuedOn), valid_until: fmtDate(input.validUntil ?? null) };
+    const r = renderLetter(template.body, all);
+    const row = await tx.generatedDocument.create({
+      data: {
+        templateId: template.id, employeeId: input.employeeId, renderedBody: r.html, contentHash: hashBody(r.html), workflow: template.workflow,
+        status, issuedBy: input.issuedByEmployeeId, issuedByUserId: input.issuedByUserId, issuedOn, validUntil: input.validUntil ?? null,
+        letterNumber, batchId: input.batchId ?? null, triggerEvent: input.triggerEvent ?? null, lastSentAt: new Date(),
+      },
+    });
+    return { row, missing: r.missing };
   });
+  const row = created.row, missing = created.missing;
   const who = values.employee_name;
   if (needsApproval) {
     await notify({ tenantId: input.tenantId, userIds: (input.approverUserIds ?? []).filter((u) => u !== input.issuedByUserId), kind: "LETTER_APPROVAL", title: `Approve ${template.name} for ${who}`, link: `/documents/letters/${row.id}` });
   } else await notifyEmployee(input.tenantId, row.id, template.name, status);
   const gap = missing.length ? ` ${missing.length} placeholder${missing.length === 1 ? " is" : "s are"} not available and marked in the letter.` : "";
-  return { ok: true, id: row.id, missing, message: `Generated ${template.name} for ${who}; ${LETTER_STATUS_LABEL[status]}.${gap}` };
+  return { ok: true, id: row.id, missing, letterNumber: row.letterNumber, message: `Generated ${template.name}${row.letterNumber ? ` (${row.letterNumber})` : ""} for ${who}; ${LETTER_STATUS_LABEL[status]}.${gap}` };
 }
 
 async function notifyEmployee(tenantId: string, letterId: string, templateName: string, status: string) {

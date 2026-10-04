@@ -23,6 +23,8 @@ export interface FieldSpec {
   hint?: string;
   /** Span the whole row. */
   wide?: boolean;
+  /** File inputs: accept several files. */
+  multiple?: boolean;
 }
 
 function Input({ f, state }: { f: FieldSpec; state: ActionState }) {
@@ -46,7 +48,7 @@ function Input({ f, state }: { f: FieldSpec; state: ActionState }) {
       </div>
     );
     case "checkbox": return <label className="row gap-2 text-sm"><input type="checkbox" id={f.name} name={f.name} defaultChecked={f.defaultValue === true} /> {f.placeholder ?? "Yes"}</label>;
-    case "file": return <input id={f.name} name={f.name} type="file" className="input" required={f.required} />;
+    case "file": return <input id={f.name} name={f.name} type="file" className="input" required={f.required} multiple={f.multiple} />;
     default: return <input id={f.name} name={f.name} type={f.type ?? "text"} className={`input${f.type === "number" ? " num" : ""}`} defaultValue={dv} required={f.required} placeholder={f.placeholder} step={f.type === "number" ? "any" : undefined} style={style} />;
   }
 }
@@ -75,13 +77,15 @@ export function SpecForm({ action, fields, submitLabel = "Save", hidden, columns
 }
 
 /** One button (optionally with a short text input) posting hidden values. */
-export function ActButton({ action, hidden, label, variant, confirmText, input }: {
+export function ActButton({ action, hidden, label, variant, confirmText, input, formId }: {
   action: Action; hidden: Record<string, string>; label: string; variant?: "primary" | "danger" | "ghost";
   confirmText?: string; input?: { name: string; placeholder: string; required?: boolean };
+  /** Lets inputs elsewhere on the page join this form (their form="..." attribute), e.g. bulk checkboxes. */
+  formId?: string;
 }) {
   const [state, formAction, pending] = useForm(action);
   return (
-    <form action={formAction} className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}
+    <form id={formId} action={formAction} className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}
       onSubmit={(e) => { if (confirmText && !confirm(confirmText)) e.preventDefault(); }}>
       {Object.entries(hidden).map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}
       {input ? <input className="input" name={input.name} placeholder={input.placeholder} required={input.required} style={{ width: 200 }} /> : null}

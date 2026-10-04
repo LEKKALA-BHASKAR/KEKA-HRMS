@@ -9,6 +9,7 @@ import { Composer } from "../../_ui/composer";
 import { DetailsPanel, FollowersPanel, NotesPanel, AssignToMe, AiSummary } from "../../_ui/ticket-panels";
 import { BackLink, Initials, StatusPill } from "../../_ui/bits";
 import { SlaHint } from "../../_ui/sla";
+import { CaseOps, loadCaseOps } from "../../_ui/case-ops";
 import { bannerTime, dayTime } from "../../_ui/format";
 import s from "../../_ui/hd.module.css";
 
@@ -28,6 +29,7 @@ export default async function AgentTicketPage({ params }: { params: Promise<{ id
   }
   const t = await loadTicket(viewer, id, true);
   const ag = t.agentData!;
+  const ops = await loadCaseOps(viewer.tenantId, t.id);
   const awaitingFirst = !t.closed && !t.firstResponseAt && t.firstResponseDueAt;
 
   return (
@@ -93,6 +95,7 @@ export default async function AgentTicketPage({ params }: { params: Promise<{ id
             <div className={s.sideHead}>Notes</div>
             <div className={s.sideBody}><NotesPanel ticketId={t.id} notes={ag.notes} /></div>
           </div>
+          <CaseOps data={ops} ticketId={t.id} viewerUserId={viewer.user.id} closed={t.closed} categories={ag.categories} />
         </div>
       </div>
     </div>

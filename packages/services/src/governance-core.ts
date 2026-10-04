@@ -196,6 +196,26 @@ async function retentionScope(tenantId: string, dataType: RetentionDataType, cut
       },
     };
   }
+  if (dataType === "ER_CASES") {
+    // Closed cases older than the cutoff whose own retention date has passed; a hold on the subject keeps the case.
+    const base: Prisma.ErCaseWhereInput = { tenantId, status: "CLOSED", closedAt: { lt: cutoff }, OR: [{ retainUntil: null }, { retainUntil: { lt: new Date() } }] };
+    const where: Prisma.ErCaseWhereInput = holds.tenantWide ? { id: "__none__" } : { ...base, ...(holds.employeeIds.size ? { NOT: { subjectEmployeeId: { in: [...holds.employeeIds] } } } : {}) };
+    const sample = (await prisma.erCase.findMany({ where, take: 5, orderBy: { closedAt: "asc" }, select: { number: true, closedAt: true } })).map((r) => `ER-${r.number} closed ${r.closedAt?.toISOString().slice(0, 10)}`);
+    return {
+      matched: await prisma.erCase.count({ where: base }), eligible: await prisma.erCase.count({ where }), sample,
+      apply: async () => {
+        const ids = (await prisma.erCase.findMany({ where, select: { id: true } })).map((r) => r.id);
+        await prisma.storedFile.deleteMany({ where: { tenantId, relatedType: "ErEvidence", relatedId: { in: ids } } });
+        return (await prisma.erCase.deleteMany({ where: { id: { in: ids } } })).count;
+      },
+    };
+  }
+  if (dataType === "DOCUMENT_VERSIONS") {
+    const base: Prisma.DocumentVersionWhereInput = { tenantId, createdAt: { lt: cutoff } };
+    const where: Prisma.DocumentVersionWhereInput = holds.tenantWide ? { id: "__none__" } : base;
+    const sample = (await prisma.documentVersion.findMany({ where, take: 5, orderBy: { createdAt: "asc" }, select: { label: true, version: true } })).map((r) => `${r.label ?? "Document"} v${r.version}`);
+    return { matched: await prisma.documentVersion.count({ where: base }), eligible: await prisma.documentVersion.count({ where }), sample, apply: async () => (await prisma.documentVersion.deleteMany({ where })).count };
+  }
   // EXITED_EMPLOYEES: anonymise personal data once the retention period after the last working day has passed.
   const base: Prisma.EmployeeWhereInput = { tenantId, status: "EXITED", lastWorkingDay: { lt: cutoff }, NOT: { firstName: "Anonymised" } };
   const where: Prisma.EmployeeWhereInput = holds.tenantWide ? { id: "__none__" } : { ...base, ...(holds.employeeIds.size ? { id: { notIn: [...holds.employeeIds] } } : {}) };

@@ -110,7 +110,7 @@ export async function rateTicketAction(_prev: ActionState, formData: FormData): 
   if (!(Number.isInteger(rating) && rating >= 1 && rating <= 5)) return { ok: false, message: "Rate from 1 to 5." };
   const u = await prisma.helpdeskTicket.updateMany({
     where: { id: ticketId, tenantId: viewer.tenantId, employeeId: viewer.employee?.id ?? "__none__", status: { in: ["CLOSED", "RESOLVED"] } },
-    data: { satisfaction: rating },
+    data: { satisfaction: rating, satisfactionComment: String(formData.get("comment") ?? "").trim().slice(0, 1000) || null },
   });
   if (!u.count) return { ok: false, message: "You can rate your own closed tickets." };
   await writeAudit(viewer, { module: "HELPDESK", action: "UPDATE", entityType: "HelpdeskTicket", entityId: ticketId, summary: `Rated the support ${rating}/5` });
@@ -303,7 +303,7 @@ const categorySchema = z.object({
   enableOnHold: zBool(),
   firstResponseHours: z.string().optional().transform((v) => (v ? Number(v) : 8)).pipe(z.number().int("Whole hours").min(1, "At least 1 hour").max(720, "At most 720 hours")),
   slaHours: zRequiredNumber({ min: 1, max: 720 }),
-  assignMode: z.enum(["HEAD", "ROUND_ROBIN", "UNASSIGNED"]).default("HEAD"),
+  assignMode: z.enum(["HEAD", "ROUND_ROBIN", "LEAST_LOADED", "UNASSIGNED"]).default("HEAD"),
   defaultPriority: z.enum(["", ...TICKET_PRIORITIES]).optional(),
   split: z.string().optional(),
   isActive: z.string().optional(),
@@ -327,7 +327,7 @@ export async function saveCategoryAction(_prev: ActionState, formData: FormData)
   if (d.businessHoursId && !(await prisma.helpdeskBusinessHours.count({ where: { id: d.businessHoursId, tenantId: viewer.tenantId } }))) {
     return { ok: false, message: "Those business hours were not found.", errors: { businessHoursId: "Not found" } };
   }
-  if (d.assignMode === "ROUND_ROBIN" && agentUserIds.length < 1) return { ok: false, message: "Round robin needs at least one agent.", errors: { agentUserIds: "Add agents" } };
+  if ((d.assignMode === "ROUND_ROBIN" || d.assignMode === "LEAST_LOADED") && agentUserIds.length < 1) return { ok: false, message: "Round robin and least-loaded need at least one agent.", errors: { agentUserIds: "Add agents" } };
   const audience = d.audienceType === "EMPLOYEES" ? (audienceEmployees.length ? { employeeIds: audienceEmployees } : null)
     : d.audienceType === "GROUPS" ? (departmentIds.length || locationIds.length || businessUnitIds.length ? { departmentIds, locationIds, businessUnitIds } : null) : null;
   if (d.audienceType !== "ALL" && !audience) return { ok: false, message: "Choose who can raise tickets in this category.", errors: { audienceType: "Pick at least one" } };

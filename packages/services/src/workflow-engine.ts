@@ -6,6 +6,7 @@ import {
   applyAccessRequest, applyChangeRequest, completeComplianceItem, activatePolicyCampaign, publishConsentPurpose,
   runRetention, govAudit,
 } from "./governance-core";
+import { CASES_DOCS_ROUTES, applyCasesDocsEffect } from "./cases-docs-effects";
 import {
   WORKFLOW_ENTITY_TYPES, dueAtFor, finalApprovers, nextApplicableStep, pickDefinition, stepOutcome, validateWorkflowSubmission,
   type RouteContext, type StepSpec, type ValidationRule, type WorkflowEntityType,
@@ -49,6 +50,10 @@ export function builtInRoute(entityType: WorkflowEntityType, opts: { reviewerUse
     case "RETENTION_PURGE":
     case "POLICY_PUBLISH":
     case "CONSENT_PURPOSE": return [perm("Compliance manager", "admin.compliance.manage")];
+    default: {
+      const r = CASES_DOCS_ROUTES[entityType as keyof typeof CASES_DOCS_ROUTES];
+      return r ? [perm(r.name, r.permission)] : [];
+    }
   }
 }
 
@@ -230,6 +235,9 @@ async function applyEffect(req: { id: string; tenantId: string; entityType: stri
       if (!id) return;
       if (approved) await publishConsentPurpose(t, id, actorUserId);
       else await prisma.consentPurpose.updateMany({ where: { id, tenantId: t, status: "PENDING_APPROVAL" }, data: { status: "DRAFT" } });
+      return;
+    default:
+      if (id) await applyCasesDocsEffect(req, outcome, actorUserId);
       return;
   }
 }
