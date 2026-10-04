@@ -133,6 +133,7 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                       <nav className={s.loanTabs} aria-label="Loan">
                         <Link href={href({ loan: l.id })} scroll={false} className={`${s.loanTab}${tab === "details" ? ` ${s.loanTabActive}` : ""}`} aria-current={tab === "details" ? "page" : undefined}>Loan Details</Link>
                         <Link href={href({ loan: l.id, tab: "recovery" })} scroll={false} className={`${s.loanTab}${tab === "recovery" ? ` ${s.loanTabActive}` : ""}`} aria-current={tab === "recovery" ? "page" : undefined}>Loan Recovery Details</Link>
+                        <Link href={`/finances/loans/${l.id}`} className={s.loanTab}>Statement & changes</Link>
                       </nav>
                     </div>
 
@@ -238,7 +239,7 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                         <td>{l.installments} Months</td>
                         <td className={s.num}>{inr(n(l.emiAmount))}</td>
                         <td><Chip kind={st.kind}>{st.label}</Chip>{l.decisionNote && l.status !== "WITHDRAWN" ? <div className={s.muted} style={{ fontSize: 12.5, marginTop: 4 }}>{l.decisionNote}</div> : null}</td>
-                        <td>{l.status === "REQUESTED" || l.status === "PENDING_APPROVAL" ? <WithdrawButton kind="loan" id={l.id} label={`the ${l.category.name} request`} /> : <span className={s.muted}>—</span>}</td>
+                        <td>{l.status === "REQUESTED" || l.status === "PENDING_APPROVAL" ? <><Link href={`/finances/loans/${l.id}`} className={s.linkBtn}>Edit</Link> <WithdrawButton kind="loan" id={l.id} label={`the ${l.category.name} request`} /></> : <span className={s.muted}>—</span>}</td>
                       </tr>
                     );
                   })}

@@ -276,6 +276,17 @@ model Employee {
   coachingAsCoachee       CoachingPlan[]           @relation("CoachingCoachee")
   coachingAsCoach         CoachingPlan[]           @relation("CoachingCoach")
   skillAssessmentLogs     SkillAssessmentLog[]     @relation("SkillAssessed")
+  // --- Money depth (35-money-depth) ---
+  moneyExpensePreApproval ExpensePreApproval[] @relation("PreApprovalRequester")
+  moneyTravelerProfile TravelerProfile? @relation("TravelerProfileOf")
+  moneyTravelSettlement TravelSettlement[] @relation("TravelSettlementOf")
+  moneyBenefitEnrollment BenefitEnrollment[] @relation("BenefitEnrollee")
+  moneyDependentRequest DependentRequest[] @relation("DependentRequester")
+  moneyBenefitLifeEvent BenefitLifeEvent[] @relation("LifeEventOf")
+  moneyBenefitEligibilityException BenefitEligibilityException[] @relation("BenefitExceptionFor")
+  moneyCompPlanItem CompPlanItem[] @relation("CompPlanFor")
+  moneyCompStatement CompStatement[] @relation("CompStatementFor")
+  moneyAllowanceChangeRequest AllowanceChangeRequest[] @relation("AllowanceChangeFor")
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
@@ -396,6 +407,10 @@ model Dependent {
   dateOfBirth  DateTime?
   /// Relevant for medical-insurance and Section 80D handling.
   isNominee    Boolean   @default(false)
+  /// Proof of relationship, checked by HR before benefits cover them.
+  proofUrl     String?
+  verifiedAt   DateTime?
+  verifiedBy   String?
 
   @@index([employeeId])
   @@map("dependents")

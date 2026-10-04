@@ -111,13 +111,15 @@ async function main() {
       const rate = Number(flat.policyRules[0].interestRate);
       check("Flat interest is charged on the full principal for the whole term", Math.abs(f.interest - 120000 * rate / 100) < 1 && Math.abs(f.total - (120000 + 120000 * rate / 100)) < 1, `${f.total}`);
     }
-    const early = await loansA.applyLoanAction({}, fd({ categoryId: cat.id, amount: 60000, installments: 6, expectedMonth: `${open.year - 1}-${String(open.month).padStart(2, "0")}`, startMonth: ym(months[1]) }));
+    // Personal loans need a supporting document (the seeded rule).
+    const withDoc = (v: Record<string, string | number>) => { const f = fd(v); f.set("document", bill("quote.pdf")); return f; };
+    const early = await loansA.applyLoanAction({}, withDoc({ categoryId: cat.id, amount: 60000, installments: 6, expectedMonth: `${open.year - 1}-${String(open.month).padStart(2, "0")}`, startMonth: ym(months[1]) }));
     check("An expected month in a closed payroll is refused", early.ok === false && /expected month/i.test(early.message ?? ""), early.message);
-    const backwards = await loansA.applyLoanAction({}, fd({ categoryId: cat.id, amount: 60000, installments: 6, expectedMonth: ym(months[2]), startMonth: ym(months[1]) }));
+    const backwards = await loansA.applyLoanAction({}, withDoc({ categoryId: cat.id, amount: 60000, installments: 6, expectedMonth: ym(months[2]), startMonth: ym(months[1]) }));
     check("EMIs cannot start before the loan is paid out", backwards.ok === false && /cannot start/i.test(backwards.message ?? ""), backwards.message);
-    const bad = await loansA.applyLoanAction({}, fd({ categoryId: cat.id, amount: 60000, installments: 6, expectedMonth: "2026-13", startMonth: ym(months[1]) }));
+    const bad = await loansA.applyLoanAction({}, withDoc({ categoryId: cat.id, amount: 60000, installments: 6, expectedMonth: "2026-13", startMonth: ym(months[1]) }));
     check("A malformed month is refused", bad.ok === false && !!bad.errors?.expectedMonth, bad.message);
-    const applied = await loansA.applyLoanAction({}, fd({ categoryId: cat.id, amount: 60000, installments: 6, expectedMonth: ym(months[1]), startMonth: ym(months[2]), purpose: "Smoke finances loan" }));
+    const applied = await loansA.applyLoanAction({}, withDoc({ categoryId: cat.id, amount: 60000, installments: 6, expectedMonth: ym(months[1]), startMonth: ym(months[2]), purpose: "Smoke finances loan" }));
     const loan = await prisma.loan.findFirst({ where: { employeeId: borrower.id, purpose: "Smoke finances loan" } });
     if (loan) made.loans.push(loan.id);
     check("A request keeps its expected and EMI-start months", applied.ok === true && loan?.status === "PENDING_APPROVAL" && loan.expectedYear === months[1].year && loan.expectedMonth === months[1].month && loan.startYear === months[2].year && loan.startMonth === months[2].month, applied.message);
@@ -128,7 +130,7 @@ async function main() {
     const decided = await loansA.decideLoanAction({}, fd({ loanId: loan!.id, decision: "approve" }));
     const sched = await prisma.loanInstallment.findMany({ where: { loanId: loan!.id }, orderBy: { sequence: "asc" } });
     check("Approval schedules EMIs from the month the employee asked for", decided.ok === true && sched[0]?.year === months[2].year && sched[0]?.month === months[2].month, decided.message);
-    const applied2 = await (async () => { await signInAs(borrower.user!.email); return loansA.applyLoanAction({}, fd({ categoryId: cats.find((c) => c.id !== cat.id && c.policyRules.length)!.id, amount: 20000, installments: 4, expectedMonth: ym(months[0]), startMonth: ym(months[0]), purpose: "Smoke finances withdraw" })); })();
+    const applied2 = await (async () => { await signInAs(borrower.user!.email); return loansA.applyLoanAction({}, withDoc({ categoryId: cats.find((c) => c.id !== cat.id && c.policyRules.length)!.id, amount: 20000, installments: 4, expectedMonth: ym(months[0]), startMonth: ym(months[0]), purpose: "Smoke finances withdraw" })); })();
     const loan2 = await prisma.loan.findFirst({ where: { employeeId: borrower.id, purpose: "Smoke finances withdraw" } });
     if (loan2) made.loans.push(loan2.id);
     const w = loan2 ? await fin.withdrawLoanAction({}, fd({ loanId: loan2.id })) : { ok: false, message: applied2.message };
@@ -236,7 +238,7 @@ async function main() {
     await prisma.componentClaim.deleteMany({ where: { id: { in: made.claims } } });
     await prisma.loan.deleteMany({ where: { id: { in: made.loans } } });
     await prisma.loanCategory.deleteMany({ where: { id: { in: made.categories } } });
-    const files = await prisma.storedFile.findMany({ where: { OR: [{ id: { in: made.files } }, { tenantId: tenant.id, relatedType: "ComponentClaim", createdAt: { gte: started } }] } });
+    const files = await prisma.storedFile.findMany({ where: { OR: [{ id: { in: made.files } }, { tenantId: tenant.id, relatedType: { in: ["ComponentClaim", "LoanDocument"] }, createdAt: { gte: started } }] } });
     const dir = process.env.STORAGE_DIR ?? path.join(process.cwd(), ".storage");
     for (const f of files) await unlink(path.join(dir, f.storageKey)).catch(() => undefined);
     await prisma.storedFile.deleteMany({ where: { id: { in: files.map((f) => f.id) } } });

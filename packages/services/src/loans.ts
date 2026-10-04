@@ -4,6 +4,7 @@ import { buildLoanSchedule, resolveStructure, type InterestTypeLiteral } from "@
 import { notify, usersWithPermission } from "./lifecycle";
 import { postLoanDisbursement, postLoanForeclosure } from "./accounting";
 import { compareMonths, firstOpenPayrollMonth } from "./finances-math";
+import { emergencyAdvanceCap, loanProcessingFee } from "./money-math";
 
 /**
  * Loans from request to closure. The schedule is built by the pure engine;
@@ -26,7 +27,7 @@ export interface EligibilityResult {
 }
 
 /** Everything that stands between this employee and this loan. */
-export async function checkLoanEligibility(employeeId: string, categoryId: string, amount?: number, installments?: number): Promise<EligibilityResult> {
+export async function checkLoanEligibility(employeeId: string, categoryId: string, amount?: number, installments?: number, opts: { excludeLoanId?: string } = {}): Promise<EligibilityResult> {
   const emp = await prisma.employee.findUniqueOrThrow({
     where: { id: employeeId },
     select: {
@@ -49,10 +50,14 @@ export async function checkLoanEligibility(employeeId: string, categoryId: strin
   const rule = policy?.rules[0];
   const reasons: string[] = [];
   const ctc = Number(emp.salaryRevisions[0]?.annualCtc ?? 0);
+  // Emergency salary advances skip the probation and tenure waits, and are
+  // capped at a few months of gross pay.
+  const category = await prisma.loanCategory.findUnique({ where: { id: categoryId }, select: { isEmergency: true, emergencyMaxMonthsSalary: true } });
+  const emergency = !!category?.isEmergency;
 
   if (!policy || !rule) reasons.push("No loan policy covers this category.");
-  if (policy?.requireProbationComplete && emp.status === "PROBATION") reasons.push("Loans open once probation is complete.");
-  if (policy?.minDaysFromJoining) {
+  if (!emergency && policy?.requireProbationComplete && emp.status === "PROBATION") reasons.push("Loans open once probation is complete.");
+  if (!emergency && policy?.minDaysFromJoining) {
     const days = Math.floor((Date.now() - emp.dateOfJoining.getTime()) / DAY);
     if (days < policy.minDaysFromJoining) reasons.push(`Loans open ${policy.minDaysFromJoining} days after joining (you are at ${days}).`);
   }
@@ -61,12 +66,14 @@ export async function checkLoanEligibility(employeeId: string, categoryId: strin
   if (policy?.blockOnNoticePeriod && (emp.status === "NOTICE_PERIOD" || (emp.exitRecord && ["PENDING_APPROVAL", "APPROVED", "IN_CLEARANCE"].includes(emp.exitRecord.status)))) {
     reasons.push("Loans are not available during the notice period.");
   }
-  const open = await prisma.loan.count({ where: { employeeId, categoryId, status: { in: ["REQUESTED", "PENDING_APPROVAL", "APPROVED", "DISBURSED", "ACTIVE"] } } });
+  const open = await prisma.loan.count({ where: { employeeId, categoryId, status: { in: ["REQUESTED", "PENDING_APPROVAL", "APPROVED", "DISBURSED", "ACTIVE"] }, ...(opts.excludeLoanId ? { id: { not: opts.excludeLoanId } } : {}) } });
   if (open > 0) reasons.push("You already have an open loan in this category.");
 
   const capByAmount = rule?.maxAmount ? Number(rule.maxAmount) : null;
   const capBySalary = rule?.maxPercentOfSalary && ctc ? r2(ctc * Number(rule.maxPercentOfSalary) / 100) : null;
-  const maxAmount = capByAmount !== null && capBySalary !== null ? Math.min(capByAmount, capBySalary) : capByAmount ?? capBySalary;
+  const capByEmergency = emergency ? emergencyAdvanceCap(await monthlyGrossOf(employeeId), category?.emergencyMaxMonthsSalary === null || category?.emergencyMaxMonthsSalary === undefined ? null : Number(category.emergencyMaxMonthsSalary)) : null;
+  const caps = [capByAmount, capBySalary, capByEmergency].filter((c): c is number => c !== null);
+  const maxAmount = caps.length ? Math.min(...caps) : null;
   if (amount !== undefined && maxAmount !== null && amount > maxAmount) reasons.push(`The most you can borrow is ₹${maxAmount.toLocaleString("en-IN")}.`);
   const maxInstallments = rule?.maxInstallments ?? 12;
   if (installments !== undefined && installments > maxInstallments) reasons.push(`Repay over at most ${maxInstallments} months.`);
@@ -162,7 +169,10 @@ export async function approveLoan(loanId: string, byUserId: string, note?: strin
     }),
     prisma.loan.update({
       where: { id: loanId },
-      data: { status: "APPROVED", approvedAt: new Date(), approvedBy: byUserId, emiAmount: s.emi.toNumber(), startYear: start.year, startMonth: start.month, outstanding: loan.principal, decisionNote: note ?? null },
+      data: {
+        status: "APPROVED", approvedAt: new Date(), approvedBy: byUserId, emiAmount: s.emi.toNumber(), startYear: start.year, startMonth: start.month, outstanding: loan.principal, decisionNote: note ?? null,
+        processingFee: loanProcessingFee(Number(loan.principal), rule?.processingFeePct === null || rule?.processingFeePct === undefined ? null : Number(rule.processingFeePct), rule?.processingFeeFlat === null || rule?.processingFeeFlat === undefined ? null : Number(rule.processingFeeFlat)),
+      },
     }),
   ]);
   await notify({ tenantId: loan.employee.tenantId, userIds: [loan.employee.userId], kind: "LOAN", title: "Your loan was approved", body: `EMI ₹${s.emi.toNumber().toLocaleString("en-IN")} from ${start.month}/${start.year}.`, link: "/finances/loans", email: true, event: "LOAN_APPROVED", employeeIds: [loan.employeeId] });
@@ -194,7 +204,16 @@ export async function disburseLoan(loanId: string, opts: { outsidePayroll?: bool
   if (loan.status !== "APPROVED") return { ok: false, message: "Only an approved loan can be disbursed." };
   await prisma.loan.update({ where: { id: loanId }, data: { status: "ACTIVE", disbursedAt: new Date(), disbursedOutside: !!opts.outsidePayroll } });
   const ledger = await postLoanDisbursement(loanId);
-  return { ok: true, message: `Disbursed. EMIs start in ${loan.startMonth}/${loan.startYear} payroll.${ledger.ok ? "" : ` Not posted to the ledger: ${ledger.message}`}` };
+  // The processing fee is recovered once, in the disbursal month's payroll.
+  let fee = "";
+  if (Number(loan.processingFee) > 0) {
+    const m = await openPayrollMonthFor(loan.employeeId);
+    await prisma.adhocTransaction.create({ data: { employeeId: loan.employeeId, type: "DEDUCTION", name: "Loan processing fee", amount: loan.processingFee, taxTreatment: "NON_TAXABLE", year: m.year, month: m.month, sourceType: "LoanProcessingFee", sourceId: loan.id } });
+    fee = ` A ₹${Number(loan.processingFee).toLocaleString("en-IN")} processing fee is deducted in ${m.month}/${m.year}.`;
+  }
+  // With tranches, this releases the first one.
+  if (loan.hasTranches) await prisma.loanTranche.updateMany({ where: { loanId, sequence: 1, status: "PLANNED" }, data: { status: "PAID", paidAt: new Date() } });
+  return { ok: true, message: `Disbursed. EMIs start in ${loan.startMonth}/${loan.startYear} payroll.${fee}${ledger.ok ? "" : ` Not posted to the ledger: ${ledger.message}`}` };
 }
 
 /**

@@ -14,6 +14,8 @@ import {
   WORKFLOW_ENTITY_TYPES, dueAtFor, finalApprovers, nextApplicableStep, pickDefinition, stepOutcome, validateWorkflowSubmission,
   type RouteContext, type StepSpec, type ValidationRule, type WorkflowEntityType,
 } from "./governance-math";
+import { moneyBuiltInRoute, isMoneyWorkflowEntityType } from "./money-math";
+import { applyMoneyEffect } from "./money-workflow";
 
 /**
  * The generic workflow engine.
@@ -59,7 +61,9 @@ export function builtInRoute(entityType: WorkflowEntityType, opts: { reviewerUse
       : [perm("Hiring approver", hireRequestPermission(opts.changeKind))];
     default: {
       const r = CASES_DOCS_ROUTES[entityType as keyof typeof CASES_DOCS_ROUTES];
-      return r ? [perm(r.name, r.permission)] : engageBuiltInRoute(entityType, opts);
+      if (r) return [perm(r.name, r.permission)];
+      const money = moneyBuiltInRoute(entityType);
+      return money ? (money as StepSpec[]) : engageBuiltInRoute(entityType, opts);
     }
   }
 }
@@ -247,6 +251,7 @@ async function applyEffect(req: { id: string; tenantId: string; entityType: stri
       return;
     default:
       if (isEngageWorkflowType(req.entityType)) await applyEngageEffect(req, outcome, actorUserId);
+      else if (isMoneyWorkflowEntityType(req.entityType)) await applyMoneyEffect(req, outcome, actorUserId);
       else if (id) await applyCasesDocsEffect(req, outcome, actorUserId);
       return;
   }

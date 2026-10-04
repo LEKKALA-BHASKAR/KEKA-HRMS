@@ -107,3 +107,12 @@ export * from "./cases-docs-jobs";
 export * from "./hire-depth-math";
 export * from "./hire-depth-core";
 export * from "./hire-depth";
+// Money depth: expenses, travel, loans, benefits, compensation planning.
+export * from "./money-math";
+export * from "./expense-depth";
+export * from "./travel-depth";
+export * from "./loan-depth";
+export * from "./benefits";
+export * from "./comp-planning";
+export * from "./money-workflow";
+export * from "./money-audit";
