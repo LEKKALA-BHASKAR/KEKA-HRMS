@@ -10,6 +10,9 @@ import { Panel, EmptyState } from "@/components/keka";
 import {
   RateSkill, RejectSkill, SkillForm, PathForm, StepForm, StepSkillForm, RemoveStepSkill,
 } from "../../me/career/forms";
+import { GrowthForm, ActButton, Reveal } from "@/components/growth-forms";
+import { STATUS_TONE, ReviewButtons } from "@/components/growth-report";
+import { careerPathReviewAction, updateCareerPathAction, deleteCareerPathAction, updateCareerStepAction } from "@/app/actions/mobility";
 
 const P = PERMISSIONS;
 const DEFAULT_LEVELS = ["Beginner", "Working knowledge", "Proficient", "Expert"];
@@ -161,7 +164,20 @@ export default async function CareersAdminPage({ searchParams }: { searchParams:
         <div className="stack gap-4">
           {managePaths ? <Panel title="New career path"><PathForm departments={departments.map((d) => ({ value: d.id, label: d.name }))} /></Panel> : null}
           {paths.length === 0 ? <Panel><EmptyState title="No career paths yet" /></Panel> : paths.map((path) => (
-            <Panel key={path.id} title={path.name} subtitle={path.description ?? `${path.steps.length} steps`}>
+            <Panel key={path.id} title={path.name} subtitle={`${path.description ?? `${path.steps.length} steps`}${path.decisionNote ? ` · note: ${path.decisionNote}` : ""}`} action={<span className="row gap-1 wrap">
+              <Badge tone={STATUS_TONE[path.status] ?? "neutral"} dot>{path.status.toLowerCase()}</Badge>
+              {managePaths ? <ReviewButtons action={careerPathReviewAction} hidden={{ pathId: path.id }} status={path.status} submittedByMe={path.submittedBy === viewer.user.id} /> : null}
+              {managePaths && path.status === "DRAFT" ? <ActButton action={deleteCareerPathAction} hidden={{ pathId: path.id }} label="Delete" variant="ghost" confirmText="Delete this draft path?" /> : null}
+            </span>}>
+              {managePaths ? (
+                <Reveal label="Edit path">
+                  <GrowthForm action={updateCareerPathAction} hidden={{ pathId: path.id }} cols={2} compact fields={[
+                    { name: "name", label: "Name", required: true, defaultValue: path.name },
+                    { name: "departmentId", label: "Department", type: "select", options: departments.map((d) => ({ value: d.id, label: d.name })), defaultValue: path.departmentId },
+                    { name: "description", label: "Description", type: "textarea", defaultValue: path.description },
+                  ]} />
+                </Reveal>
+              ) : null}
               <div className="stack gap-3">
                 {path.steps.map((step) => (
                   <div key={step.id} className="career-step">
@@ -178,6 +194,18 @@ export default async function CareersAdminPage({ searchParams }: { searchParams:
                       ))}
                     </div>
                     {managePaths && skillOptions.length ? <StepSkillForm stepId={step.id} skills={skillOptions} /> : null}
+                    {managePaths ? (
+                      <span className="row gap-1" style={{ marginTop: 6 }}>
+                        <Reveal label="Edit step">
+                          <GrowthForm action={updateCareerStepAction} hidden={{ stepId: step.id, op: "edit" }} cols={2} compact fields={[
+                            { name: "title", label: "Title", required: true, defaultValue: step.title },
+                            { name: "minYears", label: "Typical years", type: "number", min: 0, max: 40, defaultValue: step.minYears },
+                            { name: "description", label: "Description", type: "textarea", defaultValue: step.description },
+                          ]} />
+                        </Reveal>
+                        <ActButton action={updateCareerStepAction} hidden={{ stepId: step.id, op: "delete" }} label="Delete step" variant="ghost" confirmText="Delete this step?" />
+                      </span>
+                    ) : null}
                   </div>
                 ))}
                 {managePaths ? <div><div className="label">Add the next step</div><StepForm pathId={path.id} /></div> : null}

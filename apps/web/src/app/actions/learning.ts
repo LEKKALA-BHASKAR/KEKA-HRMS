@@ -2,8 +2,9 @@
 
 import { prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
-import { completeLesson, attemptQuiz, enrolEmployees, enrolEveryone, refreshEnrolment } from "@keka/services";
+import { completeLesson, attemptQuiz, enrolEmployees, enrolEveryone, refreshEnrolment, attemptsLeft } from "@keka/services";
 import { requireAuth, requireViewer, can, type Viewer } from "@/lib/context";
+import { missingPrerequisite } from "@/lib/growth";
 import {
   z, parseForm, toErrorState, writeAudit, actionDone as done, formList,
   zName, zOptional, zNumber, zBool, zDate, zOptionalId, type ActionState,
@@ -31,6 +32,10 @@ const courseSchema = z.object({
   skillId: zOptionalId(),
   skillLevel: zNumber({ min: 0, max: 10 }),
   coverColour: zOptional(20),
+  requiresApproval: zBool(),
+  certificateValidityMonths: zNumber({ min: 1, max: 120 }),
+  credits: zNumber({ min: 0, max: 100 }),
+  prerequisiteCourseId: zOptionalId(),
 });
 
 export async function saveCourseAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -40,13 +45,15 @@ export async function saveCourseAction(_prev: ActionState, formData: FormData): 
   const { id, ...d } = parsed.data;
   const values = Object.fromEntries([...formData.entries()].map(([k, v]) => [k, String(v)]));
   if (d.skillId && !(await prisma.skill.count({ where: { id: d.skillId, tenantId: viewer.tenantId } }))) return { ok: false, message: "That skill was not found.", values };
-  const data = { ...d, passPercent: d.passPercent ?? 70, skillLevel: d.skillLevel ?? 1, coverColour: d.coverColour ?? "#3b6fe0" };
+  if (d.prerequisiteCourseId && (d.prerequisiteCourseId === id || !(await prisma.course.count({ where: { id: d.prerequisiteCourseId, tenantId: viewer.tenantId } })))) return { ok: false, message: "Choose another course as the prerequisite.", errors: { prerequisiteCourseId: "Invalid" }, values };
+  const data = { ...d, passPercent: d.passPercent ?? 70, skillLevel: d.skillLevel ?? 1, coverColour: d.coverColour ?? "#3b6fe0", credits: d.credits ?? 0 };
   try {
     if (id) {
       const c = await courseOf(viewer, id);
       if (!c) return { ok: false, message: "Course not found." };
       await prisma.course.update({ where: { id }, data });
-      return done(["/learn", `/learn/courses/${id}`], "Saved.");
+      await writeAudit(viewer, { module: "SYSTEM", action: "UPDATE", entityType: "Course", entityId: id, summary: `Updated course "${d.title}"` });
+      return done(["/learn", `/learn/courses/${id}`, "/learn/manage-courses"], "Saved.");
     }
     const c = await prisma.course.create({ data: { ...data, tenantId: viewer.tenantId, createdBy: viewer.user.id } });
     await writeAudit(viewer, { module: "SYSTEM", action: "CREATE", entityType: "Course", entityId: c.id, summary: `Created course "${c.title}"` });
@@ -76,9 +83,10 @@ export async function addLessonAction(_prev: ActionState, formData: FormData): P
   if ((d.kind === "VIDEO" || d.kind === "DOCUMENT") && !d.url) return { ok: false, message: "Give the link to the video or document.", errors: { url: "Required" } };
   if (d.url && !/^https?:\/\//i.test(d.url) && !d.url.startsWith("/")) return { ok: false, message: "Links must start with http:// or https://", errors: { url: "Use a full link" } };
   if (d.kind === "ARTICLE" && !d.body) return { ok: false, message: "An article needs some text.", errors: { body: "Required" } };
-  await prisma.courseLesson.create({
+  const lesson = await prisma.courseLesson.create({
     data: { courseId: c.id, sequence: (c.lessons.at(-1)?.sequence ?? 0) + 1, title: d.title, kind: d.kind, body: d.body, url: d.url, durationMinutes: d.durationMinutes ?? 5 },
   });
+  await writeAudit(viewer, { module: "SYSTEM", action: "CREATE", entityType: "CourseLesson", entityId: lesson.id, summary: `Added ${d.kind.toLowerCase()} lesson "${d.title}" to "${c.title}"` });
   // New material makes completed enrolments incomplete again — refresh them.
   if (c.status === "PUBLISHED") {
     const enrolments = await prisma.courseEnrolment.findMany({ where: { courseId: c.id }, select: { id: true } });
@@ -141,6 +149,7 @@ export async function courseOpAction(_prev: ActionState, formData: FormData): Pr
   }
   if (op === "archive") {
     await prisma.course.update({ where: { id: c.id }, data: { status: "ARCHIVED" } });
+    await writeAudit(viewer, { module: "SYSTEM", action: "UPDATE", entityType: "Course", entityId: c.id, summary: `Archived "${c.title}"` });
     return done(["/learn", `/learn/courses/${c.id}`], "Archived. Completion records are kept.");
   }
   return { ok: false, message: "Unknown operation." };
@@ -186,7 +195,11 @@ export async function enrolSelfAction(_prev: ActionState, formData: FormData): P
   const courseId = String(formData.get("courseId"));
   const c = await prisma.course.findFirst({ where: { id: courseId, tenantId: viewer.tenantId, status: "PUBLISHED" } });
   if (!c) return { ok: false, message: "Course not found." };
+  if (c.requiresApproval) return { ok: false, message: "This course needs your manager's approval — request enrolment instead." };
+  const missing = await missingPrerequisite(c.prerequisiteCourseId, viewer.employee.id);
+  if (missing) return { ok: false, message: `Complete "${missing}" first.` };
   await enrolEmployees({ tenantId: viewer.tenantId, courseId, employeeIds: [viewer.employee.id], source: "SELF", notifyThem: false });
+  await writeAudit(viewer, { module: "SYSTEM", action: "CREATE", entityType: "CourseEnrolment", entityId: c.id, summary: `Enrolled in "${c.title}"` });
   return done(["/learn", `/learn/courses/${courseId}`], "Enrolled — start with the first lesson.");
 }
 
@@ -208,6 +221,12 @@ export async function submitQuizAction(_prev: ActionState, formData: FormData): 
   const e = await myEnrolment(viewer, String(formData.get("enrolmentId")));
   if (!e) return { ok: false, message: "You are not enrolled in this course." };
   const lessonId = String(formData.get("lessonId"));
+  // A quiz with an attempt limit needs an approved retake once the limit is used up.
+  const lesson = await prisma.courseLesson.findFirst({ where: { id: lessonId, courseId: e.courseId }, select: { maxAttempts: true, progress: { where: { enrolmentId: e.id }, select: { attempts: true, completedAt: true } } } });
+  if (lesson?.maxAttempts && !lesson.progress[0]?.completedAt) {
+    const retakes = await prisma.learningRequest.count({ where: { kind: "RETAKE", lessonId, employeeId: e.employeeId, status: "APPROVED" } });
+    if (attemptsLeft(lesson.maxAttempts, lesson.progress[0]?.attempts ?? 0, retakes) === 0) return { ok: false, message: "You have used all your attempts. Request a retake from your manager." };
+  }
   const picked: Record<string, number> = {};
   for (const [k, v] of formData.entries()) {
     if (k.startsWith("qq_")) picked[k.slice(3)] = Number(v);

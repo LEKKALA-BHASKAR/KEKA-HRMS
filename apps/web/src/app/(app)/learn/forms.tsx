@@ -9,9 +9,10 @@ import {
 
 export interface Option { value: string; label: string }
 
-export function CourseForm({ skills, course }: {
+export function CourseForm({ skills, course, courses = [] }: {
   skills: Option[];
-  course?: { id: string; title: string; summary: string | null; category: string; level: string; isMandatory: boolean; dueInDays: number | null; passPercent: number; skillId: string | null; skillLevel: number; coverColour: string | null };
+  courses?: Option[];
+  course?: { id: string; title: string; summary: string | null; category: string; level: string; isMandatory: boolean; dueInDays: number | null; passPercent: number; skillId: string | null; skillLevel: number; coverColour: string | null; requiresApproval?: boolean; certificateValidityMonths?: number | null; credits?: number; prerequisiteCourseId?: string | null };
 }) {
   return (
     <ActionForm action={saveCourseAction} submitLabel={course ? "Save course" : "Create course"} hidden={course ? { id: course.id } : undefined}>
@@ -28,9 +29,13 @@ export function CourseForm({ skills, course }: {
             <Field label="Card colour" name="coverColour" state={state}><TextInput name="coverColour" type="color" state={state} defaultValue={course?.coverColour ?? "#3b6fe0"} /></Field>
             <Field label="Skill earned on completion" name="skillId" state={state}><SelectInput name="skillId" state={state} placeholder="None" options={skills} defaultValue={course?.skillId} /></Field>
             <Field label="…at level" name="skillLevel" state={state} hint="0 is the first level of the skill"><TextInput name="skillLevel" type="number" min={0} max={10} state={state} defaultValue={course?.skillLevel ?? 1} /></Field>
+            <Field label="Prerequisite course" name="prerequisiteCourseId" state={state} hint="Must be completed before enrolling"><SelectInput name="prerequisiteCourseId" state={state} placeholder="None" options={courses.filter((c) => c.value !== course?.id)} defaultValue={course?.prerequisiteCourseId} /></Field>
+            <Field label="Certificate valid for (months)" name="certificateValidityMonths" state={state} hint="Blank: the certificate never expires"><TextInput name="certificateValidityMonths" type="number" min={1} max={120} state={state} defaultValue={course?.certificateValidityMonths} /></Field>
+            <Field label="Learning credits" name="credits" state={state}><TextInput name="credits" type="number" min={0} max={100} state={state} defaultValue={course?.credits ?? 0} /></Field>
           </div>
           <Field label="Summary" name="summary" state={state}><TextArea name="summary" state={state} rows={2} defaultValue={course?.summary} /></Field>
           <CheckboxInput name="isMandatory" label="Mandatory for everyone" defaultChecked={course?.isMandatory} hint="Assigned to every active employee on publish, and to new joiners automatically" />
+          <CheckboxInput name="requiresApproval" label="Enrolment needs the manager's approval" defaultChecked={course?.requiresApproval} hint="Learners request a place instead of enrolling themselves" />
         </>
       )}
     </ActionForm>
@@ -126,8 +131,8 @@ export function AssignForm({ courseId, people }: { courseId: string; people: Opt
   );
 }
 
-export function QuizForm({ enrolmentId, lessonId, questions, passPercent }: {
-  enrolmentId: string; lessonId: string; passPercent: number;
+export function QuizForm({ enrolmentId, lessonId, questions, passPercent, attemptsLeft }: {
+  enrolmentId: string; lessonId: string; passPercent: number; attemptsLeft?: number | null;
   questions: Array<{ id: string; prompt: string; options: string[] }>;
 }) {
   const [state, action, pending] = useForm(submitQuizAction);
@@ -137,7 +142,7 @@ export function QuizForm({ enrolmentId, lessonId, questions, passPercent }: {
       <input type="hidden" name="enrolmentId" value={enrolmentId} />
       <input type="hidden" name="lessonId" value={lessonId} />
       <FormBanner state={state} />
-      <div className="text-sm muted">Answer every question. You need {passPercent}% to pass, and you can retry as often as you like.</div>
+      <div className="text-sm muted">Answer every question. You need {passPercent}% to pass{attemptsLeft === null || attemptsLeft === undefined ? ", and you can retry as often as you like" : ` — ${attemptsLeft} attempt${attemptsLeft === 1 ? "" : "s"} left`}.</div>
       {questions.map((q, i) => {
         const mark = marked[`r_${q.id}`];
         return (

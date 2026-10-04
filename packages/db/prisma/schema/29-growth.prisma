@@ -1,0 +1,685 @@
+// ============================================================================
+//  BooS-HR — Growth: learning paths, training sessions, learning approvals and
+//  certificates; talent reviews, 9-box and succession; internal jobs,
+//  mobility and individual development plans; competency frameworks,
+//  proficiency scales and skill assessment history; coaching plans, PIP
+//  milestones and check-ins; feedback templates.
+// ============================================================================
+//  Definitions that need sign-off (learning paths, succession plans,
+//  competency frameworks, proficiency scales, feedback templates) share one
+//  review status: DRAFT → SUBMITTED → APPROVED, or back to DRAFT when
+//  rejected. The person who submitted cannot approve their own submission.
+// ============================================================================
+
+enum GrowthStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  ARCHIVED
+}
+
+// ---------------------------------------------------------------------------
+//  LEARNING PATHS
+// ---------------------------------------------------------------------------
+
+/// An ordered set of courses, optionally for one role, assigned as a whole.
+model LearningPath {
+  id          String       @id @default(cuid())
+  tenantId    String
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  category    String?
+  /// Role-based path: suggested to people holding this job title.
+  jobTitle    String?
+  isMandatory Boolean      @default(false)
+  /// Days to finish the whole path once assigned.
+  dueInDays   Int?
+  status      GrowthStatus @default(DRAFT)
+
+  submittedBy  String?
+  submittedAt  DateTime?
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
+  createdBy    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  courses     LearningPathCourse[]
+  assignments LearningPathAssignment[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+  @@map("learning_paths")
+}
+
+model LearningPathCourse {
+  id         String       @id @default(cuid())
+  pathId     String
+  path       LearningPath @relation(fields: [pathId], references: [id], onDelete: Cascade)
+  courseId   String
+  course     Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  sequence   Int
+  isOptional Boolean      @default(false)
+
+  @@unique([pathId, courseId])
+  @@index([courseId])
+  @@map("learning_path_courses")
+}
+
+model LearningPathAssignment {
+  id              String       @id @default(cuid())
+  tenantId        String
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pathId          String
+  path            LearningPath @relation(fields: [pathId], references: [id], onDelete: Cascade)
+  employeeId      String
+  employee        Employee     @relation("PathLearner", fields: [employeeId], references: [id], onDelete: Cascade)
+  /// ASSIGNED | IN_PROGRESS | COMPLETED
+  status          String       @default("ASSIGNED")
+  progressPercent Int          @default(0)
+  assignedBy      String?
+  assignedAt      DateTime     @default(now())
+  dueDate         DateTime?
+  completedAt     DateTime?
+
+  @@unique([pathId, employeeId])
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("learning_path_assignments")
+}
+
+// ---------------------------------------------------------------------------
+//  LEARNING REQUESTS: enrolment approval and quiz retakes
+// ---------------------------------------------------------------------------
+
+model LearningRequest {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// ENROLMENT (a course that needs approval) | RETAKE (a quiz out of attempts)
+  kind         String
+  courseId     String
+  course       Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  /// RETAKE: the quiz lesson.
+  lessonId     String?
+  employeeId   String
+  employee     Employee  @relation("LearningRequester", fields: [employeeId], references: [id], onDelete: Cascade)
+  reason       String?
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN
+  status       String    @default("PENDING")
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
+  createdAt    DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@index([employeeId, status])
+  @@map("learning_requests")
+}
+
+// ---------------------------------------------------------------------------
+//  TRAINING SESSIONS: classroom and virtual, with registration and attendance
+// ---------------------------------------------------------------------------
+
+model TrainingSession {
+  id               String   @id @default(cuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title            String
+  description      String?
+  /// The course this session teaches, if any (plain column).
+  courseId         String?
+  /// CLASSROOM | VIRTUAL
+  mode             String   @default("CLASSROOM")
+  venue            String?
+  meetingUrl       String?
+  instructorName   String?
+  instructorId     String?
+  startsAt         DateTime
+  endsAt           DateTime
+  capacity         Int?
+  /// Registrations wait for the learner's manager (or Learn admin).
+  requiresApproval Boolean  @default(false)
+  /// SCHEDULED | COMPLETED | CANCELLED
+  status           String   @default("SCHEDULED")
+  createdBy        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  registrations SessionRegistration[]
+
+  @@index([tenantId, startsAt])
+  @@map("training_sessions")
+}
+
+model SessionRegistration {
+  id          String          @id @default(cuid())
+  sessionId   String
+  session     TrainingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee        @relation("SessionLearner", fields: [employeeId], references: [id], onDelete: Cascade)
+  /// REQUESTED | REGISTERED | WAITLISTED | REJECTED | CANCELLED
+  status      String          @default("REGISTERED")
+  /// PRESENT | ABSENT, once marked.
+  attendance  String?
+  note        String?
+  requestedAt DateTime        @default(now())
+  decidedBy   String?
+  decidedAt   DateTime?
+
+  @@unique([sessionId, employeeId])
+  @@index([employeeId])
+  @@map("session_registrations")
+}
+
+// ---------------------------------------------------------------------------
+//  CERTIFICATES
+// ---------------------------------------------------------------------------
+
+model LearningCertificate {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId    String
+  employee      Employee  @relation("CertificateHolder", fields: [employeeId], references: [id], onDelete: Cascade)
+  courseId      String
+  course        Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  enrolmentId   String    @unique
+  number        String
+  issuedAt      DateTime  @default(now())
+  expiresAt     DateTime?
+  revokedAt     DateTime?
+  revokedReason String?
+
+  @@unique([tenantId, number])
+  @@index([employeeId])
+  @@map("learning_certificates")
+}
+
+// ---------------------------------------------------------------------------
+//  TALENT REVIEWS AND THE 9-BOX
+// ---------------------------------------------------------------------------
+
+model TalentReview {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  /// Plain columns: the department under review, if one.
+  departmentId String?
+  meetingAt    DateTime?
+  /// One agenda item per line.
+  agenda       String?
+  notes        String?
+  /// DRAFT | IN_PROGRESS | SUBMITTED | APPROVED
+  status       String    @default("DRAFT")
+  submittedBy  String?
+  submittedAt  DateTime?
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
+  createdBy    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  entries TalentReviewEntry[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+  @@map("talent_reviews")
+}
+
+model TalentReviewEntry {
+  id              String       @id @default(cuid())
+  reviewId        String
+  review          TalentReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  employeeId      String
+  employee        Employee     @relation("TalentReviewee", fields: [employeeId], references: [id], onDelete: Cascade)
+  /// 1 low, 2 moderate, 3 high.
+  performance     Int?
+  potential       Int?
+  /// 1–9, derived from the two ratings.
+  box             Int?
+  /// LOW | MEDIUM | HIGH
+  flightRisk      String?
+  retentionAction String?
+  notes           String?
+  ratedBy         String?
+  updatedAt       DateTime     @updatedAt
+
+  @@unique([reviewId, employeeId])
+  @@index([employeeId])
+  @@map("talent_review_entries")
+}
+
+/// The company's names for the nine boxes.
+model TalentBoxLabel {
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  box         Int
+  label       String
+  description String?
+
+  @@unique([tenantId, box])
+  @@map("talent_box_labels")
+}
+
+// ---------------------------------------------------------------------------
+//  SUCCESSION
+// ---------------------------------------------------------------------------
+
+model ReadinessLevel {
+  id           String  @id @default(cuid())
+  tenantId     String
+  tenant       Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code         String
+  name         String
+  description  String?
+  /// Months until ready, as a range.
+  minMonths    Int     @default(0)
+  maxMonths    Int?
+  displayOrder Int     @default(0)
+  isActive     Boolean @default(true)
+
+  successors Successor[] @relation("SuccessorReadiness")
+
+  @@unique([tenantId, code])
+  @@map("readiness_levels")
+}
+
+/// A critical position and the people who could step into it.
+model SuccessionPlan {
+  id            String       @id @default(cuid())
+  tenantId      String
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  positionTitle String
+  departmentId  String?
+  incumbentId   String?
+  incumbent     Employee?    @relation("SuccessionIncumbent", fields: [incumbentId], references: [id], onDelete: SetNull)
+  /// HIGH | MEDIUM | LOW
+  criticality   String       @default("HIGH")
+  /// Risk the incumbent leaves: HIGH | MEDIUM | LOW
+  riskOfLoss    String       @default("MEDIUM")
+  vacancyImpact String?
+  notes         String?
+  status        GrowthStatus @default(DRAFT)
+  submittedBy   String?
+  submittedAt   DateTime?
+  decidedBy     String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  createdBy     String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  successors Successor[]
+
+  @@unique([tenantId, positionTitle])
+  @@index([tenantId, status])
+  @@map("succession_plans")
+}
+
+model Successor {
+  id                 String         @id @default(cuid())
+  planId             String
+  plan               SuccessionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  employeeId         String
+  employee           Employee       @relation("SuccessorCandidate", fields: [employeeId], references: [id], onDelete: Cascade)
+  readinessId        String
+  readiness          ReadinessLevel @relation("SuccessorReadiness", fields: [readinessId], references: [id], onDelete: Cascade)
+  rank               Int            @default(1)
+  /// Named to cover an unplanned vacancy.
+  isEmergency        Boolean        @default(false)
+  /// NOMINATED | APPROVED | DECLINED
+  status             String         @default("NOMINATED")
+  notes              String?
+  /// A readiness change on an approved successor waits here for sign-off.
+  pendingReadinessId String?
+  pendingReason      String?
+  pendingBy          String?
+  nominatedBy        String?
+  nominatedAt        DateTime       @default(now())
+  decidedBy          String?
+  decidedAt          DateTime?
+  developmentPlanId  String?
+
+  @@unique([planId, employeeId])
+  @@index([employeeId])
+  @@map("successors")
+}
+
+// ---------------------------------------------------------------------------
+//  INTERNAL MOBILITY
+// ---------------------------------------------------------------------------
+
+model MobilityApplication {
+  id               String    @id @default(cuid())
+  tenantId         String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  jobId            String
+  job              Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  employeeId       String
+  employee         Employee  @relation("MobilityApplicant", fields: [employeeId], references: [id], onDelete: Cascade)
+  coverNote        String?
+  /// APPLIED → ENDORSED (manager) → SHORTLISTED | SELECTED | REJECTED; or
+  /// MANAGER_DECLINED, WITHDRAWN.
+  status           String    @default("APPLIED")
+  managerId        String?
+  managerNote      String?
+  managerDecidedAt DateTime?
+  hrDecidedBy      String?
+  hrDecidedAt      DateTime?
+  hrNote           String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([jobId, employeeId])
+  @@index([tenantId, status])
+  @@map("mobility_applications")
+}
+
+model MobilityRequest {
+  id               String    @id @default(cuid())
+  tenantId         String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId       String
+  employee         Employee  @relation("MobilityRequester", fields: [employeeId], references: [id], onDelete: Cascade)
+  /// TRANSFER | ROLE_CHANGE | RELOCATION
+  kind             String    @default("TRANSFER")
+  toDepartmentId   String?
+  toLocationId     String?
+  toJobTitleId     String?
+  preferredDate    DateTime?
+  reason           String
+  /// PENDING_MANAGER → PENDING_HR → APPROVED; REJECTED; WITHDRAWN
+  status           String    @default("PENDING_MANAGER")
+  managerId        String?
+  managerNote      String?
+  managerDecidedAt DateTime?
+  hrDecidedBy      String?
+  hrDecidedAt      DateTime?
+  hrNote           String?
+  /// The job change raised on approval.
+  jobChangeId      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("mobility_requests")
+}
+
+// ---------------------------------------------------------------------------
+//  DEVELOPMENT PLANS, ACTIONS AND COACHING
+// ---------------------------------------------------------------------------
+
+model DevelopmentPlan {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     Employee  @relation("DevelopmentPlanOwner", fields: [employeeId], references: [id], onDelete: Cascade)
+  title        String
+  objective    String
+  /// The career step it builds towards, if any (plain column).
+  careerStepId String?
+  startDate    DateTime
+  endDate      DateTime
+  /// DRAFT → SUBMITTED → APPROVED → COMPLETED; REJECTED returns to the owner.
+  status       String    @default("DRAFT")
+  managerId    String?
+  submittedAt  DateTime?
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
+  createdBy    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  actions DevelopmentAction[]
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("development_plans")
+}
+
+/// One thing to do: from a development plan, an improvement plan, a coaching
+/// plan, or a skill gap. The owner submits it with evidence; the manager verifies.
+model DevelopmentAction {
+  id             String           @id @default(cuid())
+  tenantId       String
+  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId     String
+  employee       Employee         @relation("DevelopmentActionOwner", fields: [employeeId], references: [id], onDelete: Cascade)
+  planId         String?
+  plan           DevelopmentPlan? @relation(fields: [planId], references: [id], onDelete: Cascade)
+  pipId          String?
+  pip            ImprovementPlan? @relation(fields: [pipId], references: [id], onDelete: Cascade)
+  coachingPlanId String?
+  coachingPlan   CoachingPlan?    @relation(fields: [coachingPlanId], references: [id], onDelete: Cascade)
+  /// Plain columns: the skill it closes a gap on, the course it uses.
+  skillId        String?
+  courseId       String?
+  title          String
+  description    String?
+  /// COURSE | MENTORING | PROJECT | READING | PRACTICE | OTHER
+  kind           String           @default("OTHER")
+  dueDate        DateTime?
+  /// OPEN | IN_PROGRESS | SUBMITTED | VERIFIED | CANCELLED
+  status         String           @default("OPEN")
+  evidence       String?
+  verifiedBy     String?
+  verifiedAt     DateTime?
+  verifierNote   String?
+  createdBy      String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("development_actions")
+}
+
+model CoachingPlan {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId         String
+  employee           Employee  @relation("CoachingCoachee", fields: [employeeId], references: [id], onDelete: Cascade)
+  coachId            String
+  coach              Employee  @relation("CoachingCoach", fields: [coachId], references: [id], onDelete: Cascade)
+  focusArea          String
+  goals              String
+  startDate          DateTime
+  endDate            DateTime
+  /// PROPOSED → ACTIVE (coachee accepts) → COMPLETED; DECLINED; CANCELLED
+  status             String    @default("PROPOSED")
+  employeeResponse   String?
+  respondedAt        DateTime?
+  /// 1–5, given by the coachee when the plan completes.
+  effectivenessScore Int?
+  closingNote        String?
+  createdBy          String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  sessions CoachingSessionLog[]
+  actions  DevelopmentAction[]
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@index([coachId])
+  @@map("coaching_plans")
+}
+
+model CoachingSessionLog {
+  id        String       @id @default(cuid())
+  planId    String
+  plan      CoachingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  heldOn    DateTime
+  notes     String
+  /// GOOD | STEADY | CONCERN
+  progress  String       @default("STEADY")
+  createdBy String?
+  createdAt DateTime     @default(now())
+
+  @@index([planId])
+  @@map("coaching_session_logs")
+}
+
+model PipMilestone {
+  id          String          @id @default(cuid())
+  pipId       String
+  pip         ImprovementPlan @relation(fields: [pipId], references: [id], onDelete: Cascade)
+  title       String
+  dueDate     DateTime
+  /// OPEN | MET | MISSED
+  status      String          @default("OPEN")
+  note        String?
+  completedAt DateTime?
+  createdAt   DateTime        @default(now())
+
+  @@index([pipId])
+  @@map("pip_milestones")
+}
+
+model PipCheckIn {
+  id              String          @id @default(cuid())
+  pipId           String
+  pip             ImprovementPlan @relation(fields: [pipId], references: [id], onDelete: Cascade)
+  heldOn          DateTime
+  /// ON_TRACK | AT_RISK | OFF_TRACK
+  progress        String
+  notes           String
+  employeeComment String?
+  acknowledgedAt  DateTime?
+  createdBy       String?
+  createdAt       DateTime        @default(now())
+
+  @@index([pipId])
+  @@map("pip_check_ins")
+}
+
+// ---------------------------------------------------------------------------
+//  COMPETENCIES AND PROFICIENCY
+// ---------------------------------------------------------------------------
+
+/// A role's competency profile: the skills it needs, at what level.
+model CompetencyFramework {
+  id           String       @id @default(cuid())
+  tenantId     String
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  /// The job profile it describes, matched against job titles for gap reports.
+  jobTitle     String?
+  version      Int          @default(1)
+  /// The version this one was copied from.
+  previousId   String?
+  status       GrowthStatus @default(DRAFT)
+  submittedBy  String?
+  submittedAt  DateTime?
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
+  createdBy    String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  items CompetencyItem[]
+
+  @@unique([tenantId, name, version])
+  @@index([tenantId, status])
+  @@map("competency_frameworks")
+}
+
+model CompetencyItem {
+  id            String              @id @default(cuid())
+  frameworkId   String
+  framework     CompetencyFramework @relation(fields: [frameworkId], references: [id], onDelete: Cascade)
+  skillId       String
+  skill         Skill               @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  requiredLevel Int                 @default(1)
+  weight        Int                 @default(1)
+  isCritical    Boolean             @default(false)
+
+  @@unique([frameworkId, skillId])
+  @@index([skillId])
+  @@map("competency_items")
+}
+
+/// A reusable named ladder of proficiency levels, applied to skills once approved.
+model ProficiencyScale {
+  id           String       @id @default(cuid())
+  tenantId     String
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  levels       String[]
+  descriptions String[]     @default([])
+  status       GrowthStatus @default(DRAFT)
+  submittedBy  String?
+  submittedAt  DateTime?
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
+  createdBy    String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("proficiency_scales")
+}
+
+/// Every rating of a skill — self, manager, course or admin — kept as history.
+model SkillAssessmentLog {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation("SkillAssessed", fields: [employeeId], references: [id], onDelete: Cascade)
+  skillId    String
+  skill      Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  /// SELF | MANAGER | REJECTED
+  kind       String
+  level      Int
+  evidence   String?
+  assessedBy String?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([employeeId, skillId])
+  @@map("skill_assessment_logs")
+}
+
+// ---------------------------------------------------------------------------
+//  FEEDBACK TEMPLATES
+// ---------------------------------------------------------------------------
+
+model FeedbackTemplate {
+  id           String       @id @default(cuid())
+  tenantId     String
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  /// PEER | MANAGER | UPWARD | THREE_SIXTY | ADHOC
+  purpose      String       @default("ADHOC")
+  /// One question per line.
+  questions    String[]
+  status       GrowthStatus @default(DRAFT)
+  submittedBy  String?
+  submittedAt  DateTime?
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
+  createdBy    String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("feedback_templates")
+}

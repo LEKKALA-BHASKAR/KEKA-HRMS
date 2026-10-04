@@ -109,7 +109,8 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         { label: "Attendance", href: "/me/attendance" },
         { label: "Leave", href: "/me/leave" },
         { label: "Work Log", href: "/me/work-log" },
-        on("performance") && { label: "Performance", href: "/me/performance", paths: ["/me/performance", "/me/career"] },
+        on("performance") && { label: "Performance", href: "/me/performance", paths: ["/me/performance"] },
+        on("performance") && { label: "Career", href: "/me/career" },
         on("expenses") && { label: "Expenses & Travel", href: "/me/expenses" },
         on("helpdesk") && { label: "Helpdesk", href: "/me/helpdesk" },
         { label: "Apps", href: "/me/apps", paths: ["/me/apps", "/me/assets"] },
@@ -201,7 +202,11 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
   const learn = tabs([
     (me || can(viewer, P.LEARNING_VIEW)) && { label: "My Courses", href: "/learn/my-courses", paths: ["/learn/my-courses", "/learn/courses", "/learn"], count: counts.learning },
     (me || can(viewer, P.LEARNING_VIEW)) && { label: "Course Library", href: "/learn/library" },
+    (me || can(viewer, P.LEARNING_VIEW)) && { label: "Learning Paths", href: "/learn/paths" },
+    (me || can(viewer, P.LEARNING_VIEW)) && { label: "Sessions", href: "/learn/sessions" },
     canAny(viewer, [P.TRAINING_MANAGE, P.COURSE_MANAGE]) && { label: "Manage Courses", href: "/learn/manage-courses" },
+    (isManager || canAny(viewer, [P.COURSE_ASSIGN, P.COURSE_MANAGE, P.TRAINING_MANAGE])) && { label: "Approvals", href: "/learn/approvals" },
+    canAny(viewer, [P.COURSE_ASSIGN, P.COURSE_MANAGE]) && { label: "Reports", href: "/learn/reports" },
     can(viewer, P.TRAINING_VIEW) && { label: "Programmes", href: "/training" },
   ]);
   if (learn.length && on("learn")) sections.push({ key: "learn", label: "Learn", icon: "learn", href: learn[0].href, tabs: learn });
@@ -222,7 +227,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     if (hire.length) sections.push({ key: "hire", label: "Hire", icon: "hire", href: hire[0].href, tabs: hire, admin: true });
   }
 
-  if (on("performance") && (isManager || canAny(viewer, [P.PERFORMANCE_MANAGE, P.PERFORMANCE_CALIBRATE, P.GOALS_MANAGE, P.PIP_MANAGE, P.CAREER_PATH_MANAGE, P.SKILL_MANAGE]))) {
+  if (on("performance") && (isManager || canAny(viewer, [P.PERFORMANCE_MANAGE, P.PERFORMANCE_CALIBRATE, P.GOALS_MANAGE, P.PIP_MANAGE, P.CAREER_PATH_MANAGE, P.SKILL_MANAGE, P.SUCCESSION_MANAGE, P.MOBILITY_MANAGE]))) {
     sections.push({
       key: "performance", label: "Performance", icon: "performance", href: "/performance/goals", admin: true,
       tabs: tabs([
@@ -234,6 +239,12 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         (isManager || canAny(viewer, [P.PERFORMANCE_MANAGE, P.CAREER_PATH_MANAGE])) && { label: "Growth Plans", href: "/performance/growth" },
         canAny(viewer, [P.PERFORMANCE_MANAGE, P.PERFORMANCE_CALIBRATE, P.PERFORMANCE_VIEW]) && { label: "Analytics", href: "/performance/analytics" },
         can(viewer, P.PERFORMANCE_MANAGE) && { label: "Settings", href: "/performance/settings" },
+        (isManager || canAny(viewer, [P.CAREER_PATH_MANAGE, P.PIP_MANAGE, P.SKILL_MANAGE])) && { label: "Development & Coaching", href: "/performance/development" },
+        can(viewer, P.SKILL_MANAGE) && { label: "Competencies", href: "/performance/skills" },
+        (isManager || canAny(viewer, [P.MOBILITY_MANAGE, P.CAREER_PATH_MANAGE])) && { label: "Internal Mobility", href: "/performance/mobility" },
+        can(viewer, P.SUCCESSION_MANAGE) && { label: "Talent Reviews", href: "/performance/talent-reviews" },
+        can(viewer, P.SUCCESSION_MANAGE) && { label: "Succession", href: "/performance/succession" },
+        can(viewer, P.PERFORMANCE_MANAGE) && { label: "Feedback Templates", href: "/performance/feedback-templates" },
       ]),
     });
   }
@@ -350,6 +361,11 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     me && { label: "View holidays", href: `/?holidays=${new Date().getFullYear()}`, keywords: "holiday calendar" },
     me && { label: "Schedule a 1:1", href: "/performance/one-on-ones?new=1", keywords: "one on one meeting manager" },
     me && { label: "My courses", href: "/learn/my-courses", keywords: "learning course training lms quiz" },
+    me && { label: "Training sessions", href: "/learn/sessions", keywords: "classroom training session workshop register" },
+    me && { label: "Internal jobs", href: "/me/career?tab=jobs", keywords: "internal job posting apply mobility transfer" },
+    me && { label: "Request a transfer", href: "/me/career?tab=moves", keywords: "transfer relocation move department mobility" },
+    me && { label: "My development plan", href: "/me/career?tab=development", keywords: "idp development plan coaching growth" },
+    can(viewer, P.SUCCESSION_MANAGE) && { label: "Succession plans", href: "/performance/succession", keywords: "succession successor critical role 9-box talent review" },
     { label: "Employee directory", href: "/directory", keywords: "people colleagues search" },
     { label: "Organisation tree", href: "/directory/tree", keywords: "org chart hierarchy reporting" },
     can(viewer, P.PAYROLL_VIEW) && { label: "Run payroll", href: "/payroll/runs", keywords: "payroll process month" },

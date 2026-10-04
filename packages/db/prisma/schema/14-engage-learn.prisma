@@ -150,6 +150,8 @@ model SurveyAnswer {
 
 enum CourseStatus {
   DRAFT
+  /// Submitted for review; a second course admin publishes it.
+  IN_REVIEW
   PUBLISHED
   ARCHIVED
 }
@@ -195,12 +197,30 @@ model Course {
   skillLevel  Int          @default(1)
   coverColour String?
 
+  // --- Growth (29-growth) ---
+  /// Self-enrolment waits for the learner's manager.
+  requiresApproval          Boolean   @default(false)
+  /// Certificates issued on completion expire after this many months.
+  certificateValidityMonths Int?
+  /// Learning credits earned on completion.
+  credits                   Int       @default(0)
+  /// Must be completed before enrolling (plain column).
+  prerequisiteCourseId      String?
+  /// Bumped each time a published course is re-opened for changes.
+  version                   Int       @default(1)
+  submittedBy               String?
+  submittedAt               DateTime?
+  reviewNote                String?
+
   createdBy String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  lessons    CourseLesson[]
-  enrolments CourseEnrolment[]
+  lessons      CourseLesson[]
+  enrolments   CourseEnrolment[]
+  pathItems    LearningPathCourse[]
+  requests     LearningRequest[]
+  certificates LearningCertificate[]
 
   @@unique([tenantId, title])
   @@index([tenantId, status])
@@ -218,6 +238,8 @@ model CourseLesson {
   body            String?
   url             String?
   durationMinutes Int        @default(5)
+  /// QUIZ: attempts allowed before a retake must be approved. Null = unlimited.
+  maxAttempts     Int?
 
   questions QuizQuestion[]
   progress  LessonProgress[]
@@ -296,6 +318,12 @@ model CareerPath {
   description  String?
   /// The department this ladder belongs to, for filtering.
   departmentId String?
+  /// DRAFT | SUBMITTED | APPROVED | REJECTED — only approved paths can be aspired to.
+  status       String    @default("APPROVED")
+  submittedBy  String?
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
   createdAt    DateTime @default(now())
 
   steps CareerPathStep[]
@@ -344,6 +372,13 @@ model CareerAspiration {
   stepId     String
   step       CareerPathStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
   note       String?
+  /// PENDING → ENDORSED | DECLINED by the manager.
+  status         String    @default("PENDING")
+  managerNote    String?
+  endorsedBy     String?
+  endorsedAt     DateTime?
+  targetDate     DateTime?
+  openToRelocate Boolean   @default(false)
   updatedAt  DateTime       @updatedAt
 
   @@map("career_aspirations")

@@ -3,12 +3,15 @@ import { notFound } from "next/navigation";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatDate } from "@keka/shared";
-import { formatMinutes, enrolmentStanding } from "@keka/services";
+import { formatMinutes, enrolmentStanding, attemptsLeft, certificateStatus } from "@keka/services";
 import { requireAuth, can, canAny } from "@/lib/context";
 import { scopedEmployeeWhere } from "@/lib/scope";
 import { PageHead, Badge, Progress, Person, Callout } from "@/components/ui";
 import { Panel, EmptyState } from "@/components/keka";
 import { CourseForm, LessonForm, QuizQuestionForm, RemoveLesson, CourseOp, EnrolSelf, MarkComplete, QuizForm, AssignForm, RemoveEnrolment } from "../../forms";
+import { ActButton, GrowthForm, Reveal } from "@/components/growth-forms";
+import { ProgramPlayer } from "./program-player";
+import { courseReviewAction, requestEnrolmentAction, requestRetakeAction, updateQuizQuestionAction, deleteQuizQuestionAction, importQuizQuestionsAction, setQuizRulesAction } from "@/app/actions/learn-growth";
 
 const P = PERMISSIONS;
 const KIND_ICON: Record<string, string> = { ARTICLE: "📄", VIDEO: "▶", DOCUMENT: "📎", QUIZ: "✎" };
@@ -37,7 +40,9 @@ export default async function CoursePage({ params, searchParams }: {
       lessons: { orderBy: { sequence: "asc" }, include: { questions: { orderBy: { sequence: "asc" } } } },
     },
   });
-  if (!course || (course.status === "DRAFT" && !canManage)) notFound();
+  // A course made in the section/module builder plays in its own player.
+  if (!course) return <ProgramPlayer viewer={viewer} id={id} moduleId={sp.lesson} />;
+  if ((course.status === "DRAFT" || course.status === "IN_REVIEW") && !canManage) notFound();
 
   const enrolment = viewer.employee
     ? await prisma.courseEnrolment.findUnique({
@@ -73,6 +78,15 @@ export default async function CoursePage({ params, searchParams }: {
     : [[], [], []];
 
   const levels = Array.isArray(course.skill?.levels) ? (course.skill!.levels as string[]) : [];
+  const [certificate, pendingRequest, retakes, prereq, otherCourses] = await Promise.all([
+    enrolment ? prisma.learningCertificate.findUnique({ where: { enrolmentId: enrolment.id } }) : Promise.resolve(null),
+    viewer.employee ? prisma.learningRequest.findFirst({ where: { employeeId: viewer.employee.id, courseId: course.id, status: "PENDING" } }) : Promise.resolve(null),
+    viewer.employee ? prisma.learningRequest.findMany({ where: { employeeId: viewer.employee.id, courseId: course.id, kind: "RETAKE", status: "APPROVED" }, select: { lessonId: true } }) : Promise.resolve([]),
+    course.prerequisiteCourseId ? prisma.course.findUnique({ where: { id: course.prerequisiteCourseId }, select: { id: true, title: true } }) : Promise.resolve(null),
+    canManage && sp.edit ? prisma.course.findMany({ where: { tenantId: viewer.tenantId, id: { not: course.id } }, select: { id: true, title: true }, orderBy: { title: "asc" } }) : Promise.resolve([]),
+  ]);
+  const quizLeft = (lessonId: string, maxAttempts: number | null) => attemptsLeft(maxAttempts, progressBy.get(lessonId)?.attempts ?? 0, retakes.filter((r) => r.lessonId === lessonId).length);
+  const certState = certificate ? certificateStatus(certificate) : null;
 
   return (
     <>
@@ -88,16 +102,25 @@ export default async function CoursePage({ params, searchParams }: {
         }
         actions={
           <>
-            <Link className="btn" href="/learn">Back</Link>
+            <Link className="btn" href={adminView && canManage ? "/learn/manage-courses" : "/learn/my-courses"}>Back</Link>
             {enrolment && (canManage || canAssign) ? <Link className="btn" href={`/learn/courses/${course.id}${adminView ? "" : "?view=admin"}`}>{adminView ? "Learner view" : "Admin view"}</Link> : null}
             {canManage && adminView ? <Link className="btn" href={`/learn/courses/${course.id}?view=admin${sp.edit ? "" : "&edit=1"}`}>{sp.edit ? "Done editing" : "Edit details"}</Link> : null}
-            {canManage && course.status !== "PUBLISHED" && course.status !== "ARCHIVED" ? <CourseOp courseId={course.id} op="publish" label="Publish" primary /> : null}
+            {canManage && course.status === "DRAFT" ? <ActButton action={courseReviewAction} hidden={{ courseId: course.id, op: "submit" }} label="Submit for review" /> : null}
+            {canManage && course.status === "IN_REVIEW" && course.submittedBy !== viewer.user.id ? <ActButton action={courseReviewAction} hidden={{ courseId: course.id, op: "approve" }} label="Approve & publish" variant="primary" /> : null}
+            {canManage && course.status === "IN_REVIEW" && course.submittedBy !== viewer.user.id ? <ActButton action={courseReviewAction} hidden={{ courseId: course.id, op: "reject" }} label="Send back" input={{ name: "note", placeholder: "What should change?", required: true }} /> : null}
+            {canManage && course.status === "DRAFT" ? <CourseOp courseId={course.id} op="publish" label="Publish now" primary /> : null}
+            {canManage && course.status === "PUBLISHED" ? <ActButton action={courseReviewAction} hidden={{ courseId: course.id, op: "revise" }} label="New version" confirmText="Move the course back to draft for changes?" /> : null}
             {canManage && course.status === "PUBLISHED" ? <CourseOp courseId={course.id} op="archive" label="Archive" /> : null}
-            {!enrolment && viewer.employee && course.status === "PUBLISHED" ? <EnrolSelf courseId={course.id} /> : null}
+            {!enrolment && viewer.employee && course.status === "PUBLISHED" && !course.requiresApproval ? <EnrolSelf courseId={course.id} /> : null}
+            {!enrolment && viewer.employee && course.status === "PUBLISHED" && course.requiresApproval ? (pendingRequest ? <Badge tone="warning" dot>Request pending</Badge> : <ActButton action={requestEnrolmentAction} hidden={{ courseId: course.id }} label="Request enrolment" variant="primary" input={{ name: "reason", placeholder: "Why (optional)" }} />) : null}
+            {certificate && certState !== "REVOKED" ? <a className="btn" href={`/learn/certificates/${certificate.id}`}>Certificate</a> : null}
           </>
         }
       />
       {course.summary ? <p className="muted" style={{ marginTop: -6, marginBottom: 16, maxWidth: 820 }}>{course.summary}</p> : null}
+      {prereq ? <p className="text-sm subtle" style={{ marginTop: -8, marginBottom: 12 }}>Prerequisite: <Link href={`/learn/courses/${prereq.id}`}>{prereq.title}</Link></p> : null}
+      {course.status === "IN_REVIEW" ? <div style={{ marginBottom: 12 }}><Callout tone="info" title="Waiting for review">{course.submittedBy === viewer.user.id ? "You submitted this course; another course admin approves it." : "Approve to publish it, or send it back with a note."}</Callout></div> : null}
+      {course.status === "DRAFT" && course.reviewNote ? <div style={{ marginBottom: 12 }}><Callout tone="warning" title="Sent back by the reviewer">{course.reviewNote}</Callout></div> : null}
 
       {!adminView && enrolment ? (
         <div className="learn-layout">
@@ -134,6 +157,7 @@ export default async function CoursePage({ params, searchParams }: {
                 <Callout tone="success" title="Course complete">
                   {enrolment.score !== null ? `Your quiz average was ${enrolment.score}%. ` : ""}
                   {course.skill ? `${course.skill.name} has been added to your skills.` : "You can revisit any lesson."}
+                  {certificate && certState ? <> Certificate {certificate.number} — {certState.toLowerCase()}{certificate.expiresAt ? `, valid until ${formatDate(certificate.expiresAt)}` : ""}. {certState !== "REVOKED" ? <a href={`/learn/certificates/${certificate.id}`}>Download PDF</a> : null}</> : null}
                 </Callout>
               </div>
             ) : null}
@@ -154,10 +178,17 @@ export default async function CoursePage({ params, searchParams }: {
                   ) : null
                 ) : null}
                 {current.kind === "QUIZ" && course.status === "PUBLISHED" ? (
-                  <div style={{ marginTop: 12 }}>
-                    <QuizForm enrolmentId={enrolment.id} lessonId={current.id} passPercent={course.passPercent}
-                      questions={current.questions.map((q) => ({ id: q.id, prompt: q.prompt, options: q.options }))} />
-                  </div>
+                  !progressBy.get(current.id)?.completedAt && quizLeft(current.id, current.maxAttempts) === 0 ? (
+                    <div style={{ marginTop: 12 }}>
+                      <Callout tone="warning" title="No attempts left">You have used all {current.maxAttempts} attempts. Ask your manager for a retake.</Callout>
+                      <div style={{ marginTop: 8 }}><ActButton action={requestRetakeAction} hidden={{ enrolmentId: enrolment.id, lessonId: current.id }} label="Request a retake" variant="primary" input={{ name: "reason", placeholder: "Why (optional)" }} /></div>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 12 }}>
+                      <QuizForm enrolmentId={enrolment.id} lessonId={current.id} passPercent={course.passPercent} attemptsLeft={progressBy.get(current.id)?.completedAt ? null : quizLeft(current.id, current.maxAttempts)}
+                        questions={current.questions.map((q) => ({ id: q.id, prompt: q.prompt, options: q.options }))} />
+                    </div>
+                  )
                 ) : null}
                 {current.kind !== "QUIZ" && course.status === "PUBLISHED" ? (
                   <div className="row gap-2" style={{ marginTop: 16 }}>
@@ -188,7 +219,7 @@ export default async function CoursePage({ params, searchParams }: {
         <div className="stack gap-4">
           {canManage && sp.edit ? (
             <Panel title="Course details">
-              <CourseForm skills={skills.map((s) => ({ value: s.id, label: s.name }))} course={course} />
+              <CourseForm skills={skills.map((s) => ({ value: s.id, label: s.name }))} courses={otherCourses.map((c) => ({ value: c.id, label: c.title }))} course={course} />
             </Panel>
           ) : null}
 
@@ -222,7 +253,31 @@ export default async function CoursePage({ params, searchParams }: {
             <>
               <Panel title="Add a lesson"><LessonForm courseId={course.id} /></Panel>
               {course.lessons.filter((l) => l.kind === "QUIZ").map((l) => (
-                <Panel key={l.id} title={`Add a question to “${l.title}”`}><QuizQuestionForm lessonId={l.id} /></Panel>
+                <Panel key={l.id} title={`Quiz: “${l.title}”`} subtitle={`${l.questions.length} questions · ${l.maxAttempts ? `${l.maxAttempts} attempts allowed` : "unlimited attempts"}`}>
+                  {l.questions.map((q, i) => (
+                    <div key={q.id} style={{ borderBottom: "1px solid var(--border)", padding: "6px 0" }}>
+                      <div className="row gap-2 wrap" style={{ justifyContent: "space-between" }}>
+                        <span className="text-sm">{i + 1}. {q.prompt} <span className="subtle text-xs">({q.options.map((o, oi) => (oi === q.correctIndex ? `✓ ${o}` : o)).join(" · ")})</span></span>
+                        <ActButton action={deleteQuizQuestionAction} hidden={{ questionId: q.id }} label="Delete" variant="ghost" confirmText="Delete this question?" />
+                      </div>
+                      <Reveal label="Edit">
+                        <GrowthForm action={updateQuizQuestionAction} hidden={{ questionId: q.id }} compact fields={[
+                          { name: "prompt", label: "Question", defaultValue: q.prompt, required: true },
+                          { name: "options", label: "Options, one per line", type: "textarea", defaultValue: q.options.join("\n") },
+                          { name: "correct", label: "Correct option number", type: "number", min: 1, max: 10, defaultValue: q.correctIndex + 1 },
+                        ]} />
+                      </Reveal>
+                    </div>
+                  ))}
+                  <div style={{ marginTop: 10 }}><QuizQuestionForm lessonId={l.id} /></div>
+                  <Reveal label="Import questions (CSV)">
+                    <GrowthForm action={importQuizQuestionsAction} hidden={{ lessonId: l.id }} cols={1} submitLabel="Import" fields={[
+                      { name: "file", label: "CSV file", type: "file", hint: "Columns: question, type (single / multiple / true-false), option 1 … option 6, correct (e.g. 2)" },
+                      { name: "csv", label: "…or paste the rows", type: "textarea", rows: 4 },
+                    ]} />
+                  </Reveal>
+                  <GrowthForm action={setQuizRulesAction} hidden={{ lessonId: l.id }} cols={2} compact submitLabel="Save rule" fields={[{ name: "maxAttempts", label: "Attempts allowed (blank = unlimited)", type: "number", min: 1, max: 20, defaultValue: l.maxAttempts }]} />
+                </Panel>
               ))}
             </>
           ) : null}

@@ -168,6 +168,8 @@ export const PERMISSIONS = {
   SKILL_MANAGE: "performance.skill.manage",
   PIP_MANAGE: "performance.pip.manage",
   CAREER_PATH_MANAGE: "performance.career.manage",
+  SUCCESSION_MANAGE: "performance.succession.manage",
+  MOBILITY_MANAGE: "performance.mobility.manage",
 
   // --- Projects, extended -------------------------------------------------
   CLIENT_VIEW: "psa.client.view",
@@ -371,6 +373,8 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.SKILL_MANAGE, label: "Manage skills" },
       { key: PERMISSIONS.PIP_MANAGE, label: "Manage improvement plans" },
       { key: PERMISSIONS.CAREER_PATH_MANAGE, label: "Manage career paths" },
+      { key: PERMISSIONS.SUCCESSION_MANAGE, label: "Run talent reviews & succession" },
+      { key: PERMISSIONS.MOBILITY_MANAGE, label: "Decide internal moves & applications" },
     ],
   },
   {

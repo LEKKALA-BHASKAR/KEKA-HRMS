@@ -307,6 +307,25 @@ model Tenant {
   policyCampaigns       PolicyCampaign[]
   auditFindings         AuditFinding[]
   auditSeals            AuditSeal[]
+  // --- Growth (29-growth) ---
+  learningPaths        LearningPath[]
+  learningPathAssigns  LearningPathAssignment[]
+  learningRequests     LearningRequest[]
+  trainingSessions     TrainingSession[]
+  learningCertificates LearningCertificate[]
+  talentReviews        TalentReview[]
+  talentBoxLabels      TalentBoxLabel[]
+  readinessLevels      ReadinessLevel[]
+  successionPlans      SuccessionPlan[]
+  mobilityApplications MobilityApplication[]
+  mobilityRequests     MobilityRequest[]
+  developmentPlans     DevelopmentPlan[]
+  developmentActions   DevelopmentAction[]
+  coachingPlans        CoachingPlan[]
+  competencyFrameworks CompetencyFramework[]
+  proficiencyScales    ProficiencyScale[]
+  skillAssessmentLogs  SkillAssessmentLog[]
+  feedbackTemplates    FeedbackTemplate[]
 
   @@index([subdomain])
   @@map("tenants")

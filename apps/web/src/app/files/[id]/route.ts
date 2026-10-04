@@ -26,7 +26,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   else if (file.relatedType === "ComplianceEvidence") allowed = can(viewer, PERMISSIONS.COMPLIANCE_VIEW) || (!!file.relatedId && (await prisma.complianceItem.count({ where: { id: file.relatedId, tenantId: viewer.tenantId, ownerUserId: viewer.user.id } })) > 0);
   // Policies are published to every employee for acknowledgement.
   else if (file.relatedType === "PolicyDocument") allowed = true;
-  else if (file.employeeId) {
+  else if (file.relatedType === "CourseModule") {
+    // A course PDF: its builders, and anyone enrolled in the course.
+    const m = file.relatedId ? await prisma.courseModule.findFirst({ where: { id: file.relatedId, program: { tenantId: viewer.tenantId } }, select: { programId: true } }) : null;
+    allowed = !!m && (can(viewer, PERMISSIONS.TRAINING_MANAGE) || (!!viewer.employee && (await prisma.trainingEnrolment.count({ where: { programId: m.programId, employeeId: viewer.employee.id, status: { not: "WITHDRAWN" } } })) > 0));
+  } else if (file.employeeId) {
     if (file.employeeId === viewer.employee?.id) allowed = true;
     else {
       const t = await prisma.employee.findUnique({ where: { id: file.employeeId }, select: { id: true, departmentId: true, locationId: true, legalEntityId: true, businessUnitId: true, reportingManagerId: true } });

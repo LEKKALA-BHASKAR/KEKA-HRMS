@@ -6,3 +6,4 @@ export * from "./zip";
 export * from "./offer";
 export * from "./report";
 export * from "./fnf";
+export * from "./certificate";

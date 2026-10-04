@@ -22,6 +22,8 @@ export * from "./analytics-math";
 export * from "./retention-math";
 export * from "./time-requests";
 export * from "./learning";
+export * from "./growth-math";
+export * from "./growth-records";
 export * from "./probation-math";
 export * from "./probation";
 export * from "./performance-learning";
