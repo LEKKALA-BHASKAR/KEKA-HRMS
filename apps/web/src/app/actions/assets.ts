@@ -7,7 +7,7 @@ import { PERMISSIONS, canAccessEmployee, type Permission } from "@keka/rbac";
 import {
   notify, usersWithPermission, nextAssetTag, recordAssetEvent, planRequestApprovals, getAssetSettings,
   assetBookValue, assetInitialAckStatus, decideAssetLevels, parseAssetCsv, autoMapAssetHeaders, validateAssetImport,
-  ASSET_ICON_KEYS, ASSET_CONDITIONS, ASSET_IMPORT_FIELDS, ASSET_REQUEST_TYPE_LABEL,
+  returnChecklistGate, ASSET_ICON_KEYS, ASSET_CONDITIONS, ASSET_IMPORT_FIELDS, ASSET_REQUEST_TYPE_LABEL,
   type AssetLevelState, type AssetImportRefs, type AssetApproverKind,
 } from "@keka/services";
 import { requireViewer, can, type Viewer } from "@/lib/context";
@@ -433,6 +433,9 @@ export async function recoverAssetAction(_prev: ActionState, fd: FormData): Prom
   if (returnedOn > today()) return { ok: false, message: "The return date cannot be in the future.", errors: { returnedOn: "In the future." } };
   if (returnedOn < new Date(Date.UTC(a.assignedOn.getUTCFullYear(), a.assignedOn.getUTCMonth(), a.assignedOn.getUTCDate()))) return { ok: false, message: "The return date is before it was assigned.", errors: { returnedOn: "Before the assignment." } };
   if (d.damageCharge && d.damageCharge > 0 && !d.damageNote) return { ok: false, message: "Describe the damage you are charging for.", errors: { damageNote: "Required with a charge." } };
+  // A return checklist set up for this asset's category must be completed first (Assets › Operations › Checklists).
+  const gate = await returnChecklistGate(viewer.tenantId, a.id);
+  if (gate) return NO(gate);
   const broken = d.conditionIn === "DAMAGED" || d.conditionIn === "UNUSABLE";
   await prisma.$transaction(async (tx) => {
     await tx.assetAssignment.update({ where: { id: a.id }, data: { returnedOn, conditionIn: d.conditionIn, damageCharge: d.damageCharge && d.damageCharge > 0 ? d.damageCharge : null, damageNote: d.damageNote || null, returnedBy: actorEmployee(viewer) } });

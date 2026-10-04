@@ -6,6 +6,7 @@ import { LETTER_CATEGORIES, LETTER_PLACEHOLDERS, LETTER_WORKFLOWS, OFFER_PLACEHO
 import { requireAuth } from "@/lib/context";
 import { PageHead, Card } from "@/components/ui";
 import { TemplateEditor } from "../../letters/forms";
+import { TemplateGovernance } from "./governance";
 
 /** Create (id "new") or edit a letter template, with a live preview filled from your own record. */
 export default async function TemplatePage({ params }: { params: Promise<{ id: string }> }) {
@@ -27,6 +28,7 @@ export default async function TemplatePage({ params }: { params: Promise<{ id: s
           categories={[...LETTER_CATEGORIES]} workflows={{ ...LETTER_WORKFLOWS }} placeholders={{ ...LETTER_PLACEHOLDERS, ...OFFER_PLACEHOLDERS }} sample={sample}
         />
       </Card>
+      {template ? <TemplateGovernance tenantId={viewer.tenantId} templateId={template.id} /> : null}
     </>
   );
 }

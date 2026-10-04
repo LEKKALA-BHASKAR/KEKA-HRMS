@@ -29,6 +29,7 @@ export default async function AssetsLayout({ children }: { children: ReactNode }
     { label: "Asset Acknowledgement", href: "/assets/acknowledgements", count: pendingAck },
     { label: "Asset List", href: "/assets/list" },
     manage && { label: "Asset Categories & Asset Types", href: "/assets/categories" },
+    manage && { label: "Operations", href: "/assets/operations" },
     manage && { label: "Reports", href: "/assets/reports" },
     manage && { label: "Settings", href: "/assets/settings" },
     { label: "Damage Recovery", href: "/assets/recovery" },

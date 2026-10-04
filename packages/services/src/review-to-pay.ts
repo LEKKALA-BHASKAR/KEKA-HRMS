@@ -135,7 +135,11 @@ export async function applyProposals(input: {
         summary: `Salary change for ${e.employeeNumber}: ${newCtc.toLocaleString("en-IN")} (${Number(p.proposedPercent)}%) from ${input.effectiveFrom.toISOString().slice(0, 10)}`, link: "/payroll/approvals",
       });
       if (approval.required && approval.status === "PENDING") pending++;
-      else await prisma.$transaction((tx) => applySalaryRevision(rev.id, tx));
+      else {
+        await prisma.$transaction((tx) => applySalaryRevision(rev.id, tx));
+        const { fireLetterTriggers } = await import("./letter-ops");
+        await fireLetterTriggers(input.tenantId, "SALARY_REVISION_APPLIED", e.id, input.byUserId).catch(() => undefined);
+      }
     }
     let bonusId: string | null = null;
     if (Number(p.bonusAmount) > 0 && input.bonusTypeId) {

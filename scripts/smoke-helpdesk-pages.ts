@@ -322,7 +322,7 @@ async function main() {
     const walk = (dir: string, rel: string) => {
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         if (e.isDirectory()) walk(path.join(dir, e.name), `${rel}/${e.name}`);
-        else if (e.name === "page.tsx") routes.push(new RegExp(`^${rel.replace(/\[[^\]]+\]/g, "[^/]+")}/?$`));
+        else if (e.name === "page.tsx" || e.name === "route.ts") routes.push(new RegExp(`^${rel.replace(/\[[^\]]+\]/g, "[^/]+")}/?$`));
       }
     };
     walk(path.join(APP, "helpdesk"), "/helpdesk");

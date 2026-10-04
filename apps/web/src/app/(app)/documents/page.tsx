@@ -9,6 +9,7 @@ import { EMPLOYEE_VISIBLE, LETTER_STATUS_LABEL, LETTER_WORKFLOWS } from "@keka/s
 import { GenerateLetter } from "./letters/forms";
 import { LETTER_TONE } from "./letters/tone";
 import { UploadDocument } from "./upload";
+import { DocumentsTabs } from "./tabs";
 
 const P = PERMISSIONS;
 
@@ -34,7 +35,7 @@ const DOC_STATUS_TONE: Record<string, "success" | "warning" | "danger" | "info" 
 
 export default async function DocumentsPage({
   searchParams,
-}: { searchParams: Promise<{ tab?: string }> }) {
+}: { searchParams: Promise<{ tab?: string; q?: string }> }) {
   const viewer = await requireAuth(P.DOCUMENT_VIEW);
   const sp = await searchParams;
   const canVerify = can(viewer, P.DOCUMENT_VERIFY);
@@ -48,11 +49,14 @@ export default async function DocumentsPage({
   const scopeFilter = employeeScopeFilter(viewer, P.DOCUMENT_VIEW);
   const soon = new Date(Date.now() + 90 * 86400000);
 
+  // List search (?q=) on the letters and templates tabs.
+  const q = typeof sp.q === "string" ? sp.q.trim().slice(0, 100) : "";
+  const letterQ = q ? { OR: [{ letterNumber: { contains: q, mode: "insensitive" as const } }, { template: { name: { contains: q, mode: "insensitive" as const } } }, { employee: { displayName: { contains: q, mode: "insensitive" as const } } }, { employee: { employeeNumber: { contains: q, mode: "insensitive" as const } } }] } : {};
   const letterScope = employeeScopeFilter(viewer, P.LETTER_GENERATE);
   const [letters, myLetters] = await Promise.all([
     canGenerate
       ? prisma.generatedDocument.findMany({
-          where: { employee: { tenantId: viewer.tenantId, ...(letterScope ? (letterScope as object) : {}) } },
+          where: { employee: { tenantId: viewer.tenantId, ...(letterScope ? (letterScope as object) : {}) }, ...letterQ },
           orderBy: { issuedOn: "desc" }, take: 200,
           include: { template: { select: { name: true } }, employee: { select: { id: true, displayName: true, employeeNumber: true } } },
         })
@@ -115,7 +119,7 @@ export default async function DocumentsPage({
       }),
       canGenerate
         ? prisma.documentTemplate.findMany({
-            where: { tenantId: viewer.tenantId, ...(canTemplates ? {} : { isArchived: false }) },
+            where: { tenantId: viewer.tenantId, ...(canTemplates ? {} : { isArchived: false }), ...(q ? { name: { contains: q, mode: "insensitive" as const } } : {}) },
             orderBy: [{ isArchived: "asc" }, { category: "asc" }],
             include: { _count: { select: { generated: true } } },
           })
@@ -171,6 +175,7 @@ export default async function DocumentsPage({
             : "Your documents and the company policies you need to acknowledge"
         }
       />
+      <DocumentsTabs />
 
       {myOpenLetters.length > 0 ? (
         <div style={{ marginBottom: 16 }}>
@@ -394,6 +399,7 @@ export default async function DocumentsPage({
             emitted as a visible marker rather than silently left blank.
           </Callout>
 
+          <ListSearch tab="templates" q={q} placeholder="Search templates by name" />
           <Card title={`Letter templates (${templates.length})`} tight action={canTemplates ? <Link className="btn sm primary" href="/documents/templates/new">New template</Link> : null}>
             {templates.length === 0 ? <Empty title="No letter templates yet" /> : (
             <div className="table-wrap">
@@ -426,6 +432,8 @@ export default async function DocumentsPage({
       ) : null}
 
       {tab === "letters" && canGenerate ? (
+        <>
+        <ListSearch tab="letters" q={q} placeholder="Search by letter number, template or employee" />
         <Card title={`Letters (${letters.length})`} tight>
           {letters.length === 0 ? <Empty title="No letters generated yet">Generate one from the letter templates tab.</Empty> : (
             <div className="table-wrap">
@@ -434,7 +442,7 @@ export default async function DocumentsPage({
                 <tbody>
                   {letters.map((l) => (
                     <tr key={l.id}>
-                      <td className="strong">{l.template.name}</td>
+                      <td className="strong">{l.template.name}{l.letterNumber ? <div className="text-xs subtle">{l.letterNumber}</div> : null}</td>
                       <td><Link href={`/employees/${l.employee.id}`}>{l.employee.displayName}</Link> <span className="subtle text-xs">{l.employee.employeeNumber}</span></td>
                       <td className="text-sm nowrap">{formatDate(l.issuedOn)}</td>
                       <td>
@@ -449,6 +457,7 @@ export default async function DocumentsPage({
             </div>
           )}
         </Card>
+        </>
       ) : null}
 
       {tab === "mine" && myId ? (
@@ -518,5 +527,17 @@ export default async function DocumentsPage({
         </div>
       ) : null}
     </>
+  );
+}
+
+/** A small GET search form for a list tab. */
+function ListSearch({ tab, q, placeholder }: { tab: string; q: string; placeholder: string }) {
+  return (
+    <form method="get" action="/documents" className="row gap-2" style={{ marginBottom: 12 }}>
+      <input type="hidden" name="tab" value={tab} />
+      <input className="input" name="q" defaultValue={q} placeholder={placeholder} aria-label={placeholder} style={{ width: 320 }} />
+      <button className="btn sm" type="submit">Search</button>
+      {q ? <Link className="btn sm ghost" href={`/documents?tab=${tab}`}>Clear</Link> : null}
+    </form>
   );
 }

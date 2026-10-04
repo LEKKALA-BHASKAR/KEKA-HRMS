@@ -149,6 +149,10 @@ export const PERMISSIONS = {
   // --- HR activities ------------------------------------------------------
   HR_ACTIVITY_VIEW: "lifecycle.activity.view",
   HR_ACTIVITY_MANAGE: "lifecycle.activity.manage",
+  /// Employee relations: grievance, complaint and disciplinary cases (confidential cases need the access list).
+  ER_CASE_MANAGE: "lifecycle.er_case.manage",
+  /// Approve case outcomes, disciplinary actions and investigation findings; decide appeals.
+  ER_CASE_APPROVE: "lifecycle.er_case.approve",
 
   // --- Training -----------------------------------------------------------
   TRAINING_VIEW: "training.program.view",
@@ -281,6 +285,8 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.BGV_MANAGE, label: "Manage background verification" },
       { key: PERMISSIONS.HR_ACTIVITY_VIEW, label: "View HR activity timeline" },
       { key: PERMISSIONS.HR_ACTIVITY_MANAGE, label: "Record HR activities" },
+      { key: PERMISSIONS.ER_CASE_MANAGE, label: "Manage grievance & disciplinary cases" },
+      { key: PERMISSIONS.ER_CASE_APPROVE, label: "Approve case outcomes & decide appeals" },
     ],
   },
   {

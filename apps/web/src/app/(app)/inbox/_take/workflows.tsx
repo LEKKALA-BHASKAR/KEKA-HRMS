@@ -38,9 +38,12 @@ export async function workflowSources(viewer: Viewer): Promise<TakeSource[]> {
       const r = x.request;
       const people = await resolvePeople(tenantId, [r.requesterUserId, x.delegatedFromUserId, ...r.events.map((e) => e.actorUserId)]);
       const requester = who(people, r.requesterUserId);
+      // Domain modules put the record's page in data.link (an in-app path only).
+      const raw = r.data && typeof r.data === "object" && !Array.isArray(r.data) ? (r.data as Record<string, unknown>).link : null;
+      const link = typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//") ? raw : null;
       return (
         <DetailPane title={r.title} sub={`${typeLabel(r.entityType)} · submitted ${formatInstantDate(r.createdAt)}`} status={{ label: "Pending", tone: "pending" }} avatar={requester}
-          actions={<Link className="btn sm ghost" href={`/me/requests/${r.id}`}>Full history</Link>}
+          actions={<div className="row gap-2">{link ? <Link className="btn sm" href={link}>Open record</Link> : null}<Link className="btn sm ghost" href={`/me/requests/${r.id}`}>Full history</Link></div>}
           footer={<div className="row gap-2 wrap">
             <ActButton action={decideWorkflowTaskAction} hidden={{ taskId: x.id, decision: "approve" }} label="Approve" variant="primary" input={{ name: "comment", placeholder: "Comment (optional)" }} />
             <ActButton action={decideWorkflowTaskAction} hidden={{ taskId: x.id, decision: "reject" }} label="Reject" variant="danger" input={{ name: "comment", placeholder: "Reason", required: true }} />

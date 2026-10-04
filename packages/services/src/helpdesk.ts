@@ -5,6 +5,7 @@ import {
   TWENTY_FOUR_SEVEN, type BusinessSchedule,
 } from "./helpdesk-time";
 
+import { slaTargets, triage, leastLoaded } from "./cases-docs-math";
 export * as helpdeskTime from "./helpdesk-time";
 export { formatDuration as formatTicketDuration, slaLabel as ticketSlaLabel } from "./helpdesk-time";
 
@@ -161,12 +162,15 @@ async function clockFor(tenantId: string, categoryId: string): Promise<HelpdeskC
 }
 
 /** First-response and resolution due dates for a ticket raised now in this category. */
-export async function helpdeskDueDates(tenantId: string, categoryId: string, start: Date): Promise<{ firstResponseDueAt: Date; dueAt: Date }> {
-  const cat = await prisma.helpdeskCategory.findFirstOrThrow({ where: { id: categoryId, tenantId }, select: { firstResponseHours: true, slaHours: true } });
+export async function helpdeskDueDates(tenantId: string, categoryId: string, start: Date, priority?: TicketPriority | null): Promise<{ firstResponseDueAt: Date; dueAt: Date }> {
+  const cat = await prisma.helpdeskCategory.findFirstOrThrow({ where: { id: categoryId, tenantId }, select: { id: true, parentId: true, firstResponseHours: true, slaHours: true } });
+  // Per-priority targets (33-cases-docs) override the category's own hours.
+  const policies = priority ? await prisma.helpdeskSlaPolicy.findMany({ where: { tenantId, priority: priority === "URGENT" ? "HIGH" : priority } }) : [];
+  const target = slaTargets(policies, cat, priority ?? "NA");
   const { schedule, holidays } = await clockFor(tenantId, categoryId);
   return {
-    firstResponseDueAt: addBusinessMinutes(start, cat.firstResponseHours * 60, schedule, holidays),
-    dueAt: addBusinessMinutes(start, cat.slaHours * 60, schedule, holidays),
+    firstResponseDueAt: addBusinessMinutes(start, target.firstResponseHours * 60, schedule, holidays),
+    dueAt: addBusinessMinutes(start, target.resolutionHours * 60, schedule, holidays),
   };
 }
 
@@ -213,6 +217,16 @@ async function pickAssignee(cat: { id: string; assignMode: string; defaultAssign
     await prisma.helpdeskCategory.update({ where: { id: cat.id }, data: { lastAssignedUserId: next } });
     return next;
   }
+  if (cat.assignMode === "LEAST_LOADED") {
+    const pool = [...new Set((await prisma.helpdeskCategoryAgent.findMany({
+      where: { categoryId: { in: [cat.id, ...(cat.parentId ? [cat.parentId] : [])] } }, select: { userId: true },
+    })).map((a) => a.userId))].sort();
+    if (!pool.length) return head;
+    const open = await prisma.helpdeskTicket.groupBy({ by: ["assigneeUserId"], where: { tenantId, assigneeUserId: { in: pool }, status: { in: TICKET_OPEN_STATUSES } }, _count: true });
+    const next = leastLoaded(pool, new Map(open.map((o) => [o.assigneeUserId!, o._count])), cat.lastAssignedUserId);
+    if (next) await prisma.helpdeskCategory.update({ where: { id: cat.id }, data: { lastAssignedUserId: next } });
+    return next ?? head;
+  }
   return head;
 }
 
@@ -220,7 +234,11 @@ export async function raiseTicket(input: {
   employeeId: string; categoryId: string; subject: string; description: string;
   /** Employees don't choose one in Keka; the category default applies. Kept for callers that do. */
   priority?: TicketPriority | null;
-}): Promise<{ ok: boolean; message: string; ticketId?: string; number?: number }> {
+  /** How the case reached HR, and the agent who logged it (33-cases-docs). */
+  channel?: string | null;
+  loggedByUserId?: string | null;
+  severity?: string | null;
+}): Promise<{ ok: boolean; message: string; ticketId?: string; number?: number; triage?: string[] }> {
   const emp = await prisma.employee.findUniqueOrThrow({
     where: { id: input.employeeId },
     select: { tenantId: true, displayName: true, firstName: true, lastName: true, userId: true, departmentId: true, locationId: true, businessUnitId: true, id: true },
@@ -234,8 +252,14 @@ export async function raiseTicket(input: {
   if (!helpdeskAudienceAllows(cat.audience ?? cat.parent?.audience, emp)) return { ok: false, message: "This category is not open to you." };
 
   const now = new Date();
-  const due = await helpdeskDueDates(emp.tenantId, cat.id, now);
-  const priority: TicketPriority = input.priority ? (input.priority === "URGENT" ? "HIGH" : input.priority) : cat.defaultPriority ?? "NA";
+  // Triage rules may raise the priority and set a severity (33-cases-docs).
+  const rules = await prisma.helpdeskTriageRule.findMany({ where: { tenantId: emp.tenantId, isActive: true } });
+  const tri = triage(rules, `${input.subject} ${input.description}`, cat.id, cat.parentId);
+  const RANK = ["NA", "LOW", "MEDIUM", "HIGH"];
+  let priority: TicketPriority = input.priority ? (input.priority === "URGENT" ? "HIGH" : input.priority) : cat.defaultPriority ?? "NA";
+  if (tri.priority && RANK.indexOf(tri.priority) > RANK.indexOf(priority)) priority = tri.priority as TicketPriority;
+  const severity = input.severity ?? tri.severity;
+  const due = await helpdeskDueDates(emp.tenantId, cat.id, now, priority);
   const assigneeUserId = await pickAssignee(cat, emp.tenantId);
 
   // Per-tenant ticket numbers, allocated under a row lock on the tenant.
@@ -247,6 +271,7 @@ export async function raiseTicket(input: {
         tenantId: emp.tenantId, number: (last._max.number ?? 1000) + 1, employeeId: emp.id,
         categoryId: cat.id, subject: input.subject, description: input.description,
         priority, assigneeUserId, firstResponseDueAt: due.firstResponseDueAt, dueAt: due.dueAt,
+        severity, channel: input.channel ?? "WEB", loggedByUserId: input.loggedByUserId ?? null,
       },
     });
   });
@@ -257,7 +282,8 @@ export async function raiseTicket(input: {
     kind: "HELPDESK", title: `#${ticket.number}: ${input.subject}`, body: `${raiser} · ${helpdeskCategoryPath(cat)}`,
     link: `/helpdesk/tickets/${ticket.id}`,
   });
-  return { ok: true, message: `Ticket #${ticket.number} added successfully.`, ticketId: ticket.id, number: ticket.number };
+  if (tri.matched.length) await systemLine(ticket.id, input.loggedByUserId ?? emp.userId ?? "system", "Helpdesk", `Triage: ${tri.matched.join(", ")}${tri.priority ? ` · priority ${TICKET_PRIORITY_LABEL[priority]}` : ""}${severity ? ` · severity ${severity}` : ""}`);
+  return { ok: true, message: `Ticket #${ticket.number} added successfully.`, ticketId: ticket.id, number: ticket.number, triage: tri.matched };
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +404,13 @@ export async function updateTicket(u: HelpdeskTicketUpdate): Promise<Result> {
     if (!TICKET_PRIORITIES.includes(u.priority)) return { ok: false, message: "Pick a priority." };
     data.priority = u.priority;
     lines.push(`Priority changed to ${TICKET_PRIORITY_LABEL[u.priority]} by ${by}`);
+    // A priority with its own SLA policy re-targets the open ticket from when it was raised (33-cases-docs).
+    if (!isTicketClosed(t.status) && (await prisma.helpdeskSlaPolicy.count({ where: { tenantId: t.tenantId, priority: u.priority } }))) {
+      const due = await helpdeskDueDates(t.tenantId, u.categoryId ?? t.categoryId, t.createdAt, u.priority);
+      data.dueAt = due.dueAt;
+      if (!t.firstResponseAt) data.firstResponseDueAt = due.firstResponseDueAt;
+      lines.push(`SLA targets re-calculated for ${TICKET_PRIORITY_LABEL[u.priority]} priority`);
+    }
   } else if (t.priority === "URGENT") data.priority = "HIGH";
 
   if (u.assigneeUserId !== undefined && u.assigneeUserId !== t.assigneeUserId) {
@@ -397,6 +430,10 @@ export async function updateTicket(u: HelpdeskTicketUpdate): Promise<Result> {
     if (from === "ON_HOLD" || t.onHoldSince) Object.assign(data, await resumeDues(t, now));
     if (to === "ON_HOLD") data.onHoldSince = now;
     if (to === "CLOSED") {
+      // A case's task checklist must be finished before it closes (33-cases-docs).
+      const openTasks = u.requireReason ? await prisma.helpdeskTicketTask.count({ where: { ticketId: t.id, doneAt: null } }) : 0;
+      if (openTasks) return { ok: false, message: `Finish the case's ${openTasks} open task${openTasks === 1 ? "" : "s"} before closing it.` };
+      if (u.requireReason && t.approvalStatus === "PENDING") return { ok: false, message: "A decision on this case is still awaiting approval." };
       let reasonName: string | null = null;
       if (u.closingReasonId) {
         const r = await prisma.helpdeskClosingReason.findFirst({ where: { id: u.closingReasonId, tenantId: t.tenantId, isActive: true } });

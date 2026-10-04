@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef, useState, useTransition } from "reac
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Sheet } from "@/components/sheet";
 import { raiseTicketAction, aiSuggestCategoryAction } from "@/app/actions/helpdesk";
+import { suggestArticlesAction } from "@/app/actions/helpdesk-ops";
 import type { ActionState } from "@/lib/forms";
 import { CategoryPicker, type PickerCategory } from "./category-picker";
 import { Editor, type EditorHandle } from "./editor";
@@ -44,6 +45,12 @@ function RaiseForm({ categories, onCancel }: { categories: PickerCategory[]; onC
   const [suggestion, setSuggestion] = useState<{ text: string; docs: Array<{ id: string; title: string }> } | null>(null);
   const title = useRef<HTMLInputElement>(null);
   const editor = useRef<EditorHandle>(null);
+  const [articles, setArticles] = useState<Array<{ id: string; title: string; excerpt: string }>>([]);
+  const lookup = (cat: string | null = categoryId) => {
+    const text = `${title.current?.value ?? ""} ${editor.current?.value() ?? ""}`.trim();
+    if (text.length < 4) { setArticles([]); return; }
+    suggestArticlesAction(text, cat).then(setArticles).catch(() => setArticles([]));
+  };
 
   useEffect(() => {
     if (state.ok && state.values?.ticketId) router.push(`/me/helpdesk/${state.values.ticketId}?raised=1`);
@@ -64,14 +71,14 @@ function RaiseForm({ categories, onCancel }: { categories: PickerCategory[]; onC
 
       <div className={s.formField}>
         <label className={s.formLabel}>Need help regarding</label>
-        <CategoryPicker categories={categories} value={categoryId} onChange={(id) => { setCategoryId(id); }} invalid={!!err("categoryId")} />
+        <CategoryPicker categories={categories} value={categoryId} onChange={(id) => { setCategoryId(id); lookup(id); }} invalid={!!err("categoryId")} />
         {err("categoryId") ? <div className={s.err}>{err("categoryId")}</div> : null}
         {categories.length === 0 ? <div className={s.hint}>No helpdesk categories are open to you yet. Ask HR to set them up.</div> : null}
       </div>
 
       <div className={s.formField}>
         <label className={s.formLabel} htmlFor="subject">Title</label>
-        <input ref={title} id="subject" name="subject" className={s.input} maxLength={160} defaultValue={state.values?.subject} style={err("subject") ? { borderColor: "var(--danger)" } : undefined} />
+        <input ref={title} id="subject" name="subject" className={s.input} maxLength={160} defaultValue={state.values?.subject} onBlur={() => lookup()} style={err("subject") ? { borderColor: "var(--danger)" } : undefined} />
         {err("subject") ? <div className={s.err}>{err("subject")}</div> : null}
       </div>
 
@@ -94,6 +101,15 @@ function RaiseForm({ categories, onCancel }: { categories: PickerCategory[]; onC
               <span key={d.id}>{i ? ", " : ""}<a className={s.link} href={`/documents?doc=${d.id}`} target="_blank" rel="noreferrer">{d.title}</a></span>
             ))}</div>
           ) : null}
+        </div>
+      ) : null}
+
+      {articles.length ? (
+        <div className={s.suggest} role="status" data-testid="kb-suggestions">
+          <div>These knowledge base articles may already answer your question:</div>
+          <ul style={{ margin: "6px 0 0 18px" }}>
+            {articles.map((a) => <li key={a.id}><a className={s.link} href={`/me/knowledge/${a.id}`} target="_blank" rel="noreferrer">{a.title}</a></li>)}
+          </ul>
         </div>
       ) : null}
 

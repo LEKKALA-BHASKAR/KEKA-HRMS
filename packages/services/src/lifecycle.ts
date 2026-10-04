@@ -826,6 +826,9 @@ export async function finalizeSettlement(employeeId: string, byUserId: string, t
   if (gone) {
     const { emitEvent } = await import("./webhooks");
     await emitEvent(gone.tenantId, "employee.exited", { employeeId, employeeNumber: gone.employeeNumber, lastWorkingDay: (gone.lastWorkingDay ?? exit.lastWorkingDay)?.toISOString().slice(0, 10) ?? null });
+    // Relieving / experience letters configured to follow an exit.
+    const { fireLetterTriggers } = await import("./letter-ops");
+    await fireLetterTriggers(gone.tenantId, "EXIT_COMPLETED", employeeId, byUserId).catch(() => undefined);
   }
   return { ok: true, message: `Finalised. Net ₹${Math.abs(fresh.net).toLocaleString("en-IN")} ${fresh.net >= 0 ? "payable to" : "recoverable from"} the employee; access revoked.${ledger.ok ? ` ${ledger.message}` : ` Not posted to the ledger: ${ledger.message}`}` };
 }

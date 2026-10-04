@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@keka/db";
-import { safeRevalidate } from "@/lib/forms";
+import { safeRevalidate, writeAudit } from "@/lib/forms";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
@@ -400,6 +400,7 @@ export async function verifyDocument(formData: FormData): Promise<void> {
         }
       : { status: "REJECTED", rejectReason: reason },
   });
+  await writeAudit(viewer, { module: "EMPLOYEE", action: decision === "approve" ? "APPROVE" : "REJECT", entityType: "EmployeeDocument", entityId: doc.id, summary: `${decision === "approve" ? "Verified" : `Rejected (${reason})`} ${doc.name}` });
 
   safeRevalidate("/documents");
 }
@@ -419,6 +420,7 @@ export async function acknowledgeOrgDocument(formData: FormData): Promise<void> 
     create: { documentId, employeeId: viewer.employee.id },
     update: {},
   });
+  await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "OrgDocument", entityId: doc.id, summary: `Acknowledged policy "${doc.title}"` });
 
   safeRevalidate("/documents");
   safeRevalidate("/me/documents");

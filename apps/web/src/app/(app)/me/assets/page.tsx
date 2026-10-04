@@ -62,6 +62,7 @@ export default async function MyAssetsPage({ searchParams }: { searchParams: Pro
       <Segments items={[
         { label: `Assigned to me (${current.length})`, href: "/me/assets", on: !showRequests },
         { label: `My requests${openRequests.length ? ` (${openRequests.length} open)` : ""}`, href: "/me/assets?view=requests", on: showRequests },
+        { label: "Bookings, repairs & loss", href: "/me/assets/bookings", on: false },
       ]} />
 
       {!showRequests ? (

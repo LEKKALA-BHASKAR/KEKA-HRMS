@@ -328,6 +328,10 @@ model Asset {
   requests    AssetRequest[]
   events      AssetEvent[]
 
+  /// Shared pool (33-cases-docs): pool assets are reserved, not assigned.
+  poolId String?
+  pool   AssetPool? @relation(fields: [poolId], references: [id], onDelete: SetNull)
+
   @@unique([tenantId, assetTag])
   @@index([tenantId, status])
   @@index([assetTypeId])
@@ -524,6 +528,11 @@ model EmployeeDocument {
   verifiedAt   DateTime?
   rejectReason String?
 
+  // --- Expiry and renewal (33-cases-docs) ---
+  /// 0 none sent · 1 30-day notice · 2 7-day notice · 3 expired notice
+  expiryNoticeStage  Int       @default(0)
+  renewalRequestedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -590,6 +599,22 @@ model DocumentTemplate {
   workflow       String?
   isArchived     Boolean @default(false)
 
+  // --- Template governance (33-cases-docs) ---
+  ownerUserId       String?
+  /// DRAFT | PENDING_APPROVAL | APPROVED | REJECTED
+  approvalStatus    String    @default("APPROVED")
+  approvedByUserId  String?
+  approvedAt        DateTime?
+  workflowRequestId String?
+  version           Int       @default(1)
+  nextReviewOn      DateTime?
+  lastReviewedAt    DateTime?
+  reviewRemindedAt  DateTime?
+  /// Department ids the template may be used for; empty = all.
+  departmentIds     Json?
+  archivedAt        DateTime?
+  archivedReason    String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -635,6 +660,15 @@ model GeneratedDocument {
   signedUserAgent String?
   voidedAt        DateTime?
   voidReason      String?
+
+  // --- Letter operations (33-cases-docs) ---
+  letterNumber    String?
+  validUntil      DateTime?
+  batchId         String?
+  /// EXIT_COMPLETED | SALARY_REVISION_APPLIED | CONFIRMED when auto-generated.
+  triggerEvent    String?
+  sentCount       Int       @default(1)
+  lastSentAt      DateTime?
 
   @@index([employeeId])
   @@index([status])

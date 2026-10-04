@@ -22,12 +22,20 @@ async function letterInScope(viewer: Awaited<ReturnType<typeof requireAuth>>, id
   return doc && (await inScope(viewer, doc.employeeId, perm)) ? doc : null;
 }
 
+function dateField(fd: FormData, k: string): Date | null {
+  const s = String(fd.get(k) ?? "");
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00Z`) : null;
+}
+
 export async function saveLetterTemplateAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const viewer = await requireAuth(P.DOCUMENT_TEMPLATE_MANAGE);
   const res = await saveLetterTemplate({
     tenantId: viewer.tenantId, id: String(formData.get("id") ?? "") || null, name: String(formData.get("name") ?? ""),
     category: String(formData.get("category") ?? "CUSTOM"), body: String(formData.get("body") ?? ""), workflow: String(formData.get("workflow") ?? ""),
     archived: formData.get("archived") === "on",
+    userId: viewer.user.id, ownerUserId: String(formData.get("ownerUserId") ?? "") || undefined,
+    departmentIds: formData.has("departmentScope") ? formData.getAll("departmentIds").map(String).filter(Boolean) : undefined,
+    archivedReason: String(formData.get("archivedReason") ?? "") || null,
   });
   if (!res.ok) return { ok: false, message: res.message, values: Object.fromEntries([...formData.entries()].filter(([, v]) => typeof v === "string")) as Record<string, string> };
   await writeAudit(viewer, { module: "EMPLOYEE", action: formData.get("id") ? "UPDATE" : "CREATE", entityType: "DocumentTemplate", entityId: res.id, summary: res.message });
@@ -43,6 +51,7 @@ export async function generateLetterAction(_prev: ActionState, formData: FormDat
     tenantId: viewer.tenantId, templateId: String(formData.get("templateId") ?? ""), employeeId,
     issuedByEmployeeId: viewer.employee?.id ?? null, issuedByUserId: viewer.user.id,
     approverUserIds: await usersWithPermission(viewer.tenantId, P.DOCUMENT_TEMPLATE_MANAGE),
+    issuedOn: dateField(formData, "issuedOn"), validUntil: dateField(formData, "validUntil"),
   });
   if (!res.ok) return res;
   await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "GeneratedDocument", entityId: res.id, summary: res.message });

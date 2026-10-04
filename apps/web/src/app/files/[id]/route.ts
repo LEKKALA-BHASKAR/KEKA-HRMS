@@ -3,6 +3,7 @@ import { prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { getViewer, can } from "@/lib/context";
 import { loadFile } from "@/lib/storage";
+import { erCaseFor, sharedFileAllowed, folderGrants, folderAllows } from "@keka/services";
 
 /**
  * The only way a stored file leaves the server. Access follows what the file
@@ -30,12 +31,33 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // A course PDF: its builders, and anyone enrolled in the course.
     const m = file.relatedId ? await prisma.courseModule.findFirst({ where: { id: file.relatedId, program: { tenantId: viewer.tenantId } }, select: { programId: true } }) : null;
     allowed = !!m && (can(viewer, PERMISSIONS.TRAINING_MANAGE) || (!!viewer.employee && (await prisma.trainingEnrolment.count({ where: { programId: m.programId, employeeId: viewer.employee.id, status: { not: "WITHDRAWN" } } })) > 0));
-  } else if (file.employeeId) {
+  }
+  // E-sign documents and signatures: the sender, anyone on the envelope, and document managers.
+  else if (file.relatedType === "SignatureEnvelope") {
+    const env = file.relatedId ? await prisma.signatureEnvelope.findFirst({ where: { id: file.relatedId, tenantId: viewer.tenantId }, select: { createdByUserId: true, recipients: { select: { userId: true } } } }) : null;
+    allowed = !!env && (env.createdByUserId === viewer.user.id || env.recipients.some((r) => r.userId === viewer.user.id) || can(viewer, PERMISSIONS.DOCUMENT_MANAGE));
+  }
+  // Case evidence follows the case's own access rules (the subject never sees it).
+  else if (file.relatedType === "ErEvidence") {
+    allowed = !!file.relatedId && !!(await erCaseFor({ tenantId: viewer.tenantId, userId: viewer.user.id, employeeId: viewer.employee?.id ?? null, canManage: can(viewer, PERMISSIONS.ER_CASE_MANAGE), canApprove: can(viewer, PERMISSIONS.ER_CASE_APPROVE) }, file.relatedId));
+  }
+  // A time-limited share opens one employee document to a named person.
+  else if (file.relatedType === "EmployeeDocument" && file.relatedId && file.employeeId !== viewer.employee?.id && (await sharedFileAllowed(viewer.tenantId, viewer.user.id, file.relatedId))) allowed = true;
+  else if (file.employeeId) {
     if (file.employeeId === viewer.employee?.id) allowed = true;
     else {
       const t = await prisma.employee.findUnique({ where: { id: file.employeeId }, select: { id: true, departmentId: true, locationId: true, legalEntityId: true, businessUnitId: true, reportingManagerId: true } });
       const perm = file.relatedType === "Form16" || file.relatedType === "Form16PartA" ? PERMISSIONS.PAY_REGISTER_VIEW : file.relatedType === "FnfStatement" ? PERMISSIONS.FNF_MANAGE : file.relatedType === "ExpenseReceipt" ? PERMISSIONS.EXPENSE_VIEW : file.relatedType === "DeclarationItem" ? PERMISSIONS.TAX_DECLARATION_APPROVE : file.relatedType === "AttendanceSelfie" ? PERMISSIONS.ATTENDANCE_VIEW : file.relatedType === "BgvReport" ? PERMISSIONS.BGV_MANAGE : PERMISSIONS.DOCUMENT_VIEW;
       allowed = !!t && canAccessEmployee(viewer, t, perm);
+      // Confidential folders additionally need a listed role or an approved access grant.
+      if (allowed && file.relatedType === "EmployeeDocument" && file.relatedId) {
+        const doc = await prisma.employeeDocument.findFirst({ where: { id: file.relatedId, tenantId: viewer.tenantId }, select: { folder: { select: { id: true, isConfidential: true, viewRoles: true, editRoles: true } } } });
+        if (doc?.folder?.isConfidential) {
+          const grant = (await folderGrants(viewer.tenantId, viewer.user.id)).get(doc.folder.id);
+          const roleNames = viewer.grants.flatMap((g) => [g.roleKey ?? "", g.roleName]).filter(Boolean);
+          allowed = folderAllows(doc.folder, { roleNames, isOwnDocument: false, hasGrant: !!grant, grantCanEdit: !!grant?.canEdit, canManageAll: can(viewer, PERMISSIONS.DOCUMENT_MANAGE) }, "view");
+        }
+      }
     }
   } else allowed = can(viewer, PERMISSIONS.ORG_SETTINGS_MANAGE);
   // Not-found rather than forbidden, so ids cannot be probed.

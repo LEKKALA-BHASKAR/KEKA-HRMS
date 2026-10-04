@@ -279,6 +279,8 @@ export async function decideProbation(input: DecideProbationInput): Promise<{ ok
     title: `${name} is confirmed`, body: `Confirmed with effect from ${effective.toISOString().slice(0, 10)}.`, link: "/",
     event: "PROBATION_CONFIRMED", employeeIds: [p.employeeId],
   });
+  const { fireLetterTriggers } = await import("./letter-ops");
+  await fireLetterTriggers(p.tenantId, "CONFIRMED", p.employeeId, input.byUserId).catch(() => undefined);
   return {
     ok: true,
     journeyTasks: journey.created ? journey.tasks : 0,
