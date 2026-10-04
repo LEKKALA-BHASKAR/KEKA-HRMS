@@ -4,7 +4,7 @@ import { prisma } from "@keka/db";
 import {
   raiseShiftRequest, raiseOvertimeRequest, raiseCompOffRequest, raiseEncashmentRequest,
   withdrawTimeRequest, addRequestComment, notifyTimeRequest, parseHhmm, formatHhmm,
-  type ExtraTimeEntity,
+  overtimeRuleForEmployee, overtimeTimingCheck, type ExtraTimeEntity,
 } from "@keka/services";
 import { formatDate } from "@keka/shared";
 import { requireViewer, type Viewer } from "@/lib/context";
@@ -81,6 +81,10 @@ export async function raiseOvertimeAction(_prev: ActionState, formData: FormData
   const minutes = parseHhmm(d.hours);
   if (minutes === null) return { ok: false, message: "Enter the overtime as hh:mm, e.g. 02:30.", errors: { hours: "Use hh:mm" } };
   const to = d.toDate ?? d.fromDate;
+  // Overtime rule timing: pre-approval (before the day) or the post-facto claim window.
+  const otRule = await overtimeRuleForEmployee(viewer.tenantId, viewer.employee.id, d.fromDate);
+  const timing = overtimeTimingCheck(otRule, d.fromDate, new Date());
+  if (!timing.ok) return { ok: false, message: timing.message, errors: { fromDate: "Outside the rule's window" } };
   const notify = await notifyIds(viewer, formData);
   const res = await raiseOvertimeRequest({ employeeId: viewer.employee.id, from: d.fromDate, to, minutes, note: d.note, notifyEmployeeIds: notify });
   if (!res.ok) return { ok: false, message: res.message };

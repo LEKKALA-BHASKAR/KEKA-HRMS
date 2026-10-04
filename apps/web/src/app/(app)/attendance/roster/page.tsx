@@ -48,7 +48,8 @@ export default async function RosterPage({ searchParams }: { searchParams: Promi
 
   return (
     <>
-      <PageHead title="Shift roster" subtitle="Who works which shift each day. Blank days follow the employee's shift and weekly-off policy." />
+      <PageHead title="Shift roster" subtitle="Who works which shift each day. Blank days follow the employee's shift and weekly-off policy."
+        actions={<a className="btn" href="/attendance/roster/ops">Swaps, coverage &amp; publishing</a>} />
       <div className="tabs">
         <Link className="tab" href="/attendance?tab=shifts">Shifts</Link>
         <Link className="tab active" href="/attendance/roster">Roster</Link>

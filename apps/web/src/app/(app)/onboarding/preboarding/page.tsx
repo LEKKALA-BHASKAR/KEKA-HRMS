@@ -7,6 +7,7 @@ import { requireAuth, can } from "@/lib/context";
 import { scopedEmployeeWhere } from "@/lib/scope";
 import { PageHead, Card, Badge, Empty } from "@/components/ui";
 import { JoinActions, StartBgv, UpdateBgv } from "./forms";
+import { OnboardingNav } from "../_join/nav";
 
 const P = PERMISSIONS;
 const DAY = 86_400_000;
@@ -46,10 +47,7 @@ export default async function PreboardingPage() {
   return (
     <>
       <PageHead title="Preboarding" subtitle="Hires who have not joined yet. Mark them joined on their first day to start probation and bring them into payroll." />
-      <div className="tabs">
-        <Link className="tab" href="/onboarding">Journeys</Link>
-        <Link className="tab active" href="/onboarding/preboarding">Preboarding</Link>
-      </div>
+      <OnboardingNav viewer={viewer} active="preboarding" />
       <Card tight title={`Joining soon (${people.length})`}>
         {people.length === 0 ? <Empty title="Nobody is preboarding">Hires with a future joining date appear here once their offer is accepted.</Empty> : (
           <div className="table-wrap">

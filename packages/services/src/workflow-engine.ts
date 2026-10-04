@@ -3,6 +3,8 @@ import { notify, usersWithPermission } from "./lifecycle";
 import { emitEvent } from "./webhooks";
 import { engageBuiltInRoute, applyEngageEffect } from "./engage-depth";
 import { isEngageWorkflowType } from "./engage-depth-math";
+import { joinBuiltInRoute, applyJoinEffect } from "./join-depth";
+import { isJoinWorkflowType } from "./join-depth-math";
 import { fireRequestAutomations } from "./automation";
 import {
   applyAccessRequest, applyChangeRequest, completeComplianceItem, activatePolicyCampaign, publishConsentPurpose,
@@ -62,6 +64,7 @@ export function builtInRoute(entityType: WorkflowEntityType, opts: { reviewerUse
     default: {
       const r = CASES_DOCS_ROUTES[entityType as keyof typeof CASES_DOCS_ROUTES];
       if (r) return [perm(r.name, r.permission)];
+      if (isJoinWorkflowType(entityType)) return joinBuiltInRoute(entityType, opts);
       const money = moneyBuiltInRoute(entityType);
       return money ? (money as StepSpec[]) : engageBuiltInRoute(entityType, opts);
     }
@@ -251,6 +254,7 @@ async function applyEffect(req: { id: string; tenantId: string; entityType: stri
       return;
     default:
       if (isEngageWorkflowType(req.entityType)) await applyEngageEffect(req, outcome, actorUserId);
+      else if (isJoinWorkflowType(req.entityType)) await applyJoinEffect(req, outcome, actorUserId);
       else if (isMoneyWorkflowEntityType(req.entityType)) await applyMoneyEffect(req, outcome, actorUserId);
       else if (id) await applyCasesDocsEffect(req, outcome, actorUserId);
       return;

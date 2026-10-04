@@ -107,6 +107,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
       key: "me", label: "Me", icon: "user", href: "/me/attendance",
       tabs: tabs([
         { label: "Attendance", href: "/me/attendance" },
+        { label: "My Shifts", href: "/me/shifts" },
         { label: "Leave", href: "/me/leave" },
         { label: "Work Log", href: "/me/work-log" },
         on("performance") && { label: "Performance", href: "/me/performance", paths: ["/me/performance"] },
@@ -118,6 +119,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         { label: "My details", href: "/me/changes", paths: ["/me/changes", "/me/id-card", "/verify"] },
         { label: "Cases", href: "/me/cases", paths: ["/me/cases", "/me/sign", "/me/knowledge"] },
         { label: "Policies", href: "/me/policies" },
+        { label: "Onboarding", href: "/me/onboarding" },
       ]),
     });
   }
@@ -296,6 +298,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         hrLeave && { label: "Leave", href: "/time/leave", paths: ["/time/leave", "/leave"] },
         hrAttendance && { label: "Attendance", href: "/time/attendance", paths: ["/time/attendance", "/attendance"] },
         canAny(viewer, [P.SHIFT_MANAGE, P.HOLIDAY_MANAGE]) && { label: "Shift / Weekly Offs & Holidays", href: "/time/shifts" },
+        can(viewer, P.HOLIDAY_MANAGE) && { label: "Holidays", href: "/time/holidays" },
         can(viewer, P.SHIFT_MANAGE) && { label: "Roster", href: "/attendance/roster" },
         (hrAttendance || can(viewer, P.PAYROLL_RUN)) && { label: "Overtime", href: "/time/overtime" },
         can(viewer, P.REPORT_VIEW) && { label: "Reports", href: "/time/reports" },
@@ -361,7 +364,8 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     me && { label: "Apply leave", href: "/me/leave?apply=1", keywords: "leave request time off vacation sick" },
     me && { label: "Clock in / out", href: "/me/attendance", keywords: "attendance punch web clock" },
     me && { label: "Request work from home", href: "/me/attendance?request=WFH", keywords: "wfh remote on duty" },
-    me && { label: "Request overtime", href: "/me/attendance?view=overtime&request=OT", keywords: "overtime ot extra hours" },
+    me && { label: "Request overtime", href: "/me/shifts?tab=requests", keywords: "overtime ot extra hours" },
+    me && { label: "Swap a shift", href: "/me/shifts?tab=swaps", keywords: "shift swap trade marketplace roster" },
     me && { label: "Request comp off", href: "/me/leave?compoff=1", keywords: "comp off compensatory holiday worked" },
     me && { label: "Encash leave", href: "/me/leave?encash=1", keywords: "leave encashment" },
     me && { label: "Log work hours", href: "/me/work-log", keywords: "work log timesheet hours daily" },

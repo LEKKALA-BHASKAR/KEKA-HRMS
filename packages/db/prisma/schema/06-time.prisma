@@ -346,6 +346,9 @@ model HolidayCalendar {
   /// Locations this calendar applies to.
   locationIds          Json?
   isDefault            Boolean @default(false)
+  /// Region of a regional calendar (37-join-depth).
+  country              String?
+  state                String?
   /// Optional (restricted) holidays each employee may pick from this calendar.
   optionalHolidayQuota Int     @default(0)
 
@@ -366,6 +369,8 @@ model Holiday {
   /// Optional/floating holidays are drawn against a floater leave type.
   isOptional  Boolean         @default(false)
   description String?
+  /// A HolidayDayType code (37-join-depth).
+  dayType     String?
 
   selections OptionalHolidaySelection[]
 
@@ -398,6 +403,8 @@ model Shift {
   daySchedule     Json?
   /// The shift ends on the following calendar day.
   crossesMidnight Boolean  @default(false)
+  /// Split shift: further segments [{ start, end }] (37-join-depth).
+  segments        Json?
   color           String?
   /// Shift allowance earned per day worked on this shift (pay code + rate).
   allowanceCode   String?

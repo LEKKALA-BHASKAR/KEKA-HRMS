@@ -214,7 +214,7 @@ export function StartJourneyForm({ employees, templates }: { employees: Option[]
 }
 
 export function TemplateForm({ template, departments, locations }: {
-  template?: { id: string; name: string; description: string | null; trigger: string; departmentId: string | null; locationId: string | null; isActive: boolean };
+  template?: { id: string; name: string; description: string | null; trigger: string; departmentId: string | null; locationId: string | null; jobTitle?: string | null; isActive: boolean };
   departments: Option[]; locations: Option[];
 }) {
   return (
@@ -234,6 +234,9 @@ export function TemplateForm({ template, departments, locations }: {
             </Field>
             <Field label="Only for location" name="locationId" state={state}>
               <SelectInput name="locationId" state={state} options={locations} defaultValue={template?.locationId} placeholder="Any" />
+            </Field>
+            <Field label="Only for job title (role path)" name="jobTitle" state={state}>
+              <TextInput name="jobTitle" state={state} defaultValue={template?.jobTitle ?? undefined} />
             </Field>
           </div>
           <Field label="Description" name="description" state={state}>
@@ -257,6 +260,7 @@ export function AddTemplateTaskForm({ templateId, autoChecks }: { templateId: st
           <SelectInput name="category" state={state} options={opts(["DOCUMENTS", "ASSETS", "ACCESS", "TRAINING", "MEETING", "PAYROLL", "COMPLIANCE", "OTHER"])} defaultValue="OTHER" />
           <SelectInput name="autoCheck" state={state} options={autoChecks.map((c) => ({ value: c, label: label(c) }))} placeholder="Manual" />
           <label className="checkbox-row"><input type="checkbox" name="isRequired" defaultChecked /><span className="text-sm">Required</span></label>
+          <label className="checkbox-row"><input type="checkbox" name="needsApproval" /><span className="text-sm">Needs HR sign-off when done</span></label>
         </>
       )}
     </InlineForm>

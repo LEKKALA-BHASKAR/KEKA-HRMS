@@ -165,14 +165,16 @@ export async function deliverOutbox(transport: OutboxTransport, opts: { limit?: 
 // ---------------------------------------------------------------------------
 
 /** The most specific active template for a trigger and an employee. */
-async function templateFor(tenantId: string, trigger: Trigger, departmentId: string | null, locationId: string | null) {
+async function templateFor(tenantId: string, trigger: Trigger, departmentId: string | null, locationId: string | null, jobTitle: string | null = null) {
   const candidates = await prisma.journeyTemplate.findMany({
     where: { tenantId, trigger, isActive: true },
     include: { tasks: { orderBy: [{ sortOrder: "asc" }, { offsetDays: "asc" }] } },
   });
+  // Role-specific paths (job title) outrank department, which outranks location.
+  const sameTitle = (t: { jobTitle: string | null }) => !!t.jobTitle && !!jobTitle && t.jobTitle.trim().toLowerCase() === jobTitle.trim().toLowerCase();
   const fits = candidates.filter((t) =>
-    (!t.departmentId || t.departmentId === departmentId) && (!t.locationId || t.locationId === locationId));
-  const score = (t: (typeof fits)[number]) => (t.departmentId ? 2 : 0) + (t.locationId ? 1 : 0);
+    (!t.departmentId || t.departmentId === departmentId) && (!t.locationId || t.locationId === locationId) && (!t.jobTitle || sameTitle(t)));
+  const score = (t: (typeof fits)[number]) => (t.jobTitle ? 4 : 0) + (t.departmentId ? 2 : 0) + (t.locationId ? 1 : 0);
   return fits.sort((a, b) => score(b) - score(a))[0] ?? null;
 }
 
@@ -194,7 +196,7 @@ export interface StartJourneyInput {
 export async function startJourney(input: StartJourneyInput): Promise<{ journeyId: string | null; created: boolean; tasks: number }> {
   const emp = await prisma.employee.findUniqueOrThrow({
     where: { id: input.employeeId },
-    select: { tenantId: true, displayName: true, departmentId: true, locationId: true, reportingManagerId: true, userId: true },
+    select: { tenantId: true, displayName: true, departmentId: true, locationId: true, reportingManagerId: true, userId: true, jobTitleName: true },
   });
   const anchor = utcMidnight(input.anchorDate);
   const existing = await prisma.journey.findUnique({
@@ -208,7 +210,7 @@ export async function startJourney(input: StartJourneyInput): Promise<{ journeyI
         where: { id: input.templateId, tenantId: emp.tenantId },
         include: { tasks: { orderBy: [{ sortOrder: "asc" }, { offsetDays: "asc" }] } },
       })
-    : await templateFor(emp.tenantId, input.trigger, emp.departmentId, emp.locationId);
+    : await templateFor(emp.tenantId, input.trigger, emp.departmentId, emp.locationId, emp.jobTitleName);
   if (!template) return { journeyId: null, created: false, tasks: 0 };
 
   const assigneeFor = (owner: string) =>
@@ -226,7 +228,7 @@ export async function startJourney(input: StartJourneyInput): Promise<{ journeyI
           title: t.title, description: t.description, owner: t.owner,
           assigneeEmployeeId: assigneeFor(t.owner),
           dueDate: new Date(anchor.getTime() + t.offsetDays * DAY),
-          category: t.category, isRequired: t.isRequired, autoCheck: t.autoCheck, sortOrder: i,
+          category: t.category, isRequired: t.isRequired, autoCheck: t.autoCheck, sortOrder: i, needsApproval: t.needsApproval,
         })),
       },
     },

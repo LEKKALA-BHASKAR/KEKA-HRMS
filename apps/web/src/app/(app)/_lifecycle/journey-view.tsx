@@ -73,6 +73,13 @@ export async function JourneyChecklist({ journeyId, viewer, anchorLabel }: { jou
                           {!t.isRequired ? " · optional" : ""}
                         </div>
                         {t.note ? <div className="text-xs muted" style={{ marginTop: 2 }}>{t.note}</div> : null}
+                        {t.needsApproval || t.escalationLevel || t.delegatedFromEmployeeId ? (
+                          <div className="row gap-1" style={{ marginTop: 2 }}>
+                            {t.needsApproval ? <Badge tone={t.approvalStatus === "APPROVED" ? "success" : t.approvalStatus === "REJECTED" ? "danger" : t.approvalStatus === "PENDING" ? "warning" : "neutral"}>{t.approvalStatus === "PENDING" ? "awaiting sign-off" : t.approvalStatus === "REJECTED" ? "sign-off refused" : t.approvalStatus === "APPROVED" ? "signed off" : "needs sign-off"}</Badge> : null}
+                            {t.escalationLevel ? <Badge tone="danger">escalated L{t.escalationLevel}</Badge> : null}
+                            {t.delegatedFromEmployeeId ? <Badge>handed over</Badge> : null}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="nowrap">
                         <Badge tone={OWNER_TONE[t.owner]}>{t.owner.toLowerCase()}</Badge>
