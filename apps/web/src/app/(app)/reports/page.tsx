@@ -5,6 +5,7 @@ import { requireAuth } from "@/lib/context";
 import { reportsFor, defaultParams, type Column, type ReportResult } from "@/lib/reports";
 import { PageHead, Card, Empty } from "@/components/ui";
 import { ReportSchedules } from "./schedules";
+import { DashboardTabs } from "../analytics/_components/dashboard";
 
 function Cell({ v, c }: { v: unknown; c: Column }) {
   if (v === null || v === undefined || v === "") return <span className="subtle">—</span>;
