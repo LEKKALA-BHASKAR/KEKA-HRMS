@@ -247,6 +247,22 @@ model Employee {
   // --- Keka parity: Analytics (22-analytics) ---
   attritionRiskScores AttritionRiskScore[]
 
+  // --- Growth (29-growth) ---
+  learningPathAssignments LearningPathAssignment[] @relation("PathLearner")
+  learningRequests        LearningRequest[]        @relation("LearningRequester")
+  sessionRegistrations    SessionRegistration[]    @relation("SessionLearner")
+  learningCertificates    LearningCertificate[]    @relation("CertificateHolder")
+  talentReviewEntries     TalentReviewEntry[]      @relation("TalentReviewee")
+  incumbentOfPlans        SuccessionPlan[]         @relation("SuccessionIncumbent")
+  successorOf             Successor[]              @relation("SuccessorCandidate")
+  internalApplications    InternalApplication[]    @relation("InternalApplicant")
+  mobilityRequests        MobilityRequest[]        @relation("MobilityRequester")
+  developmentPlans        DevelopmentPlan[]        @relation("DevelopmentPlanOwner")
+  developmentActions      DevelopmentAction[]      @relation("DevelopmentActionOwner")
+  coachingAsCoachee       CoachingPlan[]           @relation("CoachingCoachee")
+  coachingAsCoach         CoachingPlan[]           @relation("CoachingCoach")
+  skillAssessmentLogs     SkillAssessmentLog[]     @relation("SkillAssessed")
+
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])
   @@index([tenantId, departmentId])

@@ -184,6 +184,10 @@ model Job {
   /// Open to internal applicants, with its own eligibility rules.
   allowInternal Boolean   @default(false)
   allowReferral Boolean   @default(true)
+  /// Internal posting (29-growth): closes to employees on this date.
+  internalClosesAt        DateTime?
+  /// Employees need this many months' service to apply internally.
+  internalMinTenureMonths Int?
   publishedAt   DateTime?
   closesAt      DateTime?
 
@@ -201,8 +205,9 @@ model Job {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  applications Application[]
-  questionSets InterviewQuestionSet[]
+  applications         Application[]
+  questionSets         InterviewQuestionSet[]
+  internalApplications InternalApplication[]
 
   @@unique([tenantId, code])
   @@index([tenantId, status])

@@ -1,6 +1,7 @@
 import { prisma } from "@keka/db";
 import { courseProgress, courseScore, gradeQuiz } from "./learning-math";
 import { notify } from "./lifecycle";
+import { issueCertificate, refreshPathAssignments } from "./growth-records";
 
 /**
  * Learning orchestration. An enrolment's progress, score and status are
@@ -49,6 +50,9 @@ export async function refreshEnrolment(enrolmentId: string) {
       });
     }
   }
+  // Completion earns the certificate; any learning path holding the course moves on.
+  if (complete) await issueCertificate(e.id);
+  await refreshPathAssignments(e.employeeId);
   return updated;
 }
 

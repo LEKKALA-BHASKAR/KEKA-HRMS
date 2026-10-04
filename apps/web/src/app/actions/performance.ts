@@ -285,6 +285,14 @@ export async function closePipAction(_prev: ActionState, formData: FormData): Pr
   if (!pip) return { ok: false, message: "Plan not found." };
   const t = await targetOf(viewer, pip.employeeId);
   if (!t || !canAccessEmployee(viewer, t, P.PIP_MANAGE)) return { ok: false, message: "This plan is outside your scope." };
+  if (pip.status !== "ACTIVE") return { ok: false, message: "This plan is already closed." };
+  if (outcome === "UNSUCCESSFUL") {
+    // An unsuccessful outcome has consequences: a second PIP manager confirms it.
+    if (pip.proposedOutcome) return { ok: false, message: "An outcome is already waiting for sign-off." };
+    await prisma.improvementPlan.update({ where: { id }, data: { proposedOutcome: outcome, proposedNote: note, proposedBy: viewer.user.id, proposedAt: new Date() } });
+    await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "ImprovementPlan", entityId: id, summary: `Proposed an unsuccessful outcome for ${t.displayName}'s improvement plan` });
+    return done(PERF, "Proposed — another PIP manager must confirm an unsuccessful outcome.");
+  }
   await prisma.improvementPlan.update({
     where: { id },
     data: outcome === "EXTENDED"

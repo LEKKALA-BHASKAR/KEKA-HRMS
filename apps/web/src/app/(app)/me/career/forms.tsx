@@ -42,7 +42,7 @@ export function AddMySkill({ skills }: { skills: SkillOption[] }) {
   if (skills.length === 0) return <div className="text-sm subtle">You have every skill in the catalogue on your profile.</div>;
   return (
     <form action={act} className="stack gap-1">
-      <div className="row gap-2 wrap"><SkillLevelPicker skills={skills} /><button className="btn primary sm" disabled={pending}>{pending ? "…" : "Add skill"}</button></div>
+      <div className="row gap-2 wrap"><SkillLevelPicker skills={skills} /><input className="input" name="evidence" placeholder="Evidence (optional) — project, certificate, link" style={{ minWidth: 260, flex: 1 }} /><button className="btn primary sm" disabled={pending}>{pending ? "…" : "Add skill"}</button></div>
       {state.message ? <div className={`text-xs ${state.ok ? "pos" : "neg"}`}>{state.message}</div> : null}
     </form>
   );
@@ -77,6 +77,8 @@ export function AspirationForm({ steps, current }: { steps: Option[]; current: s
           <option value="">No target role</option>
           {steps.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
+        <input className="input" type="date" name="targetDate" aria-label="Target date" title="When you would like to get there" />
+        <label className="row gap-1 text-sm"><input type="checkbox" name="openToRelocate" /> Open to relocating</label>
         <button className="btn primary sm" disabled={pending}>{pending ? "…" : "Save"}</button>
       </div>
       {state.message ? <div className={`text-xs ${state.ok ? "pos" : "neg"}`}>{state.message}</div> : null}

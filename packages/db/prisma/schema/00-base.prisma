@@ -244,6 +244,26 @@ model Tenant {
   probationPolicies ProbationPolicy[]
   probations        EmployeeProbation[]
 
+  // --- Growth (29-growth) ---
+  learningPaths        LearningPath[]
+  learningPathAssigns  LearningPathAssignment[]
+  learningRequests     LearningRequest[]
+  trainingSessions     TrainingSession[]
+  learningCertificates LearningCertificate[]
+  talentReviews        TalentReview[]
+  talentBoxLabels      TalentBoxLabel[]
+  readinessLevels      ReadinessLevel[]
+  successionPlans      SuccessionPlan[]
+  internalApplications InternalApplication[]
+  mobilityRequests     MobilityRequest[]
+  developmentPlans     DevelopmentPlan[]
+  developmentActions   DevelopmentAction[]
+  coachingPlans        CoachingPlan[]
+  competencyFrameworks CompetencyFramework[]
+  proficiencyScales    ProficiencyScale[]
+  skillAssessmentLogs  SkillAssessmentLog[]
+  feedbackTemplates    FeedbackTemplate[]
+
   @@index([subdomain])
   @@map("tenants")
 }

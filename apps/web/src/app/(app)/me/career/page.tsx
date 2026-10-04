@@ -1,10 +1,17 @@
 import Link from "next/link";
 import { prisma } from "@keka/db";
-import { careerGap, placeOnPath, yearsBetween } from "@keka/services";
+import { careerGap, placeOnPath, yearsBetween, skillFreshness } from "@keka/services";
+import { formatDate } from "@keka/shared";
 import { requireViewer } from "@/lib/context";
 import { PageHead, Badge, Progress } from "@/components/ui";
 import { Panel, EmptyState, SectionTitle } from "@/components/keka";
 import { AddMySkill, RemoveMySkill, AspirationForm } from "./forms";
+import { GrowthForm, Reveal } from "@/components/growth-forms";
+import { proposeSkillAction } from "@/app/actions/skills";
+import { JobsTab, MovesTab, DevelopmentTab } from "./tabs";
+
+const TABS = { skills: "Skills & career path", jobs: "Internal jobs", moves: "Transfers", development: "Development" } as const;
+type Tab = keyof typeof TABS;
 
 const DEFAULT_LEVELS = ["Beginner", "Working knowledge", "Proficient", "Expert"];
 const levelsOf = (raw: unknown) => (Array.isArray(raw) && raw.length ? (raw as string[]) : DEFAULT_LEVELS);
@@ -21,17 +28,33 @@ function LevelDots({ level, of }: { level: number | null; of: number }) {
   );
 }
 
-export default async function MyCareerPage() {
+export default async function MyCareerPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const viewer = await requireViewer();
   if (!viewer.employee) return <EmptyState title="No employee record">This login is not linked to an employee.</EmptyState>;
   const myId = viewer.employee.id;
+  const sp = await searchParams;
+  const tab = (sp.tab && sp.tab in TABS ? sp.tab : "skills") as Tab;
+  const nav = (
+    <div className="tabs">
+      {(Object.keys(TABS) as Tab[]).map((k) => <Link key={k} href={`/me/career?tab=${k}`} className={`tab${k === tab ? " active" : ""}`}>{TABS[k]}</Link>)}
+    </div>
+  );
+  if (tab !== "skills") {
+    return (
+      <>
+        <PageHead title="Skills & Career" subtitle="Grow here: internal jobs, transfers and your development plan" />
+        {nav}
+        {tab === "jobs" ? <JobsTab viewer={viewer} /> : tab === "moves" ? <MovesTab viewer={viewer} /> : <DevelopmentTab viewer={viewer} />}
+      </>
+    );
+  }
 
   const [me, mySkills, catalogue, paths, aspiration] = await Promise.all([
     prisma.employee.findUniqueOrThrow({ where: { id: myId }, select: { jobTitleName: true, dateOfJoining: true, departmentId: true } }),
     prisma.employeeSkill.findMany({ where: { employeeId: myId }, include: { skill: true }, orderBy: [{ isApproved: "desc" }, { level: "desc" }] }),
-    prisma.skill.findMany({ where: { tenantId: viewer.tenantId, isActive: true }, orderBy: [{ category: "asc" }, { name: "asc" }] }),
+    prisma.skill.findMany({ where: { tenantId: viewer.tenantId, isActive: true, status: "ACTIVE" }, orderBy: [{ category: "asc" }, { name: "asc" }] }),
     prisma.careerPath.findMany({
-      where: { tenantId: viewer.tenantId },
+      where: { tenantId: viewer.tenantId, status: "APPROVED" },
       include: { steps: { orderBy: { sequence: "asc" }, include: { skills: { include: { skill: true } } } } },
       orderBy: { name: "asc" },
     }),
@@ -55,11 +78,13 @@ export default async function MyCareerPage() {
         .filter((c) => c.skillLevel > (mySkills.find((m) => m.skillId === c.skillId && m.isApproved)?.level ?? -1))
     : [];
   const held = new Set(mySkills.map((s) => s.skillId));
+  const history = await prisma.skillAssessmentLog.findMany({ where: { employeeId: myId, tenantId: viewer.tenantId }, include: { skill: { select: { name: true, levels: true } } }, orderBy: { createdAt: "desc" }, take: 30 });
   const experience = Math.floor(yearsBetween(me.dateOfJoining, new Date()) * 10) / 10;
 
   return (
     <>
       <PageHead title="Skills & Career" subtitle="What you are good at, where you are on your career path, and what it takes to grow" />
+      {nav}
 
       <div className="grid grid-2" style={{ marginBottom: 18, alignItems: "start" }}>
         <Panel title="Your career path" subtitle={placed ? `${placed.path.name} · you are a ${placed.step.title}` : me.jobTitleName ? `No ladder lists “${me.jobTitleName}” yet` : "No job title on your record"}>
@@ -80,6 +105,7 @@ export default async function MyCareerPage() {
             steps={paths.flatMap((p) => p.steps.map((s) => ({ value: s.id, label: `${p.name} → ${s.title}` })))}
           />
           {!aspiration && nextStep ? <div className="text-xs subtle" style={{ marginTop: 4 }}>Until you choose, the next rung on your ladder is used.</div> : null}
+          {aspiration ? <div className="text-xs" style={{ marginTop: 6 }}><Badge tone={aspiration.status === "ENDORSED" ? "success" : aspiration.status === "DECLINED" ? "danger" : "warning"} dot>{aspiration.status === "PENDING" ? "waiting for your manager" : aspiration.status.toLowerCase()}</Badge>{aspiration.targetDate ? <span className="subtle"> · by {formatDate(aspiration.targetDate)}</span> : null}{aspiration.managerNote ? <span className="subtle"> · manager: {aspiration.managerNote}</span> : null}</div> : null}
         </Panel>
 
         <Panel title={target ? `Readiness for ${target.title}` : "Readiness"} subtitle={target ? `${targetPath?.name ?? ""}${target.minYears ? ` · typically ${target.minYears}+ years; you have ${experience} here` : ""}` : undefined}>
@@ -138,7 +164,7 @@ export default async function MyCareerPage() {
                       <td className="text-sm">{s.skill.category ?? "—"}</td>
                       <td><div className="row gap-2"><LevelDots level={s.level} of={lv.length} /><span className="text-sm">{lv[s.level]}</span></div></td>
                       <td className="text-sm">{SOURCE[s.source] ?? s.source}</td>
-                      <td>{s.isApproved ? <Badge tone="success" dot>Confirmed</Badge> : <Badge tone="warning" dot>Awaiting manager</Badge>}</td>
+                      <td>{s.isApproved ? (skillFreshness(s.approvedAt, s.skill.validityMonths) === "STALE" ? <Badge tone="warning" dot>Due for re-confirmation</Badge> : <Badge tone="success" dot>Confirmed</Badge>) : <Badge tone="warning" dot>Awaiting manager</Badge>}</td>
                       <td className="right">{!s.isApproved ? <RemoveMySkill id={s.id} /> : null}</td>
                     </tr>
                   );
@@ -150,7 +176,34 @@ export default async function MyCareerPage() {
         <div style={{ padding: 14, borderTop: "1px solid var(--border)" }}>
           <div className="label">Add a skill</div>
           <AddMySkill skills={catalogue.filter((c) => !held.has(c.id)).map((c) => ({ id: c.id, name: c.name, levels: levelsOf(c.levels) }))} />
+          <div style={{ marginTop: 10 }}>
+            <Reveal label="Skill not listed? Suggest it">
+              <GrowthForm action={proposeSkillAction} cols={2} compact submitLabel="Suggest" fields={[{ name: "name", label: "Skill", required: true }, { name: "category", label: "Category" }, { name: "description", label: "What it covers", type: "textarea" }]} />
+            </Reveal>
+          </div>
         </div>
+      </Panel>
+
+      <SectionTitle sub="Every self-rating, manager rating and decision on your skills">Assessment history</SectionTitle>
+      <Panel pad={false}>
+        {history.length === 0 ? <EmptyState title="No assessments yet" /> : (
+          <div className="table-wrap">
+            <table className="data">
+              <thead><tr><th>Date</th><th>Skill</th><th>Assessment</th><th>Level</th><th>Evidence</th></tr></thead>
+              <tbody>
+                {history.map((h) => (
+                  <tr key={h.id}>
+                    <td className="text-sm nowrap">{formatDate(h.createdAt)}</td>
+                    <td className="text-sm">{h.skill.name}</td>
+                    <td className="text-sm">{h.kind === "SELF" ? "Self-rated" : h.kind === "MANAGER" ? "Manager rated" : "Self-rating declined"}</td>
+                    <td className="text-sm">{levelsOf(h.skill.levels)[h.level] ?? h.level}</td>
+                    <td className="text-sm">{h.evidence ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Panel>
     </>
   );
