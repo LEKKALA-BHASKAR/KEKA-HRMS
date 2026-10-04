@@ -8,6 +8,7 @@ import { aiEnabled, AI_UNAVAILABLE } from "@/lib/ai";
 import { Disclosure } from "../../../org/forms";
 import { CandidateForm, JobStatus } from "../../forms";
 import { JobDetailsForm, KitEditor } from "../../_parts/job-forms";
+import { ApplyScorecardForm } from "../../_parts/talent-forms";
 import { QuestionsButton, type QSection } from "../../_parts/questions";
 import { Markdown } from "../../_parts/markdown";
 import { rupees } from "../../_lib/data";
@@ -126,6 +127,7 @@ async function Scorecard({ job, manage }: { job: JobFull; manage: boolean }) {
   const kit = kitOf(job.scorecardTemplate);
   const setting = await prisma.hiringSetting.findUnique({ where: { tenantId: job.tenantId }, select: { aiQuestionAttempts: true } });
   const max = setting?.aiQuestionAttempts ?? 2;
+  const library = manage ? await prisma.scorecardTemplate.findMany({ where: { tenantId: job.tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [];
   const sections: QSection[] = kit.map((k) => ({
     section: k.section, skills: k.skills.map((x) => ({ name: x.name, description: x.description ?? null })),
     sets: job.questionSets.filter((q) => q.section === k.section).map((q) => ({ attempt: q.attempt, questions: q.questions as QSection["sets"][number]["questions"] })),
@@ -153,7 +155,8 @@ async function Scorecard({ job, manage }: { job: JobFull; manage: boolean }) {
         <div className={s.listCard}>
           <div className={s.listHead}><span className={s.listTitle}>Edit scorecard</span></div>
           <div style={{ padding: 16 }}>
-            <KitEditor jobId={job.id} initial={kit.map((k) => ({ section: k.section, skills: k.skills.map((x) => ({ name: x.name, description: x.description ?? "" })) }))} />
+            {library.length ? <div style={{ marginBottom: 14 }}><ApplyScorecardForm jobId={job.id} templates={library.map((t) => ({ value: t.id, label: t.name }))} /></div> : null}
+            <KitEditor key={JSON.stringify(kit)} jobId={job.id} initial={kit.map((k) => ({ section: k.section, skills: k.skills.map((x) => ({ name: x.name, description: x.description ?? "" })) }))} />
           </div>
         </div>
       ) : null}

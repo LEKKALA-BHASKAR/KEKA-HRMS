@@ -9,7 +9,7 @@ import { loadFile } from "@/lib/storage";
  * is attached to: a filing needs statutory rights; a file about an employee
  * needs document rights over that employee (or to be that employee).
  */
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const viewer = await getViewer();
   if (!viewer) return new NextResponse("Sign in first.", { status: 401 });
   const { id } = await params;
@@ -41,7 +41,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   return new NextResponse(new Uint8Array(data), {
     headers: {
       "Content-Type": file.mimeType,
-      "Content-Disposition": `attachment; filename="${file.filename.replace(/"/g, "")}"`,
+      // ?inline=1 shows a PDF in the browser (the résumé preview); anything else always downloads.
+      "Content-Disposition": `${req.nextUrl.searchParams.get("inline") === "1" && file.mimeType === "application/pdf" ? "inline" : "attachment"}; filename="${file.filename.replace(/"/g, "")}"`,
       "Content-Length": String(data.length),
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",

@@ -1,0 +1,480 @@
+// ============================================================================
+//  BooS-HR — Talent depth: Performance and Hiring parity
+// ============================================================================
+//  Performance: goal templates and timeframes, team goals, the review form
+//  builder with stage dates and manual participant mapping, feedback
+//  requests and settings, manager salary/promotion recommendations with a
+//  promotion policy, and growth plans from templates.
+//  Hiring: talent pools, internal applications, candidate profile scoring,
+//  the scorecard template library, candidate self-scheduling, multi-level
+//  requisition/offer approval chains, voluntary EEO self-identification and
+//  the career site's branding.
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+//  GOALS
+// ---------------------------------------------------------------------------
+
+/// A named goal period HR maintains: quarters, half-years, a year or custom.
+model GoalTimeframe {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  /// QUARTER | HALF_YEAR | YEAR | CUSTOM
+  kind      String   @default("CUSTOM")
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@index([tenantId, isActive])
+  @@map("goal_timeframes")
+}
+
+/// The goal library: a goal shape HR maintains that anyone can start from.
+model GoalTemplate {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  category    String?
+  /// PERCENTAGE | COMPLETION | NUMBER_INCREASE | NUMBER_DECREASE | CURRENCY
+  metricType  String   @default("PERCENTAGE")
+  metricName  String?
+  startValue  Decimal  @default(0) @db.Decimal(18, 2)
+  targetValue Decimal  @default(100) @db.Decimal(18, 2)
+  /// string[]
+  tags        Json?
+  isActive    Boolean  @default(true)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, title])
+  @@index([tenantId, isActive])
+  @@map("goal_templates")
+}
+
+// ---------------------------------------------------------------------------
+//  REVIEW FORM BUILDER, STAGE DATES, PARTICIPANTS
+// ---------------------------------------------------------------------------
+
+model ReviewFormSection {
+  id           String               @id @default(cuid())
+  cycleId      String
+  cycle        ReviewCycle          @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  title        String
+  description  String?
+  displayOrder Int                  @default(0)
+  questions    ReviewFormQuestion[]
+
+  @@index([cycleId, displayOrder])
+  @@map("review_form_sections")
+}
+
+model ReviewFormQuestion {
+  id           String            @id @default(cuid())
+  sectionId    String
+  section      ReviewFormSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  /// RATING | TEXT | COMPETENCY
+  kind         String            @default("RATING")
+  prompt       String
+  /// The competency a COMPETENCY question rates.
+  competency   String?
+  isRequired   Boolean           @default(true)
+  /// Reviewer types that answer it (SELF, MANAGER, PEER…). Empty = everyone.
+  appliesTo    Json?
+  displayOrder Int               @default(0)
+
+  @@index([sectionId, displayOrder])
+  @@map("review_form_questions")
+}
+
+/// The dates each stage of a cycle runs. Self and manager windows are
+/// enforced on submission; results cannot be shared before publishOn.
+model ReviewCycleStage {
+  id                  String      @id @default(cuid())
+  cycleId             String      @unique
+  cycle               ReviewCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  selfStartsAt        DateTime?
+  selfEndsAt          DateTime?
+  managerStartsAt     DateTime?
+  managerEndsAt       DateTime?
+  calibrationStartsAt DateTime?
+  calibrationEndsAt   DateTime?
+  publishOn           DateTime?
+  updatedAt           DateTime    @updatedAt
+
+  @@map("review_cycle_stages")
+}
+
+/// Manual employee mapping before launch. When a cycle has participants,
+/// launch reviews exactly these people, with the mapped manager reviewing.
+model ReviewCycleParticipant {
+  id         String      @id @default(cuid())
+  cycleId    String
+  cycle      ReviewCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee    @relation("CycleParticipant", fields: [employeeId], references: [id], onDelete: Cascade)
+  /// Overrides the reporting manager as the MANAGER reviewer.
+  managerId  String?
+  addedBy    String?
+  createdAt  DateTime    @default(now())
+
+  @@unique([cycleId, employeeId])
+  @@index([employeeId])
+  @@map("review_cycle_participants")
+}
+
+// ---------------------------------------------------------------------------
+//  FEEDBACK REQUESTS AND SETTINGS
+// ---------------------------------------------------------------------------
+
+model FeedbackRequest {
+  id              String    @id @default(cuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requesterId     String
+  requester       Employee  @relation("FeedbackRequestsMade", fields: [requesterId], references: [id], onDelete: Cascade)
+  askedId         String
+  asked           Employee  @relation("FeedbackRequestsReceived", fields: [askedId], references: [id], onDelete: Cascade)
+  /// Whom the feedback is about: the requester, or one of their reports.
+  aboutEmployeeId String
+  message         String?
+  /// PENDING | GIVEN | DECLINED
+  status          String    @default("PENDING")
+  feedbackId      String?
+  dueDate         DateTime?
+  respondedAt     DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@index([askedId, status])
+  @@index([requesterId])
+  @@map("feedback_requests")
+}
+
+model FeedbackSetting {
+  id             String   @id @default(cuid())
+  tenantId       String   @unique
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Givers may hide their name from the person it is about.
+  allowAnonymous Boolean  @default(false)
+  /// EVERYONE | SAME_DEPARTMENT | REPORTING_LINE
+  whoCanGive     String   @default("EVERYONE")
+  allowRequests  Boolean  @default(true)
+  updatedAt      DateTime @updatedAt
+
+  @@map("feedback_settings")
+}
+
+// ---------------------------------------------------------------------------
+//  REVIEW TO PAY: MANAGER RECOMMENDATIONS, PROMOTION POLICY
+// ---------------------------------------------------------------------------
+
+model SalaryRecommendation {
+  id                 String      @id @default(cuid())
+  tenantId           String
+  tenant             Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cycleId            String
+  cycle              ReviewCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  reviewId           String      @unique
+  employeeId         String
+  employee           Employee    @relation("SalaryRecommendationFor", fields: [employeeId], references: [id], onDelete: Cascade)
+  /// The manager (employee id) recommending.
+  recommendedById    String
+  incrementPercent   Decimal     @db.Decimal(9, 2)
+  recommendPromotion Boolean     @default(false)
+  proposedJobTitle   String?
+  justification      String
+  /// PENDING | APPROVED | REJECTED
+  status             String      @default("PENDING")
+  decidedBy          String?
+  decidedAt          DateTime?
+  decisionNote       String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@index([tenantId, status])
+  @@index([cycleId])
+  @@map("salary_recommendations")
+}
+
+model PromotionPolicy {
+  id                          String   @id @default(cuid())
+  tenantId                    String   @unique
+  tenant                      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  minTenureMonths             Int      @default(12)
+  minMonthsSinceLastPromotion Int      @default(12)
+  minRating                   Decimal  @default(4) @db.Decimal(9, 2)
+  excludeOnPip                Boolean  @default(true)
+  /// The most a manager may recommend; above it HR must justify on approval.
+  maxIncrementPercent         Decimal  @default(30) @db.Decimal(9, 2)
+  updatedAt                   DateTime @updatedAt
+
+  @@map("promotion_policies")
+}
+
+// ---------------------------------------------------------------------------
+//  GROWTH PLANS
+// ---------------------------------------------------------------------------
+
+model GrowthPlanTemplate {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  /// [{ title, kind: SKILL|COURSE|MILESTONE|MENTORING, dueInDays }]
+  items       Json
+  isActive    Boolean  @default(true)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("growth_plan_templates")
+}
+
+model GrowthPlan {
+  id         String           @id @default(cuid())
+  tenantId   String
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee         @relation("GrowthPlanFor", fields: [employeeId], references: [id], onDelete: Cascade)
+  templateId String?
+  title      String
+  startDate  DateTime
+  /// ACTIVE | COMPLETED | CANCELLED
+  status     String           @default("ACTIVE")
+  createdBy  String?
+  createdAt  DateTime         @default(now())
+  items      GrowthPlanItem[]
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("growth_plans")
+}
+
+model GrowthPlanItem {
+  id           String     @id @default(cuid())
+  planId       String
+  plan         GrowthPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  title        String
+  kind         String     @default("MILESTONE")
+  dueDate      DateTime?
+  doneAt       DateTime?
+  displayOrder Int        @default(0)
+
+  @@index([planId])
+  @@map("growth_plan_items")
+}
+
+// ---------------------------------------------------------------------------
+//  HIRING: TALENT POOLS, INTERNAL APPLICATIONS, SCORING, SCORECARDS
+// ---------------------------------------------------------------------------
+
+model TalentPool {
+  id          String             @id @default(cuid())
+  tenantId    String
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  createdBy   String?
+  createdAt   DateTime           @default(now())
+  members     TalentPoolMember[]
+
+  @@unique([tenantId, name])
+  @@map("talent_pools")
+}
+
+model TalentPoolMember {
+  id          String     @id @default(cuid())
+  poolId      String
+  pool        TalentPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  candidateId String
+  candidate   Candidate  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  note        String?
+  addedBy     String?
+  addedAt     DateTime   @default(now())
+
+  @@unique([poolId, candidateId])
+  @@index([candidateId])
+  @@map("talent_pool_members")
+}
+
+/// An employee applying to a job on the internal job board.
+model InternalApplication {
+  id            String      @id @default(cuid())
+  tenantId      String
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  applicationId String      @unique
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  employeeId    String
+  employee      Employee    @relation("InternalApplicant", fields: [employeeId], references: [id], onDelete: Cascade)
+  note          String?
+  createdAt     DateTime    @default(now())
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@map("internal_applications")
+}
+
+model CandidateScoreConfig {
+  id                   String   @id @default(cuid())
+  tenantId             String   @unique
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  skillsWeight         Int      @default(50)
+  experienceWeight     Int      @default(30)
+  educationWeight      Int      @default(20)
+  /// string[] — matched against the candidate's skills, alongside the job's.
+  skillKeywords        Json?
+  /// string[] — matched against the candidate's education.
+  educationKeywords    Json?
+  /// Years that earn the full experience score when the job sets none.
+  idealExperienceYears Decimal  @default(5) @db.Decimal(9, 1)
+  updatedAt            DateTime @updatedAt
+
+  @@map("candidate_score_configs")
+}
+
+/// The org's scorecard library; a job copies one into its interview kit.
+model ScorecardTemplate {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  /// KitSection[] — [{ section, skills: string[] }]
+  kit       Json
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("scorecard_templates")
+}
+
+// ---------------------------------------------------------------------------
+//  CANDIDATE SELF-SCHEDULING
+// ---------------------------------------------------------------------------
+
+model InterviewSlotOffer {
+  id              String      @id @default(cuid())
+  tenantId        String
+  tenant          Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  applicationId   String
+  application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  tokenHash       String      @unique
+  title           String
+  mode            String      @default("VIDEO")
+  durationMinutes Int         @default(60)
+  meetingUrl      String?
+  /// Panel employee ids.
+  panelIds        Json
+  /// ISO start times offered.
+  slots           Json
+  /// OPEN | BOOKED | CANCELLED
+  status          String      @default("OPEN")
+  chosenSlot      DateTime?
+  interviewId     String?
+  expiresAt       DateTime
+  createdBy       String?
+  createdAt       DateTime    @default(now())
+
+  @@index([tenantId, status])
+  @@index([applicationId])
+  @@map("interview_slot_offers")
+}
+
+// ---------------------------------------------------------------------------
+//  MULTI-LEVEL APPROVAL CHAINS (REQUISITIONS AND OFFERS)
+// ---------------------------------------------------------------------------
+
+model HireApprovalRule {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// REQUISITION | OFFER
+  kind            String
+  name            String
+  /// Matches only this department when set.
+  departmentId    String?
+  /// Matches when the amount (max salary / offer CTC) is at least this.
+  minAmount       Decimal? @db.Decimal(18, 2)
+  /// Approver user ids, in order.
+  approverUserIds Json
+  /// Lower runs first; the first matching rule wins.
+  priority        Int      @default(100)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId, kind, isActive])
+  @@map("hire_approval_rules")
+}
+
+model HireApprovalStep {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind           String
+  /// Requisition id or application id (for an offer).
+  entityId       String
+  ruleId         String?
+  sequence       Int
+  approverUserId String
+  /// WAITING | PENDING | APPROVED | REJECTED | CANCELLED
+  status         String    @default("WAITING")
+  comment        String?
+  decidedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([tenantId, kind, entityId])
+  @@index([tenantId, approverUserId, status])
+  @@map("hire_approval_steps")
+}
+
+// ---------------------------------------------------------------------------
+//  EEO SELF-IDENTIFICATION AND THE CAREER SITE
+// ---------------------------------------------------------------------------
+
+/// Voluntary, optional self-identification. Never shown on a candidate's
+/// profile; only aggregated in the EEO report.
+model CandidateEeo {
+  id               String    @id @default(cuid())
+  tenantId         String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidateId      String    @unique
+  candidate        Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  gender           String?
+  ethnicity        String?
+  veteranStatus    String?
+  disabilityStatus String?
+  declined         Boolean   @default(false)
+  submittedAt      DateTime  @default(now())
+
+  @@index([tenantId])
+  @@map("candidate_eeo")
+}
+
+model CareerSiteSetting {
+  id           String   @id @default(cuid())
+  tenantId     String   @unique
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  headline     String?
+  about        String?
+  primaryColor String   @default("#1266a8")
+  accentColor  String   @default("#0f8a55")
+  /// StoredFile ids (relatedType CareerSiteAsset), served publicly.
+  logoFileId   String?
+  bannerFileId String?
+  /// Off: the embed script and iframe show nothing.
+  embedEnabled Boolean  @default(true)
+  /// Ask candidates for voluntary EEO self-identification.
+  collectEeo   Boolean  @default(false)
+  updatedAt    DateTime @updatedAt
+
+  @@map("career_site_settings")
+}

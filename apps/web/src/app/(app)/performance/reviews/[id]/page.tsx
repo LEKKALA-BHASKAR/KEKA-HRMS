@@ -7,6 +7,8 @@ import { requireViewer, can } from "@/lib/context";
 import { PageHead, Card, Badge, KeyValue, Person, Callout, Empty } from "@/components/ui";
 import { REVIEWER_LABEL, FEEDBACK_TYPES } from "@keka/services";
 import { ReviewForm, CalibrateForm, AcknowledgeForm, NominatePeers, DecideNomination } from "../../forms";
+import { RecommendForm } from "../../_parts/talent-forms";
+import { promotionPolicyOf, eligibilityFor } from "@/lib/talent";
 
 type Weight = { type: string; weight: number };
 
@@ -16,7 +18,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ id: str
   const review = await prisma.employeeReview.findFirst({
     where: { id, cycle: { tenantId: viewer.tenantId } },
     include: {
-      cycle: true, band: true,
+      cycle: { include: { formSections: { orderBy: { displayOrder: "asc" }, include: { questions: { orderBy: { displayOrder: "asc" } } } }, stageDates: true } }, band: true,
       employee: { select: { id: true, displayName: true, employeeNumber: true, jobTitleName: true, departmentId: true, locationId: true, legalEntityId: true, businessUnitId: true, reportingManagerId: true } },
       responses: { include: { reviewer: { select: { displayName: true, employeeNumber: true } } }, orderBy: { reviewerType: "desc" } },
     },
@@ -57,6 +59,16 @@ export default async function ReviewPage({ params }: { params: Promise<{ id: str
     prisma.goal.findMany({ where: { employeeId: review.employeeId, countsInReview: true, dueDate: { gte: review.cycle.periodStart }, startDate: { lte: review.cycle.periodEnd } }, orderBy: { dueDate: "asc" } }),
   ]);
 
+  const sections = review.cycle.formSections.map((sec) => ({ id: sec.id, title: sec.title, description: sec.description, questions: sec.questions.map((q) => ({ id: q.id, kind: q.kind, prompt: q.prompt, competency: q.competency, isRequired: q.isRequired, appliesTo: q.appliesTo })) }));
+  const questionText = new Map(sections.flatMap((sec) => sec.questions.map((q) => [q.id, q.prompt] as const)));
+  const formFor = (type: string) => sections.map((sec) => ({ ...sec, questions: sec.questions.filter((q) => !Array.isArray(q.appliesTo) || (q.appliesTo as string[]).length === 0 || (q.appliesTo as string[]).includes(type)) }));
+  const answersOf = (json: unknown) => Object.entries((json && typeof json === "object" ? json : {}) as Record<string, string | number>).filter(([k]) => questionText.has(k));
+  // Review to pay: the reviewing manager recommends an increment or promotion once their review is in.
+  const managerSubmitted = review.responses.some((r) => r.reviewerType === "MANAGER" && r.reviewerId === me && r.submittedAt);
+  const recommendation = managerSubmitted || privileged ? await prisma.salaryRecommendation.findUnique({ where: { reviewId: review.id } }) : null;
+  const policy = managerSubmitted ? await promotionPolicyOf(viewer.tenantId) : null;
+  const eligibility = managerSubmitted ? await eligibilityFor(viewer.tenantId, review.employeeId, review.finalRating ? Number(review.finalRating) : review.rawRating ? Number(review.rawRating) : null) : null;
+
   return (
     <>
       <PageHead title={`${review.cycle.name} — ${review.employee.displayName}`} subtitle={`${review.status.replace(/_/g, " ").toLowerCase()} · period ${formatDate(review.cycle.periodStart)} – ${formatDate(review.cycle.periodEnd)}`}
@@ -70,7 +82,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ id: str
                 ? <Empty title="The self review comes first">You will be notified when it is submitted.</Empty>
                 : <>
                     {FEEDBACK_TYPES.includes(mySlot.reviewerType) ? <p className="text-sm muted" style={{ marginTop: 0 }}>You are giving feedback as their {(REVIEWER_LABEL[mySlot.reviewerType] ?? "").toLowerCase()}.{anonymous ? " It is shown without your name." : " Your name is shown with it."}</p> : null}
-                    <ReviewForm reviewId={review.id} reviewerType={mySlot.reviewerType} indicators={FEEDBACK_TYPES.includes(mySlot.reviewerType) ? [] : indicators.map((i) => ({ id: i.id, name: i.name, category: i.category.name }))} />
+                    <ReviewForm reviewId={review.id} reviewerType={mySlot.reviewerType} sections={formFor(mySlot.reviewerType)} indicators={FEEDBACK_TYPES.includes(mySlot.reviewerType) ? [] : indicators.map((i) => ({ id: i.id, name: i.name, category: i.category.name }))} />
                   </>}
             </Card>
           ) : null}
@@ -98,9 +110,20 @@ export default async function ReviewPage({ params }: { params: Promise<{ id: str
               <div className="stack gap-3">
                 {r.strengths ? <div><div className="text-xs strong subtle">STRENGTHS</div><div className="text-sm" style={{ whiteSpace: "pre-wrap" }}>{r.strengths}</div></div> : null}
                 {r.improvements ? <div><div className="text-xs strong subtle">TO IMPROVE</div><div className="text-sm" style={{ whiteSpace: "pre-wrap" }}>{r.improvements}</div></div> : null}
+                {answersOf(r.answers).map(([qid, a]) => <div key={qid}><div className="text-xs strong subtle">{questionText.get(qid)}</div><div className="text-sm" style={{ whiteSpace: "pre-wrap" }}>{typeof a === "number" ? `${a} / 5` : a}</div></div>)}
               </div>
             </Card>
           ))}
+          {managerSubmitted && policy ? (
+            <Card title="Salary and promotion recommendation" description={recommendation ? `Status: ${recommendation.status.toLowerCase()}${recommendation.decisionNote ? ` — ${recommendation.decisionNote}` : ""}` : "Goes to Inbox › Salary increments for approval, then into review-to-pay."}>
+              {eligibility ? <p className="text-sm" style={{ marginTop: 0 }}>{eligibility.eligible ? <Badge tone="success">eligible for promotion</Badge> : <><Badge tone="warning">not yet eligible for promotion</Badge> <span className="subtle">{eligibility.reasons.join("; ")}</span></>}</p> : null}
+              {!recommendation || recommendation.status === "PENDING"
+                ? <RecommendForm reviewId={review.id} maxPercent={policy.maxIncrementPercent} current={recommendation ? { pct: Number(recommendation.incrementPercent), promote: recommendation.recommendPromotion, title: recommendation.proposedJobTitle ?? "", why: recommendation.justification } : undefined} />
+                : <KeyValue items={[["Increment", `${Number(recommendation.incrementPercent)}%`], ["Promotion", recommendation.recommendPromotion ? recommendation.proposedJobTitle ?? "yes" : "no"], ["Why", recommendation.justification]]} />}
+            </Card>
+          ) : recommendation && privileged ? (
+            <Card title="Manager's recommendation"><KeyValue items={[["Increment", `${Number(recommendation.incrementPercent)}%`], ["Promotion", recommendation.recommendPromotion ? recommendation.proposedJobTitle ?? "yes" : "no"], ["Status", recommendation.status.toLowerCase()], ["Why", recommendation.justification]]} /></Card>
+          ) : null}
           {feedback.length || (privileged && pendingFeedback) ? (
             <Card title="Feedback from others" description={`${feedback.length} received${privileged && pendingFeedback ? `, ${pendingFeedback} still to come` : ""}${anonymous ? " · shown without names" : ""}`}>
               <div className="stack gap-3">

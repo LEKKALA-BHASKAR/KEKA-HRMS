@@ -26,12 +26,15 @@ export default async function CareersPage({ searchParams }: { searchParams: Prom
     prisma.department.findMany({ where: { tenantId: tenant.id, id: { in: jobs.map((j) => j.departmentId).filter((x): x is string => !!x) } }, select: { id: true, name: true } }),
     prisma.location.findMany({ where: { tenantId: tenant.id, id: { in: jobs.map((j) => j.locationId).filter((x): x is string => !!x) } }, select: { id: true, name: true, city: true } }),
   ]);
+  const site = await prisma.careerSiteSetting.findUnique({ where: { tenantId: tenant.id }, select: { headline: true, about: true, bannerFileId: true, accentColor: true } });
   const dept = new Map(depts.map((d) => [d.id, d.name]));
   const loc = new Map(locs.map((l) => [l.id, l.city ?? l.name]));
 
   return (
     <>
-      <h1 style={{ fontSize: 28, margin: "0 0 4px" }}>Work with us</h1>
+      {site?.bannerFileId ? <img src={`/careers/asset/${site.bannerFileId}`} alt="" style={{ width: "100%", maxHeight: 240, objectFit: "cover", borderRadius: 8, marginBottom: 18, display: "block" }} /> : null}
+      <h1 style={{ fontSize: 28, margin: "0 0 4px" }}>{site?.headline || "Work with us"}</h1>
+      {site?.about ? <div style={{ margin: "8px 0 16px", padding: "12px 16px", borderLeft: `3px solid ${site.accentColor}`, background: "#fff", borderRadius: 4, whiteSpace: "pre-wrap", lineHeight: 1.6 }} data-testid="careers-about">{site.about}</div> : null}
       <p className="muted" style={{ marginTop: 0 }}>{jobs.length} open role{jobs.length === 1 ? "" : "s"} at {tenant.name}.</p>
       <form className="row gap-2" style={{ margin: "16px 0", flexWrap: "wrap" }}>
         <input className="input" name="q" defaultValue={q} placeholder="Search roles" aria-label="Search roles" style={{ flex: 1, minWidth: 180 }} />

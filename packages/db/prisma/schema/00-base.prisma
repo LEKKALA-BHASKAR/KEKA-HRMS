@@ -244,6 +244,25 @@ model Tenant {
   probationPolicies ProbationPolicy[]
   probations        EmployeeProbation[]
 
+  // --- Talent depth (28-talent-depth) ---
+  goalTimeframes        GoalTimeframe[]
+  goalTemplates         GoalTemplate[]
+  feedbackRequests      FeedbackRequest[]
+  feedbackSetting       FeedbackSetting?
+  salaryRecommendations SalaryRecommendation[]
+  promotionPolicy       PromotionPolicy?
+  growthPlanTemplates   GrowthPlanTemplate[]
+  growthPlans           GrowthPlan[]
+  talentPools           TalentPool[]
+  internalApplications  InternalApplication[]
+  candidateScoreConfig  CandidateScoreConfig?
+  scorecardTemplates    ScorecardTemplate[]
+  interviewSlotOffers   InterviewSlotOffer[]
+  hireApprovalRules     HireApprovalRule[]
+  hireApprovalSteps     HireApprovalStep[]
+  candidateEeo          CandidateEeo[]
+  careerSiteSetting     CareerSiteSetting?
+
   @@index([subdomain])
   @@map("tenants")
 }

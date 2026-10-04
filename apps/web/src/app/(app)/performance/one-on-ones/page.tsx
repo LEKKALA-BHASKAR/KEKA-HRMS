@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { prisma, type Prisma } from "@keka/db";
 import { formatDate } from "@keka/shared";
-import { requireViewer } from "@/lib/context";
+import { requireViewer, canAny } from "@/lib/context";
+import { PERMISSIONS } from "@keka/rbac";
+import { SubTabs } from "@/components/subtabs";
 import { aiEnabled } from "@/lib/ai";
 import { PageHead, Card, Badge, Empty } from "@/components/ui";
 import { oneOnOnePeers } from "../_parts/access";
@@ -39,8 +41,10 @@ export default async function OneOnOnesPage({ searchParams }: { searchParams: Pr
     </tr>
   );
 
+  const hrLog = canAny(viewer, [PERMISSIONS.PERFORMANCE_MANAGE, PERMISSIONS.PERFORMANCE_VIEW]);
   return (
     <>
+      {hrLog ? <SubTabs items={[{ label: "My 1:1s", href: "/performance/one-on-ones" }, { label: "Org-wide log", href: "/performance/one-on-ones/log" }]} /> : null}
       <PageHead title="1:1 meetings" subtitle="Regular conversations with your manager and your team. Agenda, talking points and shared notes are visible to both of you; private notes only to you." />
       <div className="stack gap-4">
         {people.length ? (

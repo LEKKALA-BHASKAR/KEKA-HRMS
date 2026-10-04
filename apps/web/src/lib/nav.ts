@@ -203,7 +203,9 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
       canAny(viewer, [P.JOB_MANAGE, P.CANDIDATE_MANAGE]) && { label: "Jobs", href: "/hiring/jobs", paths: ["/hiring/jobs", "/hiring/applications", "/hiring"] },
       me && { label: "Interviews", href: "/hiring/interviews" },
       can(viewer, P.OFFER_MANAGE) && { label: "Offers", href: "/hiring/offers" },
+      can(viewer, P.CANDIDATE_MANAGE) && { label: "Talent Pools", href: "/hiring/pools" },
       me && { label: "Refer & Apply", href: "/hiring/refer" },
+      can(viewer, P.JOB_MANAGE) && { label: "Reports", href: "/hiring/reports" },
       can(viewer, P.JOB_MANAGE) && { label: "Settings", href: "/hiring/settings" },
     ]);
     if (hire.length) sections.push({ key: "hire", label: "Hire", icon: "hire", href: hire[0].href, tabs: hire, admin: true });
@@ -218,6 +220,9 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         { label: "Reviews", href: "/performance/reviews", paths: ["/performance/reviews", "/performance/cycles"] },
         canAny(viewer, [P.PIP_MANAGE, P.PERFORMANCE_MANAGE]) || isManager ? { label: "Improvement Plans", href: "/performance/plans" } : false,
         (isManager || canAny(viewer, [P.CAREER_PATH_MANAGE, P.SKILL_MANAGE])) && { label: "Skills & Career Paths", href: "/performance/careers" },
+        (isManager || canAny(viewer, [P.PERFORMANCE_MANAGE, P.CAREER_PATH_MANAGE])) && { label: "Growth Plans", href: "/performance/growth" },
+        canAny(viewer, [P.PERFORMANCE_MANAGE, P.PERFORMANCE_CALIBRATE, P.PERFORMANCE_VIEW]) && { label: "Analytics", href: "/performance/analytics" },
+        can(viewer, P.PERFORMANCE_MANAGE) && { label: "Settings", href: "/performance/settings" },
       ]),
     });
   }

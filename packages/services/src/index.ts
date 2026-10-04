@@ -78,3 +78,4 @@ export * from "./psa";
 // psa-math and import-math both define parseCsv; PSA's trims unquoted fields, so its callers take it as psaParseCsv.
 export { parseCsv } from "./import-math";
 export { parseCsv as psaParseCsv } from "./psa-math";
+export * from "./talent";

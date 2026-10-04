@@ -3,7 +3,7 @@
 import { headers } from "next/headers";
 import { z } from "zod";
 import { prisma } from "@keka/db";
-import { applyCandidate, notify } from "@keka/services";
+import { applyCandidate, notify, EEO_OPTIONS } from "@keka/services";
 import { tenantFromHost } from "@/lib/tenant-host";
 import { saveFile, sniffUpload } from "@/lib/storage";
 import { parseForm, type ActionState } from "@/lib/forms";
@@ -85,6 +85,19 @@ export async function applyToJobAction(_prev: ActionState, formData: FormData): 
   // The résumé goes on the application's candidate only if they have none yet;
   // otherwise it stays attached to them for the recruiter to compare.
   await prisma.candidate.updateMany({ where: { id: app.candidateId, resumeUrl: null }, data: { resumeUrl: `/files/${stored.id}` } });
+
+  // Voluntary EEO self-identification: only offered values are kept, only
+  // when the company asks, and stored apart from the application.
+  const site = await prisma.careerSiteSetting.findUnique({ where: { tenantId: tenant.id }, select: { collectEeo: true } });
+  if (site?.collectEeo) {
+    const pick = <K extends keyof typeof EEO_OPTIONS>(k: K) => {
+      const v = String(formData.get(`eeo_${k}`) ?? "");
+      return (EEO_OPTIONS[k] as readonly string[]).includes(v) ? v : null;
+    };
+    const eeo = { gender: pick("gender"), ethnicity: pick("ethnicity"), veteranStatus: pick("veteranStatus"), disabilityStatus: pick("disabilityStatus") };
+    const declined = Object.values(eeo).every((v) => v === null);
+    await prisma.candidateEeo.upsert({ where: { candidateId: app.candidateId }, create: { tenantId: tenant.id, candidateId: app.candidateId, ...eeo, declined }, update: { ...eeo, declined, submittedAt: new Date() } });
+  }
 
   const people = await prisma.employee.findMany({ where: { id: { in: [job.recruiterId, job.hiringManagerId].filter((x): x is string => !!x) } }, select: { userId: true } });
   await notify({ tenantId: tenant.id, userIds: people.map((p) => p.userId), kind: "HIRING", title: `New application: ${d.firstName} ${d.lastName} for ${job.title}`, body: "Applied from the careers site.", link: `/hiring/applications/${res.applicationId}` });

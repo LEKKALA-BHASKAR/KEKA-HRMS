@@ -15,7 +15,7 @@ export interface Colleague { id: string; name: string; meta: string }
  * A manager may also write an internal note, but only about someone in
  * their reporting line; the server enforces the same rule.
  */
-export function GiveButtons({ colleagues, reportIds, canPraise }: { colleagues: Colleague[]; reportIds: string[]; canPraise: boolean }) {
+export function GiveButtons({ colleagues, reportIds, canPraise, allowAnonymous = false }: { colleagues: Colleague[]; reportIds: string[]; canPraise: boolean; allowAnonymous?: boolean }) {
   const [open, setOpen] = useState<"praise" | "feedback" | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const done = (message?: string) => { setOpen(null); setFlash(message ?? null); };
@@ -30,7 +30,7 @@ export function GiveButtons({ colleagues, reportIds, canPraise }: { colleagues: 
         <PraiseForm colleagues={colleagues} onDone={done} />
       </Sheet>
       <Sheet open={open === "feedback"} onClose={() => setOpen(null)} title="Give feedback" subtitle="Specific, timely feedback helps most. Say what they did and the effect it had.">
-        <FeedbackForm colleagues={colleagues} reportIds={reportIds} onDone={done} />
+        <FeedbackForm colleagues={colleagues} reportIds={reportIds} onDone={done} allowAnonymous={allowAnonymous} />
       </Sheet>
     </div>
   );
@@ -116,7 +116,7 @@ function PraiseForm({ colleagues, onDone }: { colleagues: Colleague[]; onDone: (
   );
 }
 
-function FeedbackForm({ colleagues, reportIds, onDone }: { colleagues: Colleague[]; reportIds: string[]; onDone: (m?: string) => void }) {
+function FeedbackForm({ colleagues, reportIds, onDone, allowAnonymous }: { colleagues: Colleague[]; reportIds: string[]; onDone: (m?: string) => void; allowAnonymous?: boolean }) {
   const [state, action, pending] = useForm(giveFeedbackAction);
   const [kind, setKind] = useState<"FEEDBACK" | "INTERNAL_NOTE">(state.values?.kind === "INTERNAL_NOTE" ? "INTERNAL_NOTE" : "FEEDBACK");
   useDone(state, onDone);
@@ -145,6 +145,7 @@ function FeedbackForm({ colleagues, reportIds, onDone }: { colleagues: Colleague
         <ErrorText state={state} name="topic" />
       </div>
       <Message state={state} placeholder={kind === "INTERNAL_NOTE" ? "What you want to remember for their next review." : "What went well, and what could be even better?"} />
+      {allowAnonymous && kind === "FEEDBACK" ? <label className="checkbox-row"><input type="checkbox" name="anonymous" /><span className="text-sm">Give anonymously — your name is not shown to them</span></label> : null}
       <div className="row gap-2">
         <button className="btn primary" type="submit" disabled={pending}>{pending ? "Saving…" : kind === "INTERNAL_NOTE" ? "Save note" : "Send feedback"}</button>
       </div>

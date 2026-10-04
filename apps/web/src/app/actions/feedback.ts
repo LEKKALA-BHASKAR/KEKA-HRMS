@@ -10,6 +10,7 @@ import { directoryWhere, nameOf } from "@/lib/directory";
 import { z, zId, parseForm, writeAudit, actionDone, toErrorState, type ActionState } from "@/lib/forms";
 import { PRAISE_BADGES, MESSAGE_MAX, TOPIC_MAX } from "@/app/(app)/me/performance/constants";
 import { givePraise } from "./workplace";
+import { feedbackBlocker, feedbackRules } from "@/lib/talent";
 
 /**
  * Praise and continuous feedback between colleagues, from Me → Performance.
@@ -125,10 +126,17 @@ export async function giveFeedbackAction(_prev: ActionState, formData: FormData)
   if (note && !viewer.allReportIds.has(person.id)) {
     return { ok: false, message: "Internal notes can only be written about people in your reporting line.", errors: { aboutEmployeeId: "Not in your reporting line" }, values };
   }
+  // The company's feedback settings: who may give it, and whether anonymously.
+  const anonymous = !note && formData.get("anonymous") === "on";
+  if (!note) {
+    const why = await feedbackBlocker(viewer.tenantId, viewer.employee.id, person.id);
+    if (why) return { ok: false, message: why, errors: { aboutEmployeeId: "Not allowed" }, values };
+    if (anonymous && !(await feedbackRules(viewer.tenantId)).allowAnonymous) return { ok: false, message: "Your company does not allow anonymous feedback.", values };
+  }
 
   try {
     const row = await prisma.feedback.create({
-      data: { tenantId: viewer.tenantId, fromEmployeeId: viewer.employee.id, aboutEmployeeId: person.id, kind, topic, message: text },
+      data: { tenantId: viewer.tenantId, fromEmployeeId: viewer.employee.id, aboutEmployeeId: person.id, kind, topic, message: text, isAnonymous: anonymous },
       select: { id: true },
     });
     // An internal note's words stay out of the audit trail and the subject's inbox.
@@ -139,7 +147,7 @@ export async function giveFeedbackAction(_prev: ActionState, formData: FormData)
     if (!note) {
       await notify({
         tenantId: viewer.tenantId, userIds: [person.userId], kind: "FEEDBACK",
-        title: `${viewer.employee.displayName} shared feedback with you`,
+        title: anonymous ? "A colleague shared feedback with you" : `${viewer.employee.displayName} shared feedback with you`,
         body: topic ? `${topic}: ${text}` : text, link: `${PERF_PATH}?tab=feedback-received`,
         relatedType: "Feedback", relatedId: row.id,
       });

@@ -1,6 +1,7 @@
 import { prisma } from "@keka/db";
 import { goalProgress, goalHealth, weightedRating, bandFor, DEFAULT_REVIEWERS, REVIEWER_LABEL, type MetricType, type ReviewerWeight, type ReviewerType } from "./performance-math";
 import { notify } from "./lifecycle";
+import { checkFormAnswers, stageWindowProblem, type FormQuestion } from "./talent-math";
 
 /**
  * Goals and reviews. A goal's status is derived from its progress against
@@ -75,10 +76,16 @@ export async function launchCycle(cycleId: string): Promise<{ ok: boolean; messa
   if (c.status !== "DRAFT") return { ok: false, message: "This cycle is already launched." };
   if (c.bands.length === 0) return { ok: false, message: "Add rating bands before launching, so ratings can be calibrated." };
   const cutoff = new Date(c.periodEnd.getTime() - 90 * 86_400_000);
-  const emps = await prisma.employee.findMany({
-    where: { tenantId: c.tenantId, status: { notIn: ["EXITED", "PREBOARDING", "ONBOARDING"] }, dateOfJoining: { lte: cutoff } },
+  // Manual mapping: when HR has mapped participants, exactly those people are
+  // reviewed, each by the manager they were mapped to.
+  const mapped = await prisma.reviewCycleParticipant.findMany({ where: { cycleId }, select: { employeeId: true, managerId: true } });
+  const managerOverride = new Map(mapped.filter((m) => m.managerId).map((m) => [m.employeeId, m.managerId!]));
+  const emps = (await prisma.employee.findMany({
+    where: mapped.length
+      ? { tenantId: c.tenantId, id: { in: mapped.map((m) => m.employeeId) }, status: { notIn: ["EXITED"] } }
+      : { tenantId: c.tenantId, status: { notIn: ["EXITED", "PREBOARDING", "ONBOARDING"] }, dateOfJoining: { lte: cutoff } },
     select: { id: true, reportingManagerId: true, userId: true, reportingManager: { select: { reportingManagerId: true } } },
-  });
+  })).map((e) => ({ ...e, reportingManagerId: managerOverride.get(e.id) ?? e.reportingManagerId }));
   const active = await prisma.employee.findMany({ where: { tenantId: c.tenantId, status: { notIn: ["EXITED", "PREBOARDING"] } }, select: { id: true, reportingManagerId: true } });
   const reportsOf = new Map<string, string[]>();
   for (const e of active) if (e.reportingManagerId) reportsOf.set(e.reportingManagerId, [...(reportsOf.get(e.reportingManagerId) ?? []), e.id]);
@@ -176,15 +183,19 @@ export interface ResponseInput {
   strengths?: string | null;
   improvements?: string | null;
   indicatorRatings?: Array<{ indicatorId: string; rating: number; comment?: string | null }>;
+  /** Answers to the cycle's review form, keyed by question id (form-builder cycles). */
+  formAnswers?: Record<string, string | undefined>;
 }
 
 export async function submitReviewResponse(input: ResponseInput): Promise<{ ok: boolean; message: string }> {
   const review = await prisma.employeeReview.findUnique({
     where: { id: input.reviewId },
-    include: { cycle: true, responses: true, employee: { select: { reportingManagerId: true, displayName: true, userId: true } } },
+    include: { cycle: { include: { stageDates: true, formSections: { include: { questions: true } } } }, responses: true, employee: { select: { reportingManagerId: true, displayName: true, userId: true } } },
   });
   if (!review) return { ok: false, message: "Review not found." };
   if (!["IN_PROGRESS", "LAUNCHED"].includes(review.cycle.status)) return { ok: false, message: "This cycle is not accepting reviews." };
+  const windowShut = stageWindowProblem(review.cycle.stageDates, input.reviewerType);
+  if (windowShut) return { ok: false, message: windowShut };
   const slot = review.responses.find((r) => r.reviewerId === input.reviewerEmployeeId && r.reviewerType === input.reviewerType && r.status === "ACTIVE");
   if (!slot) return { ok: false, message: "You are not a reviewer on this review." };
   if (!OPEN_REVIEW.includes(review.status)) return { ok: false, message: "This review has been calibrated; feedback is closed." };
@@ -200,6 +211,9 @@ export async function submitReviewResponse(input: ResponseInput): Promise<{ ok: 
   if (input.reviewerType !== "SELF" && input.reviewerType !== "MANAGER" && !(input.strengths || input.improvements)) {
     return { ok: false, message: "Write what they do well or what they could improve." };
   }
+  const questions: FormQuestion[] = review.cycle.formSections.flatMap((sec) => sec.questions.map((q) => ({ id: q.id, kind: q.kind, prompt: q.prompt, isRequired: q.isRequired, appliesTo: Array.isArray(q.appliesTo) ? (q.appliesTo as string[]) : null })));
+  const form = checkFormAnswers(questions, input.reviewerType, input.formAnswers ?? {}, scale);
+  if (!form.ok) return { ok: false, message: form.message };
 
   // Indicator ids arrive as form keys; rate only the tenant's own indicators.
   const asked = [...new Set((input.indicatorRatings ?? []).map((r) => r.indicatorId))];
@@ -209,7 +223,7 @@ export async function submitReviewResponse(input: ResponseInput): Promise<{ ok: 
   await prisma.$transaction(async (tx) => {
     await tx.reviewResponse.update({
       where: { id: slot.id },
-      data: { overallRating: input.overallRating, strengths: input.strengths ?? null, improvements: input.improvements ?? null, submittedAt: new Date() },
+      data: { overallRating: input.overallRating, strengths: input.strengths ?? null, improvements: input.improvements ?? null, submittedAt: new Date(), ...(Object.keys(form.answers).length ? { answers: form.answers } : {}) },
     });
     for (const ir of input.indicatorRatings ?? []) {
       await tx.indicatorRating.create({ data: { reviewId: review.id, indicatorId: ir.indicatorId, reviewerId: input.reviewerEmployeeId, rating: ir.rating, comment: ir.comment ?? null } });
@@ -235,10 +249,11 @@ export async function submitReviewResponse(input: ResponseInput): Promise<{ ok: 
  * Calibration sets the final rating. Moving it from the raw rating needs a
  * reason, because that is the decision people will later ask about.
  */
-export async function calibrateReview(opts: { reviewId: string; finalRating: number; reason?: string | null; byUserId: string }): Promise<{ ok: boolean; message: string }> {
+export async function calibrateReview(opts: { reviewId: string; finalRating: number; reason?: string | null; byUserId: string; potentialRating?: number | null }): Promise<{ ok: boolean; message: string }> {
   const review = await prisma.employeeReview.findUnique({ where: { id: opts.reviewId }, include: { cycle: { include: { bands: true } } } });
   if (!review) return { ok: false, message: "Review not found." };
   if (!["PENDING_CALIBRATION", "CALIBRATED"].includes(review.status)) return { ok: false, message: "Only reviews with every response submitted can be calibrated." };
+  if (opts.potentialRating !== undefined && opts.potentialRating !== null && !(opts.potentialRating >= 1 && opts.potentialRating <= 5)) return { ok: false, message: "Rate potential from 1 to 5." };
   const raw = review.rawRating === null ? null : Number(review.rawRating);
   if (raw !== null && Math.abs(opts.finalRating - raw) > 0.001 && !opts.reason?.trim()) {
     return { ok: false, message: "Changing the rating needs a reason." };
@@ -246,7 +261,7 @@ export async function calibrateReview(opts: { reviewId: string; finalRating: num
   const band = bandFor(opts.finalRating, review.cycle.bands.map((b) => ({ id: b.id, name: b.name, minRating: Number(b.minRating), maxRating: Number(b.maxRating), targetPercent: b.targetPercent === null ? null : Number(b.targetPercent) })));
   await prisma.employeeReview.update({
     where: { id: review.id },
-    data: { finalRating: opts.finalRating, bandId: band?.id ?? null, status: "CALIBRATED", calibrationReason: opts.reason ?? null, calibratedBy: opts.byUserId, calibratedAt: new Date() },
+    data: { finalRating: opts.finalRating, bandId: band?.id ?? null, status: "CALIBRATED", calibrationReason: opts.reason ?? null, calibratedBy: opts.byUserId, calibratedAt: new Date(), ...(opts.potentialRating ? { potentialRating: opts.potentialRating } : {}) },
   });
   // Feedback still outstanding no longer counts.
   await prisma.reviewResponse.updateMany({ where: { reviewId: review.id, submittedAt: null, status: { in: ["ACTIVE", "PROPOSED"] } }, data: { status: "EXPIRED" } });
@@ -255,8 +270,10 @@ export async function calibrateReview(opts: { reviewId: string; finalRating: num
 
 /** Release calibrated reviews to employees and close the cycle. */
 export async function shareCycle(cycleId: string): Promise<{ ok: boolean; message: string }> {
-  const c = await prisma.reviewCycle.findUnique({ where: { id: cycleId }, include: { reviews: { select: { status: true } } } });
+  const c = await prisma.reviewCycle.findUnique({ where: { id: cycleId }, include: { reviews: { select: { status: true } }, stageDates: true } });
   if (!c) return { ok: false, message: "Cycle not found." };
+  const publishOn = c.stageDates?.publishOn;
+  if (publishOn && new Date().toISOString().slice(0, 10) < publishOn.toISOString().slice(0, 10)) return { ok: false, message: `Results are set to publish on ${publishOn.toISOString().slice(0, 10)}.` };
   const open = c.reviews.filter((r) => !["CALIBRATED", "SHARED", "ACKNOWLEDGED"].includes(r.status)).length;
   if (open > 0) return { ok: false, message: `${open} review(s) are not calibrated yet.` };
   const shared = await prisma.employeeReview.updateMany({ where: { cycleId, status: "CALIBRATED" }, data: { status: "SHARED", sharedAt: new Date() } });

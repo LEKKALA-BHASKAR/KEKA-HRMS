@@ -208,7 +208,9 @@ export async function submitReviewAction(_prev: ActionState, formData: FormData)
     .filter(([k, v]) => k.startsWith("indicator:") && String(v))
     .map(([k, v]) => ({ indicatorId: k.slice("indicator:".length), rating: Number(v) }))
     .filter((r) => r.rating >= 1 && r.rating <= 5);
-  const r = await submitReviewResponse({ ...parsed.data, reviewerEmployeeId: viewer.employee.id, indicatorRatings });
+  // Answers to the cycle's review form arrive as q:<questionId>.
+  const formAnswers = Object.fromEntries([...formData.entries()].filter(([k]) => k.startsWith("q:")).map(([k, v]) => [k.slice(2), String(v)]));
+  const r = await submitReviewResponse({ ...parsed.data, reviewerEmployeeId: viewer.employee.id, indicatorRatings, formAnswers });
   return r.ok ? done([...PERF, `/performance/reviews/${parsed.data.reviewId}`, "/inbox"], r.message) : { ok: false, message: r.message };
 }
 
@@ -238,7 +240,8 @@ export async function calibrateAction(_prev: ActionState, formData: FormData): P
   const t = await targetOf(viewer, review.employeeId);
   if (!t || !canAccessEmployee(viewer, t, P.PERFORMANCE_CALIBRATE)) return { ok: false, message: "This review is outside your scope." };
   const finalRating = Number(formData.get("finalRating"));
-  const r = await calibrateReview({ reviewId, finalRating, reason: String(formData.get("reason") ?? "") || null, byUserId: viewer.user.id });
+  const potentialRaw = String(formData.get("potentialRating") ?? "");
+  const r = await calibrateReview({ reviewId, finalRating, reason: String(formData.get("reason") ?? "") || null, byUserId: viewer.user.id, potentialRating: potentialRaw ? Number(potentialRaw) : null });
   if (r.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "EmployeeReview", entityId: reviewId, summary: `Calibrated ${t.displayName}: ${r.message}` });
   return r.ok ? done([`/performance/cycles/${review.cycleId}`, `/performance/reviews/${reviewId}`], r.message) : { ok: false, message: r.message };
 }

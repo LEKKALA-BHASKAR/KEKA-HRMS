@@ -249,6 +249,12 @@ model Candidate {
   /// Set once hired and converted.
   convertedEmployeeId String? @unique
 
+  // --- Talent depth (28-talent-depth) ---
+  /// Highest qualification, free text — feeds the profile score.
+  education   String?
+  talentPools TalentPoolMember[]
+  eeo         CandidateEeo?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -306,6 +312,10 @@ model Application {
   interviews   Interview[]
   offer        Offer?
   notes        CandidateNote[]
+
+  // --- Talent depth (28-talent-depth) ---
+  slotOffers InterviewSlotOffer[]
+  internal   InternalApplication?
 
   @@unique([jobId, candidateId])
   @@index([tenantId, status])
