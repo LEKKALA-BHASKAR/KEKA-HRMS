@@ -42,7 +42,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     headers: {
       "Content-Type": file.mimeType,
       // ?inline=1 shows a PDF in the browser (the résumé preview); anything else always downloads.
-      "Content-Disposition": `${req.nextUrl.searchParams.get("inline") === "1" && file.mimeType === "application/pdf" ? "inline" : "attachment"}; filename="${file.filename.replace(/"/g, "")}"`,
+      "Content-Disposition": `${new URL(req.url).searchParams.get("inline") === "1" && file.mimeType === "application/pdf" ? "inline" : "attachment"}; filename="${file.filename.replace(/"/g, "")}"`,
       "Content-Length": String(data.length),
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
