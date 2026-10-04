@@ -1,13 +1,15 @@
 import Link from "next/link";
-import { prisma, type Prisma } from "@keka/db";
 import { requireViewer } from "@/lib/context";
-import { directoryWhere, DIRECTORY_SELECT, nameOf } from "@/lib/directory";
+import { nameOf } from "@/lib/directory";
+import { loadDirectory } from "@/lib/directory-search";
 import { SubTabs } from "@/components/subtabs";
 import { Avatar } from "@/components/avatar";
 import { EmptyState } from "@/components/keka";
 import { IconUsers } from "@/components/icons";
+import { SpecForm, ActionButton } from "@/components/spec-form";
+import { saveDirectorySearchAction, deleteDirectorySearchAction, clearDirectoryHistoryAction } from "@/app/actions/hr-ops";
 import { DIRECTORY_TABS } from "./tabs";
-import { DirectoryFilters, type FilterDef } from "./filters";
+import { DirectoryFilters } from "./filters";
 import { CardMenu } from "./card-menu";
 import s from "./directory.module.css";
 
@@ -16,82 +18,24 @@ export const metadata = { title: "Employee Directory — BooS-HR" };
 const PAGE_SIZE = 60;
 const MAX_SHOWN = 3000;
 
-/** A card needs every directory field except the free-text "about me". */
-const { aboutMe: _about, ...CARD_SELECT } = DIRECTORY_SELECT;
-
-/** URL key → the employee column it filters and the label on the dropdown. */
-const FILTERS = [
-  { key: "bu", label: "Business Unit", column: "businessUnitId" },
-  { key: "dept", label: "Department", column: "departmentId" },
-  { key: "loc", label: "Location", column: "locationId" },
-  { key: "cc", label: "Cost Center", column: "costCenterId" },
-  { key: "le", label: "Legal Entity", column: "legalEntityId" },
-] as const;
-type FilterKey = (typeof FILTERS)[number]["key"];
-
 type Params = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (typeof v === "string" ? v.trim() : "");
 
+/**
+ * The employee directory: search by name, title, email, number or skill;
+ * filter by unit, manager (dotted line included), employment type, tenure,
+ * skill, team, division or today's shift; save searches; export what you
+ * see. The company's visibility settings decide who appears.
+ */
 export default async function DirectoryPage({ searchParams }: { searchParams: Promise<Params> }) {
   const viewer = await requireViewer();
-  const tenantId = viewer.tenantId;
   const sp = await searchParams;
-
-  const selected = Object.fromEntries(FILTERS.map((f) => [f.key, one(sp[f.key]).slice(0, 64)])) as Record<FilterKey, string>;
-  const q = one(sp.q).slice(0, 100);
   const requested = Number.parseInt(one(sp.show), 10);
   const show = Number.isFinite(requested) ? Math.min(MAX_SHOWN, Math.max(PAGE_SIZE, requested)) : PAGE_SIZE;
-
-  // Every word of the search must match one of the card's fields.
-  const words = q.split(/\s+/).filter(Boolean).slice(0, 5);
-  const text = (w: string) => ({ contains: w, mode: "insensitive" as const });
-  const where: Prisma.EmployeeWhereInput = {
-    ...directoryWhere(tenantId),
-    ...Object.fromEntries(FILTERS.filter((f) => selected[f.key]).map((f) => [f.column, selected[f.key]])),
-    ...(words.length
-      ? {
-          AND: words.map((w) => ({
-            OR: [
-              { firstName: text(w) }, { lastName: text(w) }, { displayName: text(w) },
-              { workEmail: text(w) }, { jobTitleName: text(w) }, { employeeNumber: text(w) },
-            ],
-          })),
-        }
-      : {}),
-  };
-
-  // Dropdown options: only units that have someone in the directory, plus
-  // whatever is currently selected so the dropdown can still show it.
-  const has = (key: FilterKey) => ({
-    tenantId,
-    OR: [{ employees: { some: directoryWhere(tenantId) } }, ...(selected[key] ? [{ id: selected[key] }] : [])],
-  });
-  const opt = { select: { id: true, name: true }, orderBy: { name: "asc" as const } };
-
-  const [people, matched, bus, depts, locs, ccs, les] = await Promise.all([
-    prisma.employee.findMany({
-      where, select: CARD_SELECT, take: show,
-      orderBy: [{ firstName: "asc" }, { lastName: "asc" }, { id: "asc" }],
-    }),
-    prisma.employee.count({ where }),
-    prisma.businessUnit.findMany({ where: has("bu"), ...opt }),
-    prisma.department.findMany({ where: has("dept"), ...opt }),
-    prisma.location.findMany({ where: has("loc"), ...opt }),
-    prisma.costCenter.findMany({ where: has("cc"), ...opt }),
-    prisma.legalEntity.findMany({ where: has("le"), ...opt }),
-  ]);
-
-  const options: Record<FilterKey, Array<{ id: string; name: string }>> = { bu: bus, dept: depts, loc: locs, cc: ccs, le: les };
-  const filters: FilterDef[] = FILTERS.map((f) => ({ key: f.key, label: f.label, value: selected[f.key], options: options[f.key] }));
-  const filtered = !!q || FILTERS.some((f) => selected[f.key]);
-
-  const moreHref = (() => {
-    const p = new URLSearchParams();
-    for (const f of FILTERS) if (selected[f.key]) p.set(f.key, selected[f.key]);
-    if (q) p.set("q", q);
-    p.set("show", String(show + PAGE_SIZE));
-    return `/directory?${p}`;
-  })();
+  const d = await loadDirectory(viewer, sp, { show, log: show === PAGE_SIZE });
+  const { people, matched, filters, filtered, query } = d;
+  const q = d.params.q;
+  const moreHref = `/directory?${query ? `${query}&` : ""}show=${show + PAGE_SIZE}`;
 
   return (
     <>
@@ -101,8 +45,26 @@ export default async function DirectoryPage({ searchParams }: { searchParams: Pr
       <div className={s.filterPanel}>
         <DirectoryFilters filters={filters} q={q} filtered={filtered} />
         <div className={s.showing} aria-live="polite">
-          Showing {people.length} of {matched}
+          Showing {people.length} of {matched} · <a href={`/exports/core-hr/directory${query ? `?${query}` : ""}`}>Export CSV</a>
         </div>
+      </div>
+
+      <div className="row gap-2 wrap" style={{ margin: "10px 0", alignItems: "center" }}>
+        {d.saved.length ? <span className="text-xs muted">Saved:</span> : null}
+        {d.saved.map((x) => (
+          <span key={x.id} className="row gap-1" style={{ alignItems: "center" }}>
+            <Link className="btn sm" href={`/directory?${x.query}`}>{x.name}</Link>
+            <ActionButton action={deleteDirectorySearchAction} hidden={{ id: x.id }} label="×" />
+          </span>
+        ))}
+        {d.recent.length ? <span className="text-xs muted" style={{ marginLeft: 8 }}>Recent:</span> : null}
+        {d.recent.map((r) => <Link key={r.id} className="btn ghost sm" href={`/directory?${r.query}`}>{decodeURIComponent(r.query.replace(/\+/g, " ")).slice(0, 40)}</Link>)}
+        {d.recent.length ? <ActionButton action={clearDirectoryHistoryAction} hidden={{}} label="Clear history" /> : null}
+        {filtered ? (
+          <div style={{ marginLeft: "auto" }}>
+            <SpecForm compact action={saveDirectorySearchAction} hidden={{ query }} submitLabel="Save this search" fields={[{ name: "name", label: "Name", required: true, placeholder: "e.g. Bengaluru engineers" }]} />
+          </div>
+        ) : null}
       </div>
 
       {people.length === 0 ? (

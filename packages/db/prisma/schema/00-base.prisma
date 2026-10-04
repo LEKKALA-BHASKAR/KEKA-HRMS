@@ -326,6 +326,26 @@ model Tenant {
   proficiencyScales    ProficiencyScale[]
   skillAssessmentLogs  SkillAssessmentLog[]
   feedbackTemplates    FeedbackTemplate[]
+  // --- Core HR depth (32-core-hr-depth) ---
+  companyProfile             CompanyProfile?
+  fiscalYears                FiscalYear[]
+  workingRules               WorkingRules?
+  changeApprovalSettings     ChangeApprovalSetting[]
+  recordChangeRequests       RecordChangeRequest[]
+  divisions                  Division[]
+  orgTeams                   OrgTeam[]
+  secondaryManagers          SecondaryManager[]
+  managerDelegations         ManagerDelegation[]
+  documentRequestTypes       DocumentRequestType[]
+  selfServiceDocRequests     SelfServiceDocumentRequest[]
+  massUpdateBatches          MassUpdateBatch[]
+  hrChecklistTemplates       HrChecklistTemplate[]
+  hrChecklists               HrChecklist[]
+  employeeInternalNotes      EmployeeInternalNote[]
+  employeeIdCards            EmployeeIdCard[]
+  directorySavedSearches     DirectorySavedSearch[]
+  directorySearchLogs        DirectorySearchLog[]
+  employeeAddressHistory     EmployeeAddressHistory[]
 
   @@index([subdomain])
   @@map("tenants")

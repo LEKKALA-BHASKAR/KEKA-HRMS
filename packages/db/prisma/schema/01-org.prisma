@@ -135,6 +135,8 @@ model Department {
   /// Derives the implicit Department Head role.
   headId      String?
   head        Employee? @relation("DepartmentHead", fields: [headId], references: [id], onDelete: SetNull)
+  /// Division (32-core-hr-depth) the department sits in, if any.
+  divisionId  String?
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())

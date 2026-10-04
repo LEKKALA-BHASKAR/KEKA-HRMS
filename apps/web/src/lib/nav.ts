@@ -115,6 +115,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         on("helpdesk") && { label: "Helpdesk", href: "/me/helpdesk" },
         { label: "Apps", href: "/me/apps", paths: ["/me/apps", "/me/assets"] },
         { label: "Requests", href: "/me/requests" },
+        { label: "My details", href: "/me/changes", paths: ["/me/changes", "/me/id-card", "/verify"] },
         { label: "Policies", href: "/me/policies" },
       ]),
     });
@@ -142,6 +143,8 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         { label: "Summary", href: "/team", paths: ["/team"] },
         isManager && can(viewer, P.LEAVE_APPROVE) && { label: "Leave", href: "/team/leave", count: counts.leave },
         isManager && can(viewer, P.ATTENDANCE_APPROVE) && { label: "Attendance", href: "/team/attendance", count: counts.attendance },
+        isManager && { label: "Dashboard", href: "/team/dashboard" },
+        isManager && { label: "Delegation", href: "/team/delegation" },
       ]),
     });
     if (on("payroll")) sections.push({
@@ -174,6 +177,8 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
       can(viewer, P.POSITION_VIEW) && { label: "Positions", href: "/positions" },
       can(viewer, P.WORKFORCE_PLAN_VIEW) && { label: "Workforce Planning", href: "/workforce-planning" },
       can(viewer, P.CONTINGENT_VIEW) && { label: "Contingent Workforce", href: "/contingent" },
+      canAny(viewer, [P.EMPLOYEE_UPDATE, P.LETTER_GENERATE]) && { label: "HR Operations", href: "/hr-ops" },
+      canAny(viewer, [P.EMPLOYEE_UPDATE, P.ORG_MANAGE, P.ORG_SETTINGS_MANAGE]) && { label: "Change Requests", href: "/admin/change-requests" },
       can(viewer, P.ONBOARDING_VIEW) && { label: "Onboarding", href: "/onboarding" },
       can(viewer, P.PROBATION_MANAGE) && { label: "Probation", href: "/probation", count: counts.probation },
       canAny(viewer, [P.EXIT_MANAGE, P.EXIT_APPROVE, P.FNF_MANAGE]) && { label: "Exits", href: "/exits", count: counts.exits },
@@ -346,6 +351,9 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     me && { label: "Log work hours", href: "/me/work-log", keywords: "work log timesheet hours daily" },
     canAny(viewer, [P.LEAVE_MANAGE, P.LEAVE_APPROVE]) && { label: "Encash leave for an employee", href: "/time/settings?tab=encash", keywords: "leave encashment on behalf" },
     can(viewer, P.ATTENDANCE_MANAGE) && { label: "Attendance kiosks", href: "/time/settings?tab=kiosks", keywords: "kiosk punch pin tablet" },
+    me && { label: "Update my details", href: "/me/changes", keywords: "profile change bank address dependent contact" },
+    me && { label: "Request a letter", href: "/me/changes?tab=documents", keywords: "salary certificate noc letter address proof" },
+    me && { label: "My ID card", href: "/me/id-card", keywords: "id card badge identity" },
     me && { label: "View my payslips", href: "/finances/pay/payslips", keywords: "salary payslip pay slip" },
     me && { label: "Declare investments", href: "/finances/tax", keywords: "tax declaration 80c regime" },
     me && { label: "Claim a reimbursement", href: "/finances/pay/component-claims", keywords: "fbp reimbursement claim fuel telephone" },

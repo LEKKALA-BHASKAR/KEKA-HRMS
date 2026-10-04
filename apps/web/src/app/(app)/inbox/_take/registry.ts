@@ -5,6 +5,7 @@ import { coreSources } from "./sources";
 import { jobChangeSources } from "./job-changes";
 import { talentSources } from "./talent";
 import { workflowSources } from "./workflows";
+import { changeRequestSources } from "./change-requests";
 import type { SourceFactory, TakeSource } from "./types";
 
 /**
@@ -17,6 +18,7 @@ export const SOURCE_FACTORIES: SourceFactory[] = [
   timeSources,
   coreSources,
   jobChangeSources,
+  changeRequestSources,
   talentSources,
   workflowSources,
 ];

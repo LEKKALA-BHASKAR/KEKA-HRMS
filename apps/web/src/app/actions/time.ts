@@ -6,7 +6,7 @@ import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import {
   applyLeave, previewLeave, decideLeave, cancelLeave, adjustBalance, runAccrual,
   recordPunch, raiseAttendanceRequest, decideAttendanceRequest, processAttendance,
-  notifyTimeRequest, lapseExpiredCompOffs, runLeaveYearEnd,
+  notifyTimeRequest, lapseExpiredCompOffs, runLeaveYearEnd, parseSteps, actingForIds,
 } from "@keka/services";
 import { formatDate } from "@keka/shared";
 import { foreignReference } from "@/lib/ownership";
@@ -145,7 +145,14 @@ export async function decideLeaveAction(_prev: ActionState, formData: FormData):
   if (request.employeeId === viewer.employee?.id) {
     return { ok: false, message: "You cannot approve your own leave." };
   }
-  if (!(await reaches(viewer, request.employeeId, P.LEAVE_APPROVE))) {
+  // A chain level can name someone outside the reporting line (a dotted-line
+  // manager); while it is their level they may decide it — as may anyone
+  // they have delegated their approvals to for today.
+  const steps = parseSteps(request.approvalSteps);
+  const current = steps?.[request.approvalLevel];
+  const namedApprover = !!viewer.employee && !!current && current.status === "PENDING" && !!current.approverId
+    && (current.approverId === viewer.employee.id || (await actingForIds(viewer.tenantId, viewer.employee.id)).includes(current.approverId));
+  if (!namedApprover && !(await reaches(viewer, request.employeeId, P.LEAVE_APPROVE))) {
     return { ok: false, message: "This request is outside the employees your roles reach." };
   }
   if (decision === "REJECT" && !note) {
@@ -153,7 +160,10 @@ export async function decideLeaveAction(_prev: ActionState, formData: FormData):
   }
 
   try {
-    const res = await decideLeave({ requestId, decision, approverEmployeeId: viewer.employee?.id, note, actor: await leaveActor(viewer, request.employeeId) });
+    const actor = await leaveActor(viewer, request.employeeId);
+    // A delegate decides the level in the name of the manager who delegated it.
+    if (namedApprover && current?.approverId && current.approverId !== viewer.employee?.id) actor.employeeId = current.approverId;
+    const res = await decideLeave({ requestId, decision, approverEmployeeId: viewer.employee?.id, note, actor });
     if (!res.ok) return { ok: false, message: res.message };
     await writeAudit(viewer, {
       module: "LEAVE", action: decision === "APPROVE" ? "APPROVE" : "REJECT",

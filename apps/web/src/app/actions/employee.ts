@@ -638,18 +638,28 @@ export async function saveAddress(_prev: ActionState, formData: FormData): Promi
   if (parsed.state) return parsed.state;
   const { employeeId, type, ...rest } = parsed.data;
 
-  const { denied } = await assertEmployeeAccess(
+  const { viewer, denied } = await assertEmployeeAccess(
     requireAuth(P.EMPLOYEE_UPDATE), employeeId, P.EMPLOYEE_UPDATE,
   );
   if (denied) return { ok: false, message: denied };
 
   try {
+    // Keep what the address was, so its history can be shown.
+    const before = await prisma.employeeAddress.findUnique({ where: { employeeId_type: { employeeId, type } } });
+    if (before && (before.line1 !== rest.line1 || before.city !== rest.city || before.postalCode !== rest.postalCode || before.line2 !== rest.line2)) {
+      await prisma.employeeAddressHistory.create({ data: { tenantId: viewer.tenantId, employeeId, type, line1: before.line1, line2: before.line2, city: before.city, state: before.state, postalCode: before.postalCode, changedBy: viewer.user.id } });
+    }
     await prisma.employeeAddress.upsert({
       where: { employeeId_type: { employeeId, type } },
       create: { employeeId, type, ...rest },
       update: rest,
     });
     await recomputeCompletion(employeeId);
+    await writeAudit(viewer, {
+      module: "EMPLOYEE", action: before ? "UPDATE" : "CREATE", entityType: "EmployeeAddress", entityId: employeeId,
+      summary: `Saved the ${type.toLowerCase()} address`, oldValue: before ? { line1: before.line1, city: before.city, postalCode: before.postalCode } : null,
+      newValue: { line1: rest.line1, city: rest.city, postalCode: rest.postalCode },
+    });
     return done([`/employees/${employeeId}`], `Saved the ${type.toLowerCase()} address.`);
   } catch (err) {
     return toErrorState(err, parsed.data as never);
@@ -772,6 +782,7 @@ export async function saveEmployeeBank(_prev: ActionState, formData: FormData): 
 }
 
 const educationSchema = z.object({
+  id: zOptionalId(),
   employeeId: zId(),
   institution: zName(160),
   degree: zOptional(120),
@@ -784,18 +795,29 @@ const educationSchema = z.object({
 export async function addEducation(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const parsed = parseForm(educationSchema, formData);
   if (parsed.state) return parsed.state;
-  const { employeeId, ...rest } = parsed.data;
-  const { denied } = await assertEmployeeAccess(
+  const { employeeId, id, ...rest } = parsed.data;
+  const { viewer, denied } = await assertEmployeeAccess(
     requireAuth(P.EMPLOYEE_UPDATE), employeeId, P.EMPLOYEE_UPDATE,
   );
   if (denied) return { ok: false, message: denied };
+  if (rest.fromYear !== null && rest.toYear !== null && rest.toYear < rest.fromYear) {
+    return { ok: false, message: "It ends before it starts.", errors: { toYear: "Before the start" } };
+  }
   try {
-    await prisma.employeeEducation.create({ data: { employeeId, ...rest } });
-    return done([`/employees/${employeeId}`], "Added the qualification.");
+    if (id) {
+      const u = await prisma.employeeEducation.updateMany({ where: { id, employeeId }, data: rest });
+      if (!u.count) return { ok: false, message: "Qualification not found." };
+    } else {
+      await prisma.employeeEducation.create({ data: { employeeId, ...rest } });
+    }
+    await recomputeCompletion(employeeId);
+    await writeAudit(viewer, { module: "EMPLOYEE", action: id ? "UPDATE" : "CREATE", entityType: "EmployeeEducation", entityId: id ?? employeeId, summary: `${id ? "Updated" : "Added"} a qualification (${rest.institution})` });
+    return done([`/employees/${employeeId}`], id ? "Saved the qualification." : "Added the qualification.");
   } catch (err) { return toErrorState(err, parsed.data as never); }
 }
 
 const experienceSchema = z.object({
+  id: zOptionalId(),
   employeeId: zId(),
   companyName: zName(160),
   jobTitle: zOptional(120),
@@ -807,14 +829,24 @@ const experienceSchema = z.object({
 export async function addExperience(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const parsed = parseForm(experienceSchema, formData);
   if (parsed.state) return parsed.state;
-  const { employeeId, ...rest } = parsed.data;
-  const { denied } = await assertEmployeeAccess(
+  const { employeeId, id, ...rest } = parsed.data;
+  const { viewer, denied } = await assertEmployeeAccess(
     requireAuth(P.EMPLOYEE_UPDATE), employeeId, P.EMPLOYEE_UPDATE,
   );
   if (denied) return { ok: false, message: denied };
+  if (rest.fromDate && rest.toDate && rest.toDate < rest.fromDate) {
+    return { ok: false, message: "It ends before it starts.", errors: { toDate: "Before the start" } };
+  }
   try {
-    await prisma.employeeExperience.create({ data: { employeeId, ...rest } });
-    return done([`/employees/${employeeId}`], "Added the prior role.");
+    if (id) {
+      const u = await prisma.employeeExperience.updateMany({ where: { id, employeeId }, data: rest });
+      if (!u.count) return { ok: false, message: "Prior role not found." };
+    } else {
+      await prisma.employeeExperience.create({ data: { employeeId, ...rest } });
+    }
+    await recomputeCompletion(employeeId);
+    await writeAudit(viewer, { module: "EMPLOYEE", action: id ? "UPDATE" : "CREATE", entityType: "EmployeeExperience", entityId: id ?? employeeId, summary: `${id ? "Updated" : "Added"} a prior role (${rest.companyName})` });
+    return done([`/employees/${employeeId}`], id ? "Saved the prior role." : "Added the prior role.");
   } catch (err) { return toErrorState(err, parsed.data as never); }
 }
 
@@ -830,12 +862,17 @@ export async function addDependent(_prev: ActionState, formData: FormData): Prom
   const parsed = parseForm(dependentSchema, formData);
   if (parsed.state) return parsed.state;
   const { employeeId, ...rest } = parsed.data;
-  const { denied } = await assertEmployeeAccess(
+  const { viewer, denied } = await assertEmployeeAccess(
     requireAuth(P.EMPLOYEE_UPDATE), employeeId, P.EMPLOYEE_UPDATE,
   );
   if (denied) return { ok: false, message: denied };
+  if (rest.dateOfBirth && rest.dateOfBirth > new Date()) {
+    return { ok: false, message: "The date of birth is in the future.", errors: { dateOfBirth: "In the future" } };
+  }
   try {
-    await prisma.dependent.create({ data: { employeeId, ...rest } });
+    const row = await prisma.dependent.create({ data: { employeeId, ...rest } });
+    await recomputeCompletion(employeeId);
+    await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Dependent", entityId: row.id, summary: `Added a dependent (${rest.relationship})${rest.isNominee ? " as nominee" : ""}` });
     return done([`/employees/${employeeId}`], "Added the dependent.");
   } catch (err) { return toErrorState(err, parsed.data as never); }
 }
@@ -853,12 +890,19 @@ export async function addEmergencyContact(_prev: ActionState, formData: FormData
   const parsed = parseForm(emergencySchema, formData);
   if (parsed.state) return parsed.state;
   const { employeeId, ...rest } = parsed.data;
-  const { denied } = await assertEmployeeAccess(
+  const { viewer, denied } = await assertEmployeeAccess(
     requireAuth(P.EMPLOYEE_UPDATE), employeeId, P.EMPLOYEE_UPDATE,
   );
   if (denied) return { ok: false, message: denied };
+  if (!/^\+?[0-9 -]{7,20}$/.test(rest.phone)) {
+    return { ok: false, message: "Enter a phone number of 7 to 20 digits.", errors: { phone: "Not a phone number" } };
+  }
   try {
-    await prisma.emergencyContact.create({ data: { employeeId, ...rest } });
+    // One primary contact: a new primary replaces the old one.
+    if (rest.isPrimary) await prisma.emergencyContact.updateMany({ where: { employeeId }, data: { isPrimary: false } });
+    const row = await prisma.emergencyContact.create({ data: { employeeId, ...rest } });
+    await recomputeCompletion(employeeId);
+    await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "EmergencyContact", entityId: row.id, summary: `Added an emergency contact (${rest.relationship})${rest.isPrimary ? " as primary" : ""}` });
     return done([`/employees/${employeeId}`], "Added the emergency contact.");
   } catch (err) { return toErrorState(err, parsed.data as never); }
 }
@@ -873,6 +917,11 @@ export async function deleteSubRecord(_prev: ActionState, formData: FormData): P
     Promise.resolve(viewer) as never, employeeId, P.EMPLOYEE_UPDATE,
   );
   if (denied) return { ok: false, message: denied };
+  // Bank accounts are financial records: the financials permission, as for adding one.
+  if (kind === "bank") {
+    const fin = await assertEmployeeAccess(Promise.resolve(viewer) as never, employeeId, P.EMPLOYEE_MANAGE_FINANCIALS);
+    if (fin.denied) return { ok: false, message: fin.denied };
+  }
 
   const deleters: Record<string, () => Promise<unknown>> = {
     address: () => prisma.employeeAddress.deleteMany({ where: { id, employeeId } }),
@@ -887,8 +936,10 @@ export async function deleteSubRecord(_prev: ActionState, formData: FormData): P
   if (!fn) return { ok: false, message: "Unknown record type" };
   // A legal hold (Admin › Compliance) freezes the person's records.
   if (await employeeOnHold(viewer.tenantId, employeeId)) return { ok: false, message: "This employee's records are under a legal hold and cannot be deleted." };
-  await fn();
+  const removed = await fn() as { count: number };
+  if (!removed.count) return { ok: false, message: "That record was not found." };
   await recomputeCompletion(employeeId);
+  await writeAudit(viewer, { module: "EMPLOYEE", action: "DELETE", entityType: `Employee ${kind}`, entityId: id, summary: `Removed a ${kind} record` });
   return done([`/employees/${employeeId}`], "Removed.");
 }
 

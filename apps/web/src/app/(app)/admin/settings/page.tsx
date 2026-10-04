@@ -39,6 +39,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       <div className="tabs">
         {tabs.map((t) => <Link key={t} href={`/admin/settings?tab=${t}`} className={`tab${tab === t ? " active" : ""}`}>{TABS[t]}</Link>)}
         {canAny(viewer, [P.API_KEY_MANAGE, P.ATTENDANCE_MANAGE]) ? <Link href="/admin/integrations" className="tab">Integrations</Link> : null}
+        {can(viewer, P.ORG_SETTINGS_MANAGE) ? <Link href="/admin/company" className="tab">Company, fiscal years & rules</Link> : null}
       </div>
       {tab === "org" ? <Org tenantId={viewer.tenantId} /> : null}
       {tab === "fields" ? <Fields tenantId={viewer.tenantId} /> : null}

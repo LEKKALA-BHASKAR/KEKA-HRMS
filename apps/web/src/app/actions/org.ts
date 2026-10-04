@@ -128,7 +128,8 @@ export async function addSignatory(_prev: ActionState, formData: FormData): Prom
   if (!entity) return { ok: false, message: "Legal entity not found" };
 
   try {
-    await prisma.authorisedSignatory.create({ data: parsed.data });
+    const sig = await prisma.authorisedSignatory.create({ data: parsed.data });
+    await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "AuthorisedSignatory", entityId: sig.id, summary: `Added ${parsed.data.name} as a signatory of ${entity.name}` });
     return done(["/org"], `Added ${parsed.data.name} as a signatory.`);
   } catch (err) {
     return toErrorState(err);
@@ -145,6 +146,7 @@ export async function deleteSignatory(_prev: ActionState, formData: FormData): P
     return { ok: false, message: "Signatory not found" };
   }
   await prisma.authorisedSignatory.delete({ where: { id } });
+  await writeAudit(viewer, { module: "EMPLOYEE", action: "DELETE", entityType: "AuthorisedSignatory", entityId: id, summary: `Removed signatory ${sig.name}` });
   return done(["/org"], `Removed ${sig.name}.`);
 }
 
@@ -184,6 +186,7 @@ export async function addEntityBankAccount(_prev: ActionState, formData: FormDat
         data: { ...parsed.data, ifsc: parsed.data.ifsc as string },
       });
     });
+    await writeAudit(viewer, { module: "FINANCE", action: "CREATE", entityType: "EntityBankAccount", entityId: entity.id, summary: `Added ${parsed.data.bankName} account ••••${parsed.data.accountNumber.slice(-4)} to ${entity.name}` });
     return done(["/org"], `Added ${parsed.data.bankName}.`);
   } catch (err) {
     return toErrorState(err);
@@ -428,11 +431,17 @@ export async function saveCostCentre(_prev: ActionState, formData: FormData): Pr
   const { id, ...data } = parsed.data;
   try {
     if (id) {
-      const u = await prisma.costCenter.updateMany({ where: { id, tenantId: viewer.tenantId }, data });
-      if (u.count === 0) return { ok: false, message: "Cost centre not found" };
+      const before = await prisma.costCenter.findFirst({ where: { id, tenantId: viewer.tenantId } });
+      if (!before) return { ok: false, message: "Cost centre not found" };
+      await prisma.costCenter.update({ where: { id }, data });
+      await writeAudit(viewer, {
+        module: "EMPLOYEE", action: "UPDATE", entityType: "CostCenter", entityId: id,
+        summary: `Updated cost centre ${data.name}`, oldValue: { name: before.name, code: before.code }, newValue: data,
+      });
       return done(["/org"], `Saved ${data.name}.`);
     }
-    await prisma.costCenter.create({ data: { ...data, tenantId: viewer.tenantId } });
+    const created = await prisma.costCenter.create({ data: { ...data, tenantId: viewer.tenantId } });
+    await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "CostCenter", entityId: created.id, summary: `Created cost centre ${data.name}` });
     return done(["/org"], `Created ${data.name}.`);
   } catch (err) { return toErrorState(err, parsed.data as never); }
 }

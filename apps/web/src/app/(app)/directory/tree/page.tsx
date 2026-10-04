@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@keka/db";
 import { requireViewer } from "@/lib/context";
 import { directoryWhere, DIRECTORY_SELECT, nameOf } from "@/lib/directory";
+import { directoryVisibilityWhere } from "@/lib/core-hr";
 import { SubTabs } from "@/components/subtabs";
 import { EmptyState } from "@/components/keka";
 import { IconUsers } from "@/components/icons";
@@ -23,7 +24,8 @@ export default async function OrgTreePage({ searchParams }: { searchParams: Prom
   // One light query for the whole directory: a few hundred rows of short
   // strings. The client renders only the levels someone has opened.
   const rows = await prisma.employee.findMany({
-    where: directoryWhere(viewer.tenantId),
+    // The company's visibility settings apply to the tree as to the directory.
+    where: { AND: [directoryWhere(viewer.tenantId), await directoryVisibilityWhere(viewer)] },
     select: NODE_SELECT,
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }, { id: "asc" }],
   });

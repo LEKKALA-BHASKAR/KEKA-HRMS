@@ -91,3 +91,5 @@ export * from "./time-leave-depth";
 export * from "./talent";
 export * from "./workforce-math";
 export * from "./workforce";
+export * from "./core-hr-depth-math";
+export * from "./core-hr-depth";

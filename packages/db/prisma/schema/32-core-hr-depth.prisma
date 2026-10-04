@@ -1,0 +1,498 @@
+// ============================================================================
+//  BooS-HR — Core HR depth: company profile and fiscal years, working rules,
+//  the generic change request (config, org, profile and data corrections,
+//  each decided by someone other than the requester), divisions and teams,
+//  dotted-line managers and approval delegation, self-service document
+//  requests, mass updates, HR checklists, internal profile notes, digital ID
+//  cards, and saved directory searches.
+//
+//  Every model carries tenantId with a cascading Tenant relation, so removing
+//  a company removes all of it. Employee and user references are plain id
+//  columns (like the other cross-area logs) and are always read through a
+//  tenant-filtered query.
+// ============================================================================
+
+/// Company profile beyond the tenant's name: what letters, ID cards and the
+/// careers pages print. One per tenant.
+model CompanyProfile {
+  id                String   @id @default(cuid())
+  tenantId          String   @unique
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  legalName         String?
+  brandName         String?
+  industry          String?
+  website           String?
+  email             String?
+  phone             String?
+  addressLine1      String?
+  addressLine2      String?
+  city              String?
+  state             String?
+  postalCode        String?
+  countryCode       String   @default("IN")
+  foundedYear       Int?
+  about             String?
+  /// Accent colour for ID cards and printed documents.
+  brandColor        String   @default("#1266a8")
+  /// en-IN | en-US | en-GB: how dates and numbers are shown on printed documents.
+  locale            String   @default("en-IN")
+  dateFormat        String   @default("DD/MM/YYYY")
+  updatedBy         String?
+  updatedAt         DateTime @updatedAt
+
+  @@map("company_profiles")
+}
+
+/// A financial (or other) year the company runs on. Calendar sets let one
+/// company keep a statutory year alongside, say, a leave or reporting year.
+model FiscalYear {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  /// STATUTORY | REPORTING | LEAVE | PERFORMANCE
+  calendarSet String   @default("STATUTORY")
+  startDate   DateTime
+  endDate     DateTime
+  /// OPEN | CLOSED
+  status      String   @default("OPEN")
+  isCurrent   Boolean  @default(false)
+  note        String?
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, calendarSet, name])
+  @@index([tenantId, calendarSet, startDate])
+  @@map("fiscal_years")
+}
+
+/// Company-wide working rules: the working week and standard hours that
+/// policies, the manager dashboard and tenure maths read. One per tenant.
+model WorkingRules {
+  id                     String   @id @default(cuid())
+  tenantId               String   @unique
+  tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// MON..SUN
+  workDays               String[] @default(["MON", "TUE", "WED", "THU", "FRI"])
+  weekStartsOn           String   @default("MON")
+  standardHoursPerDay    Decimal  @default(8) @db.Decimal(4, 2)
+  standardHoursPerWeek   Decimal  @default(40) @db.Decimal(5, 2)
+  halfDayMinHours        Decimal  @default(4) @db.Decimal(4, 2)
+  maxConsecutiveWorkDays Int      @default(6)
+  /// Hours after which a day counts towards overtime.
+  overtimeAfterHours     Decimal  @default(9) @db.Decimal(4, 2)
+  /// Span of control above which a manager is flagged on the dashboards.
+  maxSpanOfControl       Int      @default(12)
+  updatedBy              String?
+  updatedAt              DateTime @updatedAt
+
+  @@map("working_rules")
+}
+
+/// Which kinds of change need a second person's approval before they take
+/// effect. No row means changes apply directly.
+model ChangeApprovalSetting {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// A ChangeRequest targetType, e.g. COMPANY_PROFILE, FISCAL_YEAR, DEPARTMENT, PERSONAL.
+  targetType      String
+  requireApproval Boolean  @default(true)
+  updatedBy       String?
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenantId, targetType])
+  @@map("change_approval_settings")
+}
+
+enum ChangeRequestStatus {
+  PENDING
+  /// Approved, waiting for its effective date.
+  SCHEDULED
+  APPLIED
+  REJECTED
+  WITHDRAWN
+  /// Approved but could not be applied (the target changed or vanished).
+  FAILED
+}
+
+/// One proposed change, decided by someone other than whoever asked.
+/// category CONFIG (company profile, fiscal year, working rules, settings),
+/// ORG (departments, divisions, teams, cost centres, entities, business
+/// units, locations), PROFILE (an employee's own details) or CORRECTION (a
+/// data correction raised by an employee or HR).
+model RecordChangeRequest {
+  id                    String              @id @default(cuid())
+  tenantId              String
+  tenant                Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category              String
+  targetType            String
+  targetId              String?
+  /// The employee the change is about, for PROFILE and CORRECTION.
+  employeeId            String?
+  /// CREATE | UPDATE | DELETE
+  operation             String              @default("UPDATE")
+  title                 String
+  /// Field → new value.
+  changes               Json
+  /// Field → value when the request was raised, for the reviewer's diff.
+  previous              Json?
+  reason                String?
+  /// Org and config changes may wait for a date; null means on approval.
+  effectiveDate         DateTime?
+  status                ChangeRequestStatus @default(PENDING)
+  /// HR | MANAGER — who decides it.
+  approverType          String              @default("HR")
+  requestedBy           String
+  requestedByEmployeeId String?
+  decidedBy             String?
+  decidedAt             DateTime?
+  decisionNote          String?
+  appliedAt             DateTime?
+  error                 String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, category, status])
+  @@index([employeeId, status])
+  @@index([status, effectiveDate])
+  @@map("record_change_requests")
+}
+
+/// A division: a grouping of departments within a business unit.
+model Division {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  businessUnitId String?
+  name           String
+  code           String?
+  description    String?
+  headId         String?
+  isActive       Boolean   @default(true)
+  /// The day the division came into being (org effective dating).
+  effectiveFrom  DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("divisions")
+}
+
+/// A team: named people who work together, possibly across departments.
+model OrgTeam {
+  id            String          @id @default(cuid())
+  tenantId      String
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  code          String?
+  description   String?
+  departmentId  String?
+  divisionId    String?
+  leadId        String?
+  /// Cross-unit collaboration group rather than a reporting team.
+  isCrossFunctional Boolean     @default(false)
+  isActive      Boolean         @default(true)
+  effectiveFrom DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  members       OrgTeamMember[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("org_teams")
+}
+
+model OrgTeamMember {
+  id         String   @id @default(cuid())
+  teamId     String
+  team       OrgTeam  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  employeeId String
+  role       String?
+  addedAt    DateTime @default(now())
+
+  @@unique([teamId, employeeId])
+  @@index([employeeId])
+  @@map("org_team_members")
+}
+
+/// A secondary reporting line: dotted-line (functional) or an explicit L2
+/// manager. Dotted-line managers can be named as a leave approval level and
+/// approve their people's profile change requests.
+model SecondaryManager {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId    String
+  managerId     String
+  /// DOTTED_LINE | L2
+  kind          String    @default("DOTTED_LINE")
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+  note          String?
+  createdBy     String?
+  createdAt     DateTime  @default(now())
+
+  @@unique([employeeId, managerId, kind])
+  @@index([tenantId, managerId])
+  @@map("secondary_managers")
+}
+
+/// A manager hands their approvals to someone else for a period (DELEGATE),
+/// or HR names an acting manager for a team (ACTING).
+model ManagerDelegation {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  delegatorId String
+  delegateId  String
+  /// DELEGATE | ACTING
+  kind        String    @default("DELEGATE")
+  startDate   DateTime
+  endDate     DateTime
+  reason      String?
+  revokedAt   DateTime?
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId, delegateId])
+  @@index([tenantId, delegatorId])
+  @@map("manager_delegations")
+}
+
+/// A letter employees may ask for themselves (salary certificate, NOC,
+/// address proof), generated from a letter template.
+model DocumentRequestType {
+  id               String            @id @default(cuid())
+  tenantId         String
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
+  templateId       String
+  /// Off: issued straight away on request.
+  requiresApproval Boolean           @default(true)
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  requests         SelfServiceDocumentRequest[]
+
+  @@unique([tenantId, name])
+  @@map("document_request_types")
+}
+
+model SelfServiceDocumentRequest {
+  id          String              @id @default(cuid())
+  tenantId    String
+  tenant      Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String
+  typeId      String
+  type        DocumentRequestType @relation(fields: [typeId], references: [id], onDelete: Cascade)
+  purpose     String
+  addressedTo String?
+  /// PENDING | ISSUED | REJECTED | WITHDRAWN
+  status      String              @default("PENDING")
+  /// The GeneratedDocument issued for it.
+  letterId    String?
+  decidedBy   String?
+  decidedAt   DateTime?
+  note        String?
+  createdAt   DateTime            @default(now())
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("self_service_document_requests")
+}
+
+/// One mass update: a change applied to many employees at once, with every
+/// employee's before and after kept so it can be reviewed and rolled back.
+model MassUpdateBatch {
+  id           String           @id @default(cuid())
+  tenantId     String
+  tenant       Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// STATUS | MANAGER | LOCATION | DEPARTMENT | WORKER_TYPE
+  kind         String
+  /// The value set (status, or the id of the manager/location/...).
+  value        String
+  valueLabel   String?
+  effectiveFrom DateTime?
+  note         String?
+  /// APPLIED | ROLLED_BACK
+  status       String           @default("APPLIED")
+  total        Int              @default(0)
+  applied      Int              @default(0)
+  pending      Int              @default(0)
+  skipped      Int              @default(0)
+  createdBy    String
+  createdAt    DateTime         @default(now())
+  rolledBackAt DateTime?
+  rolledBackBy String?
+  items        MassUpdateItem[]
+
+  @@index([tenantId, createdAt])
+  @@map("mass_update_batches")
+}
+
+model MassUpdateItem {
+  id          String          @id @default(cuid())
+  batchId     String
+  batch       MassUpdateBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  employeeId  String
+  before      String?
+  after       String?
+  /// APPLIED | PENDING_APPROVAL | SKIPPED | ROLLED_BACK
+  status      String
+  message     String?
+  jobChangeId String?
+
+  @@index([batchId])
+  @@map("mass_update_items")
+}
+
+/// A reusable HR checklist (e.g. "Statutory joining formalities").
+model HrChecklistTemplate {
+  id          String        @id @default(cuid())
+  tenantId    String
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  category    String        @default("GENERAL")
+  description String?
+  /// [{ title, owner: HR | MANAGER | EMPLOYEE }]
+  items       Json
+  /// Needs an HR sign-off by someone other than the assigner once done.
+  requiresSignOff Boolean   @default(true)
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  checklists  HrChecklist[]
+
+  @@unique([tenantId, name])
+  @@map("hr_checklist_templates")
+}
+
+model HrChecklist {
+  id           String              @id @default(cuid())
+  tenantId     String
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  templateId   String
+  template     HrChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  employeeId   String
+  title        String
+  dueDate      DateTime?
+  /// OPEN | AWAITING_SIGN_OFF | SIGNED_OFF | REOPENED
+  status       String              @default("OPEN")
+  assignedBy   String
+  signedOffBy  String?
+  signedOffAt  DateTime?
+  signOffNote  String?
+  createdAt    DateTime            @default(now())
+  items        HrChecklistItem[]
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("hr_checklists")
+}
+
+model HrChecklistItem {
+  id          String      @id @default(cuid())
+  checklistId String
+  checklist   HrChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  position    Int
+  title       String
+  owner       String      @default("HR")
+  done        Boolean     @default(false)
+  doneBy      String?
+  doneAt      DateTime?
+  note        String?
+
+  @@index([checklistId])
+  @@map("hr_checklist_items")
+}
+
+/// A note on an employee's profile that only HR and their managers see.
+model EmployeeInternalNote {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId   String
+  authorUserId String
+  authorName   String
+  body         String
+  /// MANAGERS_AND_HR | HR_ONLY
+  visibility   String   @default("MANAGERS_AND_HR")
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId, employeeId])
+  @@map("employee_internal_notes")
+}
+
+/// A digital employee ID card. The card number is what the printed card and
+/// its verification page carry; revoking a card makes it fail verification.
+model EmployeeIdCard {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  cardNumber String    @unique
+  issuedAt   DateTime  @default(now())
+  validUntil DateTime
+  /// ACTIVE | REVOKED
+  status     String    @default("ACTIVE")
+  issuedBy   String?
+  revokedAt  DateTime?
+
+  @@index([tenantId, employeeId])
+  @@map("employee_id_cards")
+}
+
+/// A directory search someone saved to run again.
+model DirectorySavedSearch {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String
+  name      String
+  /// The directory query string (without the leading "?").
+  query     String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, name])
+  @@index([tenantId, userId])
+  @@map("directory_saved_searches")
+}
+
+/// The searches people run in the directory, for their own history and the
+/// people-search report.
+model DirectorySearchLog {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String
+  query       String
+  resultCount Int
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([userId, createdAt])
+  @@map("directory_search_logs")
+}
+
+/// What an employee's address used to be, written whenever it changes.
+model EmployeeAddressHistory {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  /// CURRENT | PERMANENT | EMERGENCY
+  type       String
+  line1      String
+  line2      String?
+  city       String?
+  state      String?
+  postalCode String?
+  validTo    DateTime @default(now())
+  changedBy  String?
+
+  @@index([tenantId, employeeId])
+  @@map("employee_address_history")
+}
