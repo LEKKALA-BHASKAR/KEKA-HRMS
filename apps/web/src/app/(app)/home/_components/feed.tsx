@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/avatar";
 import type { ActionState } from "@/lib/forms";
 import { toggleLikeAction, addCommentAction, deleteCommentAction, deletePostAction, votePollAction } from "@/app/actions/home-wall";
+import { reportContentAction } from "@/app/actions/engage-comms";
 import type { PostDto, CommentDto, PersonDto } from "../_lib/wall";
 import type { MentionSegment } from "@keka/services/src/home-wall";
 import { Medal } from "./medal";
@@ -199,6 +200,14 @@ export function PostCard({ post, expanded }: { post: PostDto; expanded?: boolean
       router.refresh();
     });
   };
+  const report = () => {
+    const reason = prompt("What is wrong with this post? Moderators will review it.");
+    if (!reason?.trim()) return;
+    start(async () => {
+      const r = await reportContentAction(EMPTY, fd({ targetType: "WALL_POST", targetId: post.id, reason: reason.trim() }));
+      alert(r.message);
+    });
+  };
   const occasion = post.wish?.occasion === "BIRTHDAY" ? "a happy birthday" : post.wish?.occasion === "WORK_ANNIVERSARY" ? "a happy work anniversary" : "a warm welcome";
   return (
     <article className={`${d.card} ${d.post}`} aria-label={`${post.author.name} ${VERB[post.kind]}`}>
@@ -216,6 +225,7 @@ export function PostCard({ post, expanded }: { post: PostDto; expanded?: boolean
         </div>
         <Kebab items={[
           { label: "Copy link", onClick: copy },
+          ...(!post.canDelete ? [{ label: "Report", onClick: report }] : []),
           ...(post.canDelete ? [{ label: "Delete", onClick: del, danger: true }] : []),
         ]} />
       </header>

@@ -1,0 +1,567 @@
+// ============================================================================
+//  BooS-HR — Engage depth: survey lifecycle, recognition & rewards, wellness &
+//  employee services, corporate communication & collaboration
+// ============================================================================
+//  Approvals (survey / announcement publish, recognition programmes, award
+//  nominations, reward redemptions, employee service requests, wellness
+//  programmes, support resources, company events, private channel joins) run
+//  on the generic workflow engine (31-governance): each record keeps the id
+//  of its WorkflowRequest and a status the engine's effect sets.
+//
+//  Employee and user ids are plain columns (as in the workflow engine) so
+//  these tables add no back-relations to Employee; every top-level table
+//  carries tenantId with a cascading Tenant relation, children cascade from
+//  their parent.
+// ============================================================================
+
+/// Per-tenant switches for the engage modules.
+model EngageSetting {
+  id                   String   @id @default(cuid())
+  tenantId             String   @unique
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Surveys and polls need approval before they go live.
+  surveyApproval       Boolean  @default(false)
+  /// Announcements need approval before they are published.
+  announcementApproval Boolean  @default(false)
+  /// Reward points the recipient earns for each praise.
+  pointsPerPraise      Int      @default(10)
+  /// Points per completed year of service, credited on the work anniversary (0 = off).
+  anniversaryPoints    Int      @default(0)
+  /// Wellbeing check-in results are hidden for groups smaller than this.
+  checkInMinGroup      Int      @default(3)
+  /// Survey responses are deleted this many days after a survey closes (0 = keep).
+  surveyRetentionDays  Int      @default(0)
+  updatedAt            DateTime @updatedAt
+
+  @@map("engage_settings")
+}
+
+// ---------------------------------------------------------------------------
+//  SURVEYS: recurring pulses, template library, action plans
+// ---------------------------------------------------------------------------
+
+/// A recurring pulse: every `everyDays` a survey is created from the
+/// template's questions and launched to the audience (pre-approved).
+model SurveySchedule {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title         String
+  /// PULSE | ENPS | ENGAGEMENT
+  kind          String    @default("PULSE")
+  templateId    String?
+  everyDays     Int       @default(30)
+  /// How long each run stays open.
+  openDays      Int       @default(7)
+  nextRunOn     DateTime
+  departmentIds String[]  @default([])
+  /// Show the first question as a one-tap card when people sign in.
+  onSignIn      Boolean   @default(false)
+  isActive      Boolean   @default(true)
+  lastRunAt     DateTime?
+  runs          Int       @default(0)
+  createdBy     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([tenantId, isActive, nextRunOn])
+  @@map("survey_schedules")
+}
+
+/// Editable survey template library. questions: [{ prompt, type, driver, options, required }]
+model SurveyTemplate {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  kind        String   @default("PULSE")
+  questions   Json
+  isActive    Boolean  @default(true)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("survey_templates")
+}
+
+/// An action committed to after reading a survey's results.
+model SurveyActionPlan {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  surveyId          String
+  driver            String?
+  title             String
+  description       String?
+  ownerEmployeeId   String
+  dueOn             DateTime
+  /// OPEN | IN_PROGRESS | DONE | CANCELLED
+  status            String    @default("OPEN")
+  progressNote      String?
+  overdueNotifiedAt DateTime?
+  completedAt       DateTime?
+  createdBy         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([tenantId, status, dueOn])
+  @@index([surveyId])
+  @@map("survey_action_plans")
+}
+
+// ---------------------------------------------------------------------------
+//  RECOGNITION & REWARDS
+// ---------------------------------------------------------------------------
+
+/// A recognition programme: what it recognises, who is eligible, its budget.
+model RecognitionProgram {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  /// PEER | MANAGER | SPOT | ANNIVERSARY | TEAM
+  kind              String    @default("SPOT")
+  awardTypeId       String?
+  /// Points the winner gets per approved nomination.
+  pointsPerAward    Int       @default(0)
+  /// Budget for the period, in points (null = unlimited).
+  budgetPoints      Int?
+  /// Cash budget for the period (null = unlimited); cash comes from the award type.
+  budgetAmount      Decimal?  @db.Decimal(18, 2)
+  startsOn          DateTime
+  endsOn            DateTime?
+  /// Eligibility: departments (empty = all) and minimum tenure.
+  departmentIds     String[]  @default([])
+  minTenureDays     Int       @default(0)
+  /// Can a nominee be nominated again in the same programme within this many days (0 = no limit).
+  cooldownDays      Int       @default(0)
+  /// DRAFT | PENDING_APPROVAL | ACTIVE | CLOSED | REJECTED
+  status            String    @default("DRAFT")
+  workflowRequestId String?
+  createdBy         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+  @@map("recognition_programs")
+}
+
+/// A nomination for a spot (or other) award, decided by the workflow panel.
+model AwardNomination {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  programId         String?
+  awardTypeId       String
+  nomineeId         String
+  nominatorId       String
+  nominatorUserId   String
+  citation          String
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN
+  status            String    @default("PENDING")
+  workflowRequestId String?
+  awardId           String?
+  decidedAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@index([nomineeId])
+  @@map("award_nominations")
+}
+
+/// The points ledger: every earn, spend, refund and adjustment. Balance = sum(delta).
+model RewardPointEntry {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  delta      Int
+  /// AWARD | PRAISE | REDEMPTION | REFUND | ADJUSTMENT | ANNIVERSARY | WELLNESS | REVOKE
+  source     String
+  sourceId   String?
+  programId  String?
+  note       String?
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  @@unique([tenantId, source, sourceId, employeeId])
+  @@index([tenantId, employeeId])
+  @@index([tenantId, programId])
+  @@map("reward_point_entries")
+}
+
+model RewardItem {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  /// VOUCHER | MERCHANDISE | EXPERIENCE | CHARITY | TIME_OFF
+  category    String   @default("VOUCHER")
+  pointsCost  Int
+  /// Null = unlimited.
+  stock       Int?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("reward_items")
+}
+
+model RewardRedemption {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId        String
+  itemId            String
+  itemName          String
+  points            Int
+  quantity          Int       @default(1)
+  deliveryNote      String?
+  /// PENDING | APPROVED | REJECTED | FULFILLED | CANCELLED
+  status            String    @default("PENDING")
+  workflowRequestId String?
+  fulfilledAt       DateTime?
+  fulfilledBy       String?
+  fulfilmentNote    String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("reward_redemptions")
+}
+
+// ---------------------------------------------------------------------------
+//  WELLNESS & EMPLOYEE SERVICES
+// ---------------------------------------------------------------------------
+
+model WellnessProgram {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title             String
+  description       String?
+  /// FITNESS | MENTAL | NUTRITION | SLEEP | FINANCIAL | SCREENING
+  category          String   @default("FITNESS")
+  /// PROGRAM | CHALLENGE | EVENT
+  kind              String   @default("CHALLENGE")
+  startsOn          DateTime
+  endsOn            DateTime
+  /// Challenge goal, e.g. 100000 steps.
+  goalValue         Int?
+  goalUnit          String?
+  capacity          Int?
+  departmentIds     String[] @default([])
+  providerName      String?
+  pointsReward      Int      @default(0)
+  /// Participants must consent to their progress being shown on the leaderboard.
+  requireConsent    Boolean  @default(true)
+  /// DRAFT | PENDING_APPROVAL | ACTIVE | CLOSED | REJECTED
+  status            String   @default("DRAFT")
+  workflowRequestId String?
+  createdBy         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  enrollments WellnessEnrollment[]
+
+  @@index([tenantId, status])
+  @@map("wellness_programs")
+}
+
+model WellnessEnrollment {
+  id          String          @id @default(cuid())
+  programId   String
+  program     WellnessProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  employeeId  String
+  /// ENROLLED | COMPLETED | WITHDRAWN
+  status      String          @default("ENROLLED")
+  progress    Int             @default(0)
+  consentAt   DateTime?
+  showOnBoard Boolean         @default(true)
+  completedAt DateTime?
+  createdAt   DateTime        @default(now())
+  logs        WellnessLog[]
+
+  @@unique([programId, employeeId])
+  @@index([employeeId])
+  @@map("wellness_enrollments")
+}
+
+model WellnessLog {
+  id           String             @id @default(cuid())
+  enrollmentId String
+  enrollment   WellnessEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  value        Int
+  note         String?
+  loggedOn     DateTime
+  createdAt    DateTime           @default(now())
+
+  @@index([enrollmentId])
+  @@map("wellness_logs")
+}
+
+/// An anonymous wellbeing check-in: carries the department and week, never the person.
+model WellbeingCheckIn {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Monday of the ISO week, UTC.
+  week         DateTime
+  departmentId String?
+  locationId   String?
+  /// 1 (very low) – 5 (great)
+  mood         Int
+  /// 1 (none) – 5 (overwhelming)
+  stress       Int
+  /// Asked for support (routes to the EAP resources, not to a person).
+  wantsSupport Boolean  @default(false)
+  note         String?
+
+  @@index([tenantId, week])
+  @@map("wellbeing_checkins")
+}
+
+/// Who has checked in for a week — never what they said.
+model WellbeingCheckInMark {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  week       DateTime
+  createdAt  DateTime @default(now())
+
+  @@unique([employeeId, week])
+  @@index([tenantId, week])
+  @@map("wellbeing_checkin_marks")
+}
+
+/// The employee service catalog: ID card, parking, visa letter, transport…
+model ServiceType {
+  id               String   @id @default(cuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
+  /// ID_CARD | PARKING | VISA_LETTER | TRANSPORT | CAFETERIA | WORKSPACE | ERGONOMICS | ACCOMMODATION | WELLNESS_APPOINTMENT | EAP | FACILITY | OTHER
+  category         String   @default("OTHER")
+  /// Labels of the extra fields the employee fills in.
+  fields           String[] @default([])
+  requiresApproval Boolean  @default(true)
+  /// Only the requester and fulfilment team see these (EAP, accommodation).
+  confidential     Boolean  @default(false)
+  slaDays          Int      @default(3)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("service_types")
+}
+
+model ServiceRequest {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  typeId            String
+  employeeId        String
+  requesterUserId   String
+  /// { label: answer }
+  answers           Json?
+  details           String?
+  /// PENDING_APPROVAL | OPEN | IN_PROGRESS | FULFILLED | REJECTED | CANCELLED
+  status            String    @default("OPEN")
+  workflowRequestId String?
+  assignedToUserId  String?
+  dueOn             DateTime?
+  fulfilledAt       DateTime?
+  fulfilmentNote    String?
+  rating            Int?
+  ratingComment     String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("service_requests")
+}
+
+/// EAP, helplines, wellness providers, benefit services and articles.
+model SupportResource {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title             String
+  /// EAP | HELPLINE | PROVIDER | BENEFIT | ARTICLE
+  kind              String   @default("ARTICLE")
+  description       String?
+  url               String?
+  phone             String?
+  email             String?
+  tags              String[] @default([])
+  /// DRAFT | PENDING_APPROVAL | PUBLISHED | ARCHIVED | REJECTED
+  status            String   @default("DRAFT")
+  workflowRequestId String?
+  createdBy         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([tenantId, status, kind])
+  @@map("support_resources")
+}
+
+// ---------------------------------------------------------------------------
+//  CORPORATE COMMUNICATION & COLLABORATION
+// ---------------------------------------------------------------------------
+
+/// Discussion channels, interest groups, department news and the leadership message centre.
+model CommunityChannel {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  /// CHANNEL | INTEREST_GROUP | DEPARTMENT | LEADERSHIP
+  kind              String    @default("CHANNEL")
+  /// OPEN (anyone joins) | PRIVATE (joining needs the owner's approval)
+  visibility        String    @default("OPEN")
+  departmentId      String?
+  /// Only owners and moderators post (leadership messages, department news).
+  postingRestricted Boolean   @default(false)
+  createdBy         String
+  archivedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  members CommunityMember[]
+  posts   CommunityPost[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, kind])
+  @@map("community_channels")
+}
+
+model CommunityMember {
+  id                String           @id @default(cuid())
+  channelId         String
+  channel           CommunityChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  employeeId        String
+  /// OWNER | MODERATOR | MEMBER
+  role              String           @default("MEMBER")
+  /// ACTIVE | PENDING | REMOVED | REJECTED
+  status            String           @default("ACTIVE")
+  workflowRequestId String?
+  joinedAt          DateTime         @default(now())
+
+  @@unique([channelId, employeeId])
+  @@index([employeeId])
+  @@map("community_members")
+}
+
+model CommunityPost {
+  id         String           @id @default(cuid())
+  channelId  String
+  channel    CommunityChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  authorId   String
+  body       String
+  parentId   String?
+  isPinned   Boolean          @default(false)
+  hiddenAt   DateTime?
+  hiddenBy   String?
+  hideReason String?
+  createdAt  DateTime         @default(now())
+
+  @@index([channelId, createdAt])
+  @@map("community_posts")
+}
+
+/// A flag raised on a wall post or channel post, worked by moderators.
+model ContentReport {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// WALL_POST | CHANNEL_POST
+  targetType String
+  targetId   String
+  reporterId String
+  reason     String
+  /// OPEN | REMOVED | DISMISSED
+  status     String    @default("OPEN")
+  decidedBy  String?
+  decidedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@unique([targetType, targetId, reporterId])
+  @@index([tenantId, status])
+  @@map("content_reports")
+}
+
+/// Company events calendar: town halls, celebrations, health screenings…
+model CompanyEvent {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title             String
+  description       String?
+  /// GENERAL | TOWN_HALL | CELEBRATION | HEALTH_SCREENING | TRAINING | SPORTS
+  kind              String    @default("GENERAL")
+  startsAt          DateTime
+  endsAt            DateTime
+  location          String?
+  onlineUrl         String?
+  capacity          Int?
+  rsvpBy            DateTime?
+  departmentIds     String[]  @default([])
+  /// Town halls: collect questions ahead of the event.
+  allowQuestions    Boolean   @default(false)
+  /// DRAFT | PENDING_APPROVAL | PUBLISHED | CANCELLED | REJECTED
+  status            String    @default("DRAFT")
+  workflowRequestId String?
+  createdBy         String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  rsvps     EventRsvp[]
+  questions EventQuestion[]
+
+  @@index([tenantId, status, startsAt])
+  @@map("company_events")
+}
+
+model EventRsvp {
+  id         String       @id @default(cuid())
+  eventId    String
+  event      CompanyEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  employeeId String
+  /// GOING | MAYBE | DECLINED | WAITLIST
+  response   String
+  attended   Boolean?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([eventId, employeeId])
+  @@index([employeeId])
+  @@map("event_rsvps")
+}
+
+model EventQuestion {
+  id        String       @id @default(cuid())
+  eventId   String
+  event     CompanyEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  /// Null when asked anonymously.
+  authorId  String?
+  body      String
+  /// OPEN | ANSWERED | HIDDEN
+  status    String       @default("OPEN")
+  answer    String?
+  voterIds  String[]     @default([])
+  createdAt DateTime     @default(now())
+
+  @@index([eventId])
+  @@map("event_questions")
+}

@@ -20,6 +20,7 @@ import { Feed, Segments, Ago } from "./home/_components/feed";
 import { UrlDialog } from "./home/_components/url-dialog";
 import { AddWidgetList, WidgetSettingsForm } from "./home/_components/widget-admin";
 import { WishForm } from "./home/_components/wish-form";
+import { SignInPulse } from "./home/_components/pulse-card";
 import { IconInfo, IconChevronLeft, IconChevronRight } from "./home/_components/icons";
 import d from "./home/dash.module.css";
 
@@ -89,6 +90,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             <Link href="/" aria-current={scope === "org" ? "page" : undefined} scroll={false}>Organization</Link>
             {group ? <Link href="/?feed=group" aria-current={scope === "group" ? "page" : undefined} scroll={false}>{group.label}</Link> : null}
           </nav>
+          <SignInPulse viewer={viewer} />
           {tabs.length ? (
             <Composer
               key={compose ?? "none"} tabs={tabs} initial={compose} group={group}

@@ -1,14 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { ActionForm, Field, TextInput, SelectInput, TextArea, CheckboxInput, FormBanner, useForm } from "@/components/form";
+import { visibleQuestionIds } from "@keka/services/src/engage-depth-math";
 import {
-  createSurveyAction, addQuestionAction, removeQuestionAction, surveyOpAction, submitSurveyAction,
+  createSurveyAction, addQuestionAction, removeQuestionAction, surveyOpAction, submitSurveyAction, editQuestionAction,
 } from "@/app/actions/engage";
 
 export interface Option { value: string; label: string }
 
-export function CreateSurveyForm({ departments }: { departments: Option[] }) {
+export function CreateSurveyForm({ departments, templates = [] }: { departments: Option[]; templates?: Option[] }) {
   const [kind, setKind] = useState("PULSE");
   return (
     <ActionForm action={createSurveyAction} submitLabel={kind === "POLL" ? "Create poll" : "Create from template"}>
@@ -38,6 +39,16 @@ export function CreateSurveyForm({ departments }: { departments: Option[] }) {
             </div>
           ) : (
             <div className="grid grid-2">
+              {templates.length ? (
+                <Field label="Start from your template library" name="templateId" state={state} hint="Leave as the built-in template, or pick one saved from an earlier survey">
+                  <SelectInput name="templateId" state={state} placeholder="Built-in template" options={templates} />
+                </Field>
+              ) : null}
+              <Field label="Remind non-respondents every" name="reminderEveryDays" state={state} hint="Days; leave blank for no automatic reminders">
+                <TextInput name="reminderEveryDays" type="number" min={1} max={30} state={state} />
+              </Field>
+              <CheckboxInput name="onSignIn" label="Ask the first question on the dashboard at sign-in" hint="A one-tap pulse card on Home for everyone invited." />
+              <CheckboxInput name="randomize" label="Randomise question order per person" hint="Follow-up questions stay right after the question they depend on." />
               <CheckboxInput name="isAnonymous" label="Anonymous responses" defaultChecked hint="Answers are stored without names; only who has responded is tracked." />
               <Field label="Minimum group size for results" name="minGroupSize" state={state} hint="Breakdowns with fewer respondents are hidden">
                 <TextInput name="minGroupSize" type="number" min={1} max={20} state={state} defaultValue={3} />
@@ -58,8 +69,10 @@ export function CreateSurveyForm({ departments }: { departments: Option[] }) {
   );
 }
 
-export function AddQuestionForm({ surveyId, drivers }: { surveyId: string; drivers: string[] }) {
+export function AddQuestionForm({ surveyId, drivers, earlier = [] }: { surveyId: string; drivers: string[]; earlier?: Array<{ id: string; label: string; type: string }> }) {
   const [type, setType] = useState("RATING");
+  const [parent, setParent] = useState("");
+  const parentType = earlier.find((q) => q.id === parent)?.type;
   return (
     <ActionForm action={addQuestionAction} submitLabel="Add question" hidden={{ surveyId }} compact>
       {(state) => (
@@ -84,10 +97,48 @@ export function AddQuestionForm({ surveyId, drivers }: { surveyId: string; drive
           {type === "SINGLE_CHOICE" || type === "MULTI_CHOICE" ? (
             <Field label="Options, one per line" name="options" state={state}><TextArea name="options" state={state} rows={3} /></Field>
           ) : null}
+          {earlier.length ? (
+            <div className="grid grid-2">
+              <Field label="Only ask when (branching)" name="showIfQuestionId" state={state} hint="Leave blank to ask everyone">
+                <select name="showIfQuestionId" className="select" value={parent} onChange={(e) => setParent(e.target.value)}>
+                  <option value="">Always ask</option>
+                  {earlier.map((q) => <option key={q.id} value={q.id}>{q.label}</option>)}
+                </select>
+              </Field>
+              {parent ? (
+                <Field label={parentType === "SINGLE_CHOICE" || parentType === "MULTI_CHOICE" ? "…was answered with option number(s)" : parentType === "NPS" ? "…was scored (0–10)" : "…was scored (1–5)"} name="showIfValues" state={state} hint="Comma separated, e.g. 1, 2">
+                  <TextInput name="showIfValues" state={state} placeholder="1, 2" />
+                </Field>
+              ) : null}
+            </div>
+          ) : null}
           <CheckboxInput name="required" label="Required" defaultChecked={type !== "TEXT"} />
         </>
       )}
     </ActionForm>
+  );
+}
+
+/** Inline editor for a draft question's wording, driver, options and required flag. */
+export function EditQuestionForm({ q, drivers }: { q: { id: string; prompt: string; type: string; driver: string | null; options: string[]; required: boolean }; drivers: string[] }) {
+  return (
+    <details>
+      <summary className="text-xs" style={{ cursor: "pointer" }}>Edit</summary>
+      <ActionForm action={editQuestionAction} submitLabel="Save question" hidden={{ questionId: q.id }} compact>
+        {(state) => (
+          <>
+            <Field label="Question" name="prompt" state={state} required><TextInput name="prompt" state={state} defaultValue={q.prompt} required /></Field>
+            {q.type === "RATING" ? (
+              <Field label="Driver" name="driver" state={state}><SelectInput name="driver" state={state} placeholder="None" defaultValue={q.driver ?? ""} options={drivers.map((d) => ({ value: d, label: d }))} /></Field>
+            ) : null}
+            {q.type === "SINGLE_CHOICE" || q.type === "MULTI_CHOICE" ? (
+              <Field label="Options, one per line" name="options" state={state}><TextArea name="options" state={state} rows={3} defaultValue={q.options.join("\n")} /></Field>
+            ) : null}
+            <CheckboxInput name="required" label="Required" defaultChecked={q.required} />
+          </>
+        )}
+      </ActionForm>
+    </details>
   );
 }
 
@@ -103,7 +154,7 @@ export function RemoveQuestion({ questionId }: { questionId: string }) {
 }
 
 export function SurveyOp({ surveyId, op, label, variant = "default", confirmText }: {
-  surveyId: string; op: "launch" | "close" | "delete"; label: string; variant?: "primary" | "default" | "danger"; confirmText?: string;
+  surveyId: string; op: "launch" | "close" | "delete" | "submit" | "remind" | "archive" | "unarchive"; label: string; variant?: "primary" | "default" | "danger"; confirmText?: string;
 }) {
   const [state, action, pending] = useForm(surveyOpAction);
   return (
@@ -116,18 +167,32 @@ export function SurveyOp({ surveyId, op, label, variant = "default", confirmText
   );
 }
 
-export interface RespondQuestion { id: string; prompt: string; type: string; options: string[]; required: boolean }
+export interface RespondQuestion { id: string; prompt: string; type: string; options: string[]; required: boolean; showIfQuestionId?: string | null; showIfValues?: number[] }
 
 /** The response form: a 1–5 or 0–10 row of buttons, choices, or a text box per question. */
 export function RespondForm({ surveyId, questions, anonymous, isPoll }: {
   surveyId: string; questions: RespondQuestion[]; anonymous: boolean; isPoll: boolean;
 }) {
   const [state, action, pending] = useForm(submitSurveyAction);
+  // Branching: re-evaluate which questions are asked as answers change.
+  const [answers, setAnswers] = useState<Map<string, { score: number | null; choices: number[] }>>(new Map());
+  const shown = visibleQuestionIds(questions, answers);
+  const onChange = (e: FormEvent<HTMLFormElement>) => {
+    const fd = new FormData(e.currentTarget);
+    const next = new Map<string, { score: number | null; choices: number[] }>();
+    for (const q of questions) {
+      const vals = fd.getAll(`q_${q.id}`).map(String).filter(Boolean);
+      if (q.type === "RATING" || q.type === "NPS") next.set(q.id, { score: vals.length ? Number(vals[0]) : null, choices: [] });
+      else if (q.type === "SINGLE_CHOICE" || q.type === "MULTI_CHOICE") next.set(q.id, { score: null, choices: vals.map(Number) });
+    }
+    setAnswers(next);
+  };
+  let n = 0;
   if (state.ok) {
     return <div className="callout success"><div><div className="callout-title">{state.message}</div>{isPoll ? "Reload to see how everyone voted." : "You can close this page."}</div></div>;
   }
   return (
-    <form action={action} className="stack gap-4">
+    <form action={action} className="stack gap-4" onChange={onChange}>
       <input type="hidden" name="surveyId" value={surveyId} />
       <FormBanner state={state} />
       {!isPoll ? (
@@ -135,13 +200,15 @@ export function RespondForm({ surveyId, questions, anonymous, isPoll }: {
           ? "This survey is anonymous. Your answers are stored without your name, and results are only shown for groups large enough that nobody can be singled out."
           : "This survey is not anonymous — your name will be visible with your answers."}</div></div>
       ) : null}
-      {questions.map((q, i) => {
+      {questions.map((q) => {
         const key = `q_${q.id}`;
         const error = state.errors?.[key];
+        if (!shown.has(q.id)) return null;
+        n++;
         return (
           <fieldset key={q.id} className="survey-q" style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: 14, borderColor: error ? "var(--danger)" : undefined }}>
             <legend className="strong text-sm" style={{ padding: "0 4px" }}>
-              {isPoll ? "" : `${i + 1}. `}{q.prompt}{q.required ? <span style={{ color: "var(--danger)" }}> *</span> : null}
+              {isPoll ? "" : `${n}. `}{q.prompt}{q.required ? <span style={{ color: "var(--danger)" }}> *</span> : null}
             </legend>
             {q.type === "RATING" ? (
               <div className="row gap-2 wrap" role="radiogroup" style={{ alignItems: "flex-start" }}>

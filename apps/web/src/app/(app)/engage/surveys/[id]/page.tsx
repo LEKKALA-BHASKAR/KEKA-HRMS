@@ -3,12 +3,19 @@ import { notFound, forbidden } from "next/navigation";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatDate } from "@keka/shared";
-import { ENGAGEMENT_DRIVERS } from "@keka/services";
+import { ENGAGEMENT_DRIVERS, engageSettings, heatmap, heatBand, seededOrder, actionPlanState } from "@keka/services";
 import { requireViewer, can } from "@/lib/context";
 import { surveyResults } from "@/lib/survey-results";
 import { PageHead, Badge, Progress, Stat, Callout } from "@/components/ui";
 import { Panel, SectionTitle, Donut, EmptyState } from "@/components/keka";
-import { RespondForm, AddQuestionForm, RemoveQuestion, SurveyOp } from "../forms";
+import { RespondForm, AddQuestionForm, RemoveQuestion, SurveyOp, EditQuestionForm } from "../forms";
+import { SpecForm, ActButton } from "@/components/gov-forms";
+import { Pill } from "@/components/gov-ui";
+import { createActionPlanAction, updateActionPlanAction, saveTemplateFromSurveyAction, moderateSurveyCommentAction } from "@/app/actions/engage-surveys";
+import { employeeOptions } from "@/lib/governance";
+import { employeeNames, fmtDay } from "@/lib/engage-depth";
+
+const HEAT_BG: Record<string, string> = { none: "transparent", low: "rgba(229,83,75,.18)", mid: "rgba(240,160,60,.18)", high: "rgba(63,157,90,.2)" };
 
 const P = PERMISSIONS;
 const TYPE_LABEL: Record<string, string> = { RATING: "Agreement 1–5", NPS: "Likelihood 0–10", SINGLE_CHOICE: "Single choice", MULTI_CHOICE: "Multiple choice", TEXT: "Free text" };
@@ -17,9 +24,10 @@ const RATING_COLOURS = ["#e5534b", "#f0a07a", "#c9ced6", "#7fc28a", "#3f9d5a"];
 
 function npsTone(score: number) { return score >= 30 ? "pos" : score < 0 ? "neg" : undefined; }
 
-export default async function SurveyPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function SurveyPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams?: Promise<{ by?: string }> }) {
   const viewer = await requireViewer();
   const { id } = await params;
+  const by = (await searchParams)?.by === "location" ? "location" : "department";
   const canManage = can(viewer, P.SURVEY_MANAGE);
   const canResults = canManage || can(viewer, P.SURVEY_RESULTS);
 
@@ -43,7 +51,33 @@ export default async function SurveyPage({ params }: { params: Promise<{ id: str
   if (!mayRespond && !showResults && !(canManage && survey.status === "DRAFT")) forbidden();
 
   const results = showResults ? await surveyResults(viewer.tenantId, survey.id) : null;
+  const settings = await engageSettings(viewer.tenantId);
+  const canLaunch = !settings.surveyApproval || survey.approvalStatus === "APPROVED";
 
+  // Heat map: favourable % by group × driver, each group held to the anonymity minimum.
+  let heat: ReturnType<typeof heatmap> | null = null;
+  if (results?.revealed && canResults && !isPoll) {
+    const responses = await prisma.surveyResponse.findMany({ where: { surveyId: survey.id }, include: { answers: true } });
+    const groupNames = new Map((by === "location"
+      ? await prisma.location.findMany({ where: { tenantId: viewer.tenantId }, select: { id: true, name: true } })
+      : await prisma.department.findMany({ where: { tenantId: viewer.tenantId }, select: { id: true, name: true } })).map((g) => [g.id, g.name]));
+    const driverOf = new Map(survey.questions.filter((q) => q.type === "RATING").map((q) => [q.id, q.driver]));
+    heat = heatmap(responses.map((r) => ({
+      group: groupNames.get((by === "location" ? r.locationId : r.departmentId) ?? "") ?? "Unassigned",
+      answers: r.answers.filter((a) => driverOf.has(a.questionId)).map((a) => ({ driver: driverOf.get(a.questionId) ?? null, score: a.score })),
+    })), survey.minGroupSize);
+  }
+  const plans = survey.status !== "DRAFT" ? await prisma.surveyActionPlan.findMany({ where: { tenantId: viewer.tenantId, surveyId: survey.id }, orderBy: { dueOn: "asc" } }) : [];
+  const planOwners = await employeeNames(viewer.tenantId, plans.map((p) => p.ownerEmployeeId));
+  const showPlans = survey.status !== "DRAFT" && (canResults || plans.some((p) => p.ownerEmployeeId === viewer.employee?.id));
+  const owners = canManage && survey.status !== "DRAFT" ? await employeeOptions(viewer.tenantId) : [];
+  const qLabel = new Map(survey.questions.map((q) => [q.id, `Q${q.sequence}`]));
+  // Comment moderation (survey managers, once results are revealed).
+  const textIds = survey.questions.filter((q) => q.type === "TEXT").map((q) => q.id);
+  const moderation = canManage && results?.revealed && textIds.length
+    ? await prisma.surveyAnswer.findMany({ where: { questionId: { in: textIds }, text: { not: null }, response: { surveyId: survey.id } }, select: { id: true, questionId: true, text: true, textHiddenAt: true, textHiddenReason: true }, orderBy: { text: "asc" } })
+    : [];
+  const respondOrder = survey.randomize && me ? seededOrder(survey.questions, `${me.id}:${survey.id}`) : survey.questions;
   return (
     <>
       <PageHead
@@ -54,14 +88,20 @@ export default async function SurveyPage({ params }: { params: Promise<{ id: str
             <Badge tone={survey.status === "ACTIVE" ? "success" : survey.status === "CLOSED" ? "info" : "neutral"} dot>{survey.status.toLowerCase()}</Badge>
             {survey.isAnonymous && !isPoll ? <Badge>Anonymous · results need {survey.minGroupSize}+ responses</Badge> : null}
             {survey.closesAt ? <span className="text-sm subtle">Closes {formatDate(survey.closesAt)}</span> : null}
+            {survey.approvalStatus ? <Badge tone={survey.approvalStatus === "APPROVED" ? "success" : survey.approvalStatus === "REJECTED" ? "danger" : "warning"}>Approval: {survey.approvalStatus.toLowerCase()}</Badge> : null}
+            {survey.archivedAt ? <Badge>Archived</Badge> : null}
           </span>
         }
         actions={
           <>
             <Link className="btn" href="/engage/surveys">Back</Link>
             {canManage && survey.status === "DRAFT" ? <SurveyOp surveyId={survey.id} op="delete" label="Delete draft" confirmText="Delete this draft?" /> : null}
-            {canManage && survey.status === "DRAFT" ? <SurveyOp surveyId={survey.id} op="launch" label="Launch" variant="primary" confirmText="Launch now? Questions cannot be changed afterwards." /> : null}
+            {canManage && survey.status === "DRAFT" && survey.approvalStatus !== "PENDING" && survey.approvalStatus !== "APPROVED" ? <SurveyOp surveyId={survey.id} op="submit" label="Submit for approval" variant={canLaunch ? "default" : "primary"} /> : null}
+            {canManage && survey.status === "DRAFT" && canLaunch ? <SurveyOp surveyId={survey.id} op="launch" label="Launch" variant="primary" confirmText="Launch now? Questions cannot be changed afterwards." /> : null}
+            {canManage && survey.status === "ACTIVE" ? <SurveyOp surveyId={survey.id} op="remind" label="Send reminder" /> : null}
             {canManage && survey.status === "ACTIVE" ? <SurveyOp surveyId={survey.id} op="close" label="Close survey" confirmText="Close the survey? No more responses will be accepted." /> : null}
+            {canManage && survey.status === "CLOSED" ? <SurveyOp surveyId={survey.id} op={survey.archivedAt ? "unarchive" : "archive"} label={survey.archivedAt ? "Restore" : "Archive"} /> : null}
+            {canResults && survey.status !== "DRAFT" ? <a className="btn" href={`/engage/export?report=survey-results&id=${survey.id}`}>Export results</a> : null}
           </>
         }
       />
@@ -72,7 +112,7 @@ export default async function SurveyPage({ params }: { params: Promise<{ id: str
           <Panel title={isPoll ? "Cast your vote" : "Your response"}>
             <RespondForm
               surveyId={survey.id} anonymous={survey.isAnonymous} isPoll={isPoll}
-              questions={survey.questions.map((q) => ({ id: q.id, prompt: q.prompt, type: q.type, options: q.options, required: q.required }))}
+              questions={respondOrder.map((q) => ({ id: q.id, prompt: q.prompt, type: q.type, options: q.options, required: q.required, showIfQuestionId: q.showIfQuestionId, showIfValues: q.showIfValues }))}
             />
           </Panel>
         </div>
@@ -88,7 +128,13 @@ export default async function SurveyPage({ params }: { params: Promise<{ id: str
                   {survey.questions.map((q) => (
                     <tr key={q.id}>
                       <td className="num subtle">{q.sequence}</td>
-                      <td>{q.prompt}{q.options.length ? <div className="text-xs subtle">{q.options.join(" · ")}</div> : null}</td>
+                      <td>{q.prompt}{q.options.length ? <div className="text-xs subtle">{q.options.join(" · ")}</div> : null}
+                        {q.showIfQuestionId ? <div className="text-xs"><Badge tone="info">Only if {qLabel.get(q.showIfQuestionId) ?? "an earlier question"} = {q.showIfValues.map((v) => {
+                          const parent = survey.questions.find((p) => p.id === q.showIfQuestionId);
+                          return parent && (parent.type === "SINGLE_CHOICE" || parent.type === "MULTI_CHOICE") ? parent.options[v] ?? v : v;
+                        }).join(" or ")}</Badge></div> : null}
+                        <EditQuestionForm q={q} drivers={[...ENGAGEMENT_DRIVERS]} />
+                      </td>
                       <td className="text-sm">{TYPE_LABEL[q.type]}</td>
                       <td className="text-sm">{q.driver ?? <span className="subtle">—</span>}</td>
                       <td className="text-sm">{q.required ? "Yes" : "No"}</td>
@@ -99,7 +145,7 @@ export default async function SurveyPage({ params }: { params: Promise<{ id: str
               </table>
             </div>
           </Panel>
-          <Panel title="Add a question"><AddQuestionForm surveyId={survey.id} drivers={[...ENGAGEMENT_DRIVERS]} /></Panel>
+          <Panel title="Add a question"><AddQuestionForm surveyId={survey.id} drivers={[...ENGAGEMENT_DRIVERS]} earlier={survey.questions.filter((q) => q.type !== "TEXT").map((q) => ({ id: q.id, type: q.type, label: `Q${q.sequence}. ${q.prompt.slice(0, 60)}` }))} /></Panel>
         </div>
       ) : null}
 
@@ -192,6 +238,21 @@ export default async function SurveyPage({ params }: { params: Promise<{ id: str
                 </Panel>
               ))}
 
+              {moderation.length ? (
+                <Panel title="Comment moderation" subtitle="Hide a comment that identifies someone or breaks the conduct policy; it is left out of results and exports.">
+                  <div className="stack gap-2">
+                    {moderation.map((m) => (
+                      <div key={m.id} className="row gap-3 wrap" style={{ justifyContent: "space-between", borderLeft: "3px solid var(--border)", paddingLeft: 10, opacity: m.textHiddenAt ? 0.55 : 1 }}>
+                        <div className="text-sm" style={{ flex: 1, minWidth: 200 }}><span className="text-xs subtle">{qLabel.get(m.questionId)} · </span>{m.text}{m.textHiddenAt ? <div className="text-xs"><Badge tone="danger">Hidden</Badge> {m.textHiddenReason}</div> : null}</div>
+                        {m.textHiddenAt
+                          ? <ActButton action={moderateSurveyCommentAction} hidden={{ answerId: m.id, op: "restore" }} label="Restore" variant="ghost" />
+                          : <ActButton action={moderateSurveyCommentAction} hidden={{ answerId: m.id, op: "hide" }} label="Hide" variant="danger" input={{ name: "reason", placeholder: "Reason", required: true }} />}
+                      </div>
+                    ))}
+                  </div>
+                </Panel>
+              ) : null}
+
               {!isPoll && canResults ? (
                 <Panel title="By department" subtitle={`Departments with fewer than ${results.minGroupSize} responses are not scored`} pad={false}>
                   {results.breakdown.length === 0 ? <EmptyState title="No responses yet" /> : (
@@ -213,9 +274,89 @@ export default async function SurveyPage({ params }: { params: Promise<{ id: str
                   )}
                 </Panel>
               ) : null}
+
+              {heat ? (
+                <Panel title="Engagement heat map" subtitle={`Favourable % by ${by} and driver. Groups under ${survey.minGroupSize} responses are withheld.`}
+                  action={<span className="row gap-2"><a className={`btn sm${by === "department" ? " primary" : ""}`} href={`?by=department`}>By department</a><a className={`btn sm${by === "location" ? " primary" : ""}`} href={`?by=location`}>By location</a><a className="btn sm" href={`/engage/export?report=survey-heatmap&id=${survey.id}&by=${by}`}>CSV</a></span>} pad={false}>
+                  {heat.rows.length === 0 || heat.drivers.length === 0 ? <EmptyState title="No rating answers with drivers yet" /> : (
+                    <div className="table-wrap">
+                      <table className="data" aria-label="Heat map">
+                        <thead><tr><th>{by === "location" ? "Location" : "Department"}</th><th className="num">Responses</th><th className="num">Overall</th>{heat.drivers.map((d) => <th key={d} className="num">{d}</th>)}</tr></thead>
+                        <tbody>
+                          {heat.rows.map((r) => (
+                            <tr key={r.group}>
+                              <td>{r.group}</td><td className="num">{r.respondents}</td>
+                              <td className="num" style={{ background: HEAT_BG[heatBand(r.overall)] }}>{r.hidden ? <span className="subtle">withheld</span> : r.overall === null ? "—" : `${r.overall}%`}</td>
+                              {r.cells.map((c, i) => <td key={i} className="num" style={{ background: HEAT_BG[heatBand(c)] }}>{r.hidden ? <span className="subtle">—</span> : c === null ? "—" : `${c}%`}</td>)}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Panel>
+              ) : null}
             </div>
           )}
         </>
+      ) : null}
+
+      {showPlans ? (
+        <div className="stack gap-4" style={{ marginTop: 18 }}>
+          <Panel title="Action plans" subtitle="What will change because of these results, who owns it and by when" pad={false}>
+            {plans.length === 0 ? <EmptyState title="No action plans yet">Turn the weakest drivers into commitments.</EmptyState> : (
+              <div className="table-wrap">
+                <table className="data">
+                  <thead><tr><th>Action</th><th>Driver</th><th>Owner</th><th>Due</th><th>Status</th><th>Progress</th><th /></tr></thead>
+                  <tbody>
+                    {plans.map((p) => {
+                      const st = actionPlanState(p.status, p.dueOn, new Date());
+                      const mayUpdate = canManage || p.ownerEmployeeId === viewer.employee?.id;
+                      return (
+                        <tr key={p.id}>
+                          <td className="strong">{p.title}{p.description ? <div className="text-xs subtle">{p.description}</div> : null}</td>
+                          <td className="text-sm">{p.driver ?? "—"}</td>
+                          <td className="text-sm">{planOwners.get(p.ownerEmployeeId) ?? "—"}</td>
+                          <td className="text-sm nowrap">{fmtDay(p.dueOn)}</td>
+                          <td><Pill s={st} /></td>
+                          <td className="text-xs">{p.progressNote ?? ""}</td>
+                          <td>{mayUpdate && st !== "DONE" && st !== "CANCELLED" ? (
+                            <SpecForm action={updateActionPlanAction} hidden={{ id: p.id }} submitLabel="Update" columns={1} fields={[
+                              { name: "status", label: "Status", type: "select", required: true, defaultValue: p.status, options: [{ value: "OPEN", label: "Open" }, { value: "IN_PROGRESS", label: "In progress" }, { value: "DONE", label: "Done" }, ...(canManage ? [{ value: "CANCELLED", label: "Cancelled" }] : [])] },
+                              { name: "progressNote", label: "Progress note", defaultValue: p.progressNote },
+                            ]} />
+                          ) : null}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+          {canManage ? (
+            <Panel title="New action plan">
+              <SpecForm action={createActionPlanAction} hidden={{ surveyId: survey.id }} submitLabel="Create action plan" fields={[
+                { name: "title", label: "Action", required: true, placeholder: "Monthly growth conversations in Engineering" },
+                { name: "driver", label: "Driver", type: "select", options: ENGAGEMENT_DRIVERS.map((d) => ({ value: d, label: d })) },
+                { name: "ownerEmployeeId", label: "Owner", type: "select", required: true, options: owners },
+                { name: "dueOn", label: "Due", type: "date", required: true },
+                { name: "description", label: "Details", type: "textarea", wide: true },
+              ]} />
+            </Panel>
+          ) : null}
+        </div>
+      ) : null}
+
+      {canManage && survey.kind !== "POLL" ? (
+        <div style={{ marginTop: 18 }}>
+          <Panel title="Save as a template" subtitle="Reuse these questions for a future survey or a recurring pulse">
+            <SpecForm action={saveTemplateFromSurveyAction} hidden={{ surveyId: survey.id }} submitLabel="Save to library" fields={[
+              { name: "name", label: "Template name", placeholder: survey.title },
+              { name: "description", label: "Description" },
+            ]} />
+          </Panel>
+        </div>
       ) : null}
     </>
   );

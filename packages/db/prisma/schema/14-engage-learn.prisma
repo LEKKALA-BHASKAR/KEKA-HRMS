@@ -64,6 +64,21 @@ model Survey {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
+  // --- Engage depth (34-engage-depth) ---
+  /// null (no approval needed) | PENDING | APPROVED | REJECTED
+  approvalStatus    String?
+  workflowRequestId String?
+  /// The recurring schedule that created this run.
+  scheduleId        String?
+  /// Shown as a one-question card on the dashboard at sign-in.
+  onSignIn          Boolean   @default(false)
+  /// Each respondent sees the (unconditional) questions in their own order.
+  randomize         Boolean   @default(false)
+  /// Remind people who have not responded every N days (null = no automatic reminders).
+  reminderEveryDays Int?
+  lastReminderAt    DateTime?
+  archivedAt        DateTime?
+
   questions    SurveyQuestion[]
   participants SurveyParticipant[]
   responses    SurveyResponse[]
@@ -84,6 +99,9 @@ model SurveyQuestion {
   /// Choices for SINGLE_CHOICE and MULTI_CHOICE.
   options  String[]           @default([])
   required Boolean            @default(true)
+  /// Branching: only asked when this earlier question's answer (score or choice index) is one of showIfValues.
+  showIfQuestionId String?
+  showIfValues     Int[]    @default([])
 
   answers SurveyAnswer[]
 
@@ -115,6 +133,8 @@ model SurveyResponse {
   /// The respondent's department when they answered, for breakdowns that
   /// respect the minimum group size.
   departmentId String?
+  /// The respondent's location when they answered (heat map by location).
+  locationId   String?
   /// EXIT surveys: the ExitRecord this response is for (plain column).
   exitRecordId String?
   submittedAt  DateTime  @default(now())
@@ -138,6 +158,10 @@ model SurveyAnswer {
   /// Indexes into the question's options.
   choices Int[]   @default([])
   text    String?
+  // --- Engage depth (34-engage-depth) ---
+  /// Comment moderation: a hidden comment is left out of results and exports.
+  textHiddenAt     DateTime?
+  textHiddenReason String?
 
   @@unique([responseId, questionId])
   @@index([questionId])

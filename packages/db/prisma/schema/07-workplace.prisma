@@ -40,6 +40,18 @@ model Announcement {
   notifyByEmail Boolean   @default(false)
   isPinned      Boolean   @default(false)
 
+  // --- Engage depth (34-engage-depth) ---
+  /// null (no approval needed) | PENDING | APPROVED | REJECTED
+  approvalStatus    String?
+  workflowRequestId String?
+  /// Emergency broadcast: skips approval, emails everyone, banner on every page.
+  isEmergency       Boolean   @default(false)
+  /// GENERAL | POLICY | LEADERSHIP | EVENT | IT | HR
+  category          String?
+  /// { "<lang>": { title, body } }
+  translations      Json?
+  lastReminderAt    DateTime?
+
   createdBy String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -125,6 +137,11 @@ model EmployeeAward {
   nominatedBy String?
   approvedBy  String?
   isPublished Boolean @default(true)
+  // --- Engage depth (34-engage-depth) ---
+  programId    String?
+  points       Int?
+  revokedAt    DateTime?
+  revokeReason String?
 
   createdAt DateTime @default(now())
 

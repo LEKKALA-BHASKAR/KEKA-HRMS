@@ -30,7 +30,7 @@ export async function surveyResults(tenantId: string, surveyId: string) {
 
   const questions = survey.questions as unknown as QuestionDef[];
   const answers: AnswerRow[] = survey.responses.flatMap((r) =>
-    r.answers.map((a) => ({ questionId: a.questionId, score: a.score, choices: a.choices, text: a.text, departmentId: r.departmentId })));
+    r.answers.map((a) => ({ questionId: a.questionId, score: a.score, choices: a.choices, text: a.textHiddenAt ? null : a.text, departmentId: r.departmentId })));
 
   const perQuestion = survey.questions.map((q) => {
     const qa = answers.filter((a) => a.questionId === q.id);
