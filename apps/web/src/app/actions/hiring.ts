@@ -7,7 +7,7 @@ import {
   draftOffer, approveOffer, extendOffer, recordOfferResponse, completeHire, notify,
   raiseRequisition, updateRequisition, decideRequisitions, archiveRequisition, isSuperApprover, saveScorecard,
   requisitionProblems, parseKit, plainText, type RequisitionInput,
-  parseManualBreakup, issueOfferLink, revokeOfferLink, hireChain,
+  parseManualBreakup, issueOfferLink, revokeOfferLink, hireChain, beyondPlanWarning,
 } from "@keka/services";
 import { routeRequisitionChain, chainRequisitionDecisions, routeOfferChain } from "@/lib/talent-hire";
 import { foreignReference } from "@/lib/ownership";
@@ -89,7 +89,9 @@ export async function raiseRequisitionAction(_prev: ActionState, formData: FormD
   await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Requisition", entityId: res.id!, summary: "Created Requisition", newValue: { code: res.code, title: input.title } });
   // Multi-level approval: a matching chain rule decides who approves, in order.
   const routed = await routeRequisitionChain(viewer, res.id!);
-  return { ...done(REQ_PATHS, routed ? `${res.message}. ${routed}` : res.message), values: { id: res.id! } };
+  // Requisitions past the department's active workforce plan are allowed, but flagged.
+  const beyondPlan = await beyondPlanWarning(viewer.tenantId, input.departmentId || null);
+  return { ...done(REQ_PATHS, (routed ? `${res.message}. ${routed}` : res.message) + beyondPlan), values: { id: res.id! } };
 }
 
 export async function updateRequisitionAction(_prev: ActionState, formData: FormData): Promise<ActionState> {

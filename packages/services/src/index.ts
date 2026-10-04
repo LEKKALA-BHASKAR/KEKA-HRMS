@@ -82,3 +82,5 @@ export { parseCsv } from "./import-math";
 export { parseCsv as psaParseCsv } from "./psa-math";
 export * from "./time-leave-depth";
 export * from "./talent";
+export * from "./workforce-math";
+export * from "./workforce";
