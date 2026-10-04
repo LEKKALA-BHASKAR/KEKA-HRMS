@@ -108,6 +108,8 @@ async function buildViewer(userId: string, session: { tenantId: string; sessionV
         },
       },
       roleAssignments: {
+        // Time-bound grants stop working the moment they expire, before the nightly job removes them.
+        where: { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
         include: {
           role: { include: { permissions: true } },
           scopes: true,

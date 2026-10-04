@@ -121,6 +121,8 @@ export async function usersWithPermission(tenantId: string, permission: string):
     where: {
       role: { tenantId, permissions: { some: { permission } } },
       user: { tenantId, loginDisabled: false, isDeactivated: false },
+      // A time-bound grant past its expiry no longer counts.
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
     },
     select: { userId: true },
   });

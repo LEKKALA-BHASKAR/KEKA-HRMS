@@ -18,6 +18,8 @@
  *   tsx scripts/jobs.ts job-changes           nightly; applies approved promotions/transfers whose effective date has come
  *   tsx scripts/jobs.ts scheduled-reports     hourly (or nightly); emails the CSV of every scheduled report that is due
  *   tsx scripts/jobs.ts workforce             nightly; contract expiry alerts, ends expired contracts, vacates seats of leavers
+ *   tsx scripts/jobs.ts governance            nightly; expires time-bound access, escalates workflows, runs automations, retention, audit sealing, security scan
+ *   tsx scripts/jobs.ts automations           hourly; workflow SLA escalation/reminders and event-triggered automation rules
  *   tsx scripts/jobs.ts nightly               all of the nightly jobs (+ accrual on the 1st)
  *
  * Each run is recorded in job_runs and logged as one JSON line.
@@ -129,6 +131,19 @@ async function main() {
       if (bad.length) throw new Error(bad.join("; "));
       return { tenants: tenants.length, balanced: true };
     },
+    governance: async () => {
+      const totals: Record<string, number> = {};
+      for (const t of tenants) for (const [k, v] of Object.entries(await svc.runGovernanceJob(t.id))) totals[k] = (totals[k] ?? 0) + v;
+      return { tenants: tenants.length, ...totals };
+    },
+    automations: async () => {
+      let escalated = 0, reminded = 0, fired = 0, failed = 0;
+      for (const t of tenants) {
+        const w = await svc.runWorkflowTimers(t.id); escalated += w.escalated; reminded += w.reminded;
+        const e = await svc.runEventAutomations(t.id); fired += e.fired; failed += e.failed;
+      }
+      return { tenants: tenants.length, escalated, reminded, fired, failed };
+    },
     accrue: async () => {
       const m = /^(\d{4})-(\d{2})$/.exec(arg ?? "");
       const now = new Date();
@@ -141,7 +156,7 @@ async function main() {
 
   let ok = true;
   if (cmd === "nightly") {
-    for (const name of ["auto-clock-out", "process-attendance", "leave-auto-approve", "shift-allowance", "job-changes", "workforce", "journeys", "probation", "leave-year-end", "invoices", "timesheet-reminders", "ledger-check", "scheduled-reports", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
+    for (const name of ["auto-clock-out", "process-attendance", "leave-auto-approve", "shift-allowance", "job-changes", "workforce", "journeys", "probation", "leave-year-end", "invoices", "timesheet-reminders", "ledger-check", "scheduled-reports", "governance", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
     if (new Date().getUTCDate() === 1) ok = (await record("accrue", jobs.accrue)) && ok;
   } else if (cmd && jobs[cmd]) {
     ok = await record(cmd, jobs[cmd]);

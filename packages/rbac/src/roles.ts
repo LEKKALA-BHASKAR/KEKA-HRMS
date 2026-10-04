@@ -77,6 +77,7 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
       P.REQUISITION_VIEW,
       P.AUDIT_LOG_VIEW, P.REPORT_VIEW, P.REPORT_BUILD,
       P.ATTRITION_RISK_VIEW,
+      P.WORKFLOW_MANAGE, P.COMPLIANCE_VIEW, P.COMPLIANCE_MANAGE,
     ],
   },
   {
@@ -102,6 +103,7 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
       P.ASSET_VIEW,
       P.HELPDESK_VIEW,
       P.REPORT_VIEW, P.ANALYTICS_VIEW,
+      P.COMPLIANCE_VIEW,
     ],
   },
   {
@@ -129,6 +131,7 @@ export const SYSTEM_ROLES: SystemRoleDefinition[] = [
       P.EXPENSE_VIEW, P.EXPENSE_APPROVE,
       P.AUDIT_LOG_VIEW, P.REPORT_VIEW, P.REPORT_BUILD,
       P.ANALYTICS_VIEW,
+      P.COMPLIANCE_VIEW,
     ],
   },
   {

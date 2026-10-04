@@ -1,0 +1,667 @@
+// ============================================================================
+//  BooS-HR — Governance: the generic workflow engine and automation rules,
+//  identity & access governance, and compliance & audit.
+// ============================================================================
+//  Workflow engine
+//    WorkflowDefinition is one version of a configurable approval route for
+//    an entity type (generic request, access request, webhook endpoint…).
+//    Editing a definition writes a new version row and retires the old one;
+//    a running WorkflowRequest keeps the version it started on, so its
+//    steps never change under it. WorkflowTask is one approver's slot on a
+//    step (several for a parallel step), WorkflowEvent the execution history.
+//
+//  Automation
+//    AutomationRule: a trigger (record created/updated, a date N days before
+//    or after an employee date, a workflow outcome) and a list of actions
+//    (email through the outbox, in-app notification, task, webhook, letter).
+//    AutomationRun records each firing once per (rule, subject, occasion).
+//
+//  Security & IAM
+//    Access requests, time-bound role grants (UserRoleAssignment.expiresAt),
+//    access certification campaigns, IP allowlist, change approvals for
+//    roles and security policy, and security alerts.
+//
+//  Compliance & audit
+//    Retention rules and their (dry) runs, legal holds, consent purposes
+//    and records, compliance checklist items with evidence, policy
+//    acknowledgement campaigns, audit findings, and the audit log hash chain.
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+//  WORKFLOW ENGINE
+// ---------------------------------------------------------------------------
+
+model WorkflowDefinition {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Stable across versions: the id of the first version.
+  family            String
+  version           Int     @default(1)
+  /// Only the latest version is current; older ones serve running requests.
+  isCurrent         Boolean @default(true)
+  /// An inactive current version routes nothing (the built-in route is used).
+  isActive          Boolean @default(true)
+  /// GENERIC_REQUEST | ACCESS_REQUEST | CHANGE_REQUEST | WEBHOOK_ENDPOINT |
+  /// AUTOMATION_RULE | RETENTION_PURGE | COMPLIANCE_ITEM | POLICY_PUBLISH | CONSENT_PURPOSE
+  entityType        String
+  name              String
+  description       String?
+  /// Routing filters: the definition only applies to subjects in this
+  /// department / location. Most specific (then highest priority) wins.
+  matchDepartmentId String?
+  matchLocationId   String?
+  priority          Int     @default(0)
+  /// Data validation on submission: [{ field, op, value, message }].
+  validations       Json?
+
+  createdBy    String?
+  createdAt    DateTime  @default(now())
+  supersededAt DateTime?
+
+  steps    WorkflowStep[]
+  requests WorkflowRequest[]
+
+  @@index([tenantId, entityType, isCurrent])
+  @@index([tenantId, family])
+  @@map("workflow_definitions")
+}
+
+model WorkflowStep {
+  id           String             @id @default(cuid())
+  definitionId String
+  definition   WorkflowDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+
+  order              Int
+  name               String
+  /// REPORTING_MANAGER | SKIP_MANAGER | DEPARTMENT_HEAD | ROLE | USER | PERMISSION
+  approverType       String
+  approverRoleId     String?
+  approverUserId     String?
+  /// For PERMISSION: holders of this permission.
+  approverPermission String?
+  /// ANY: the first approver decides (parallel-any). ALL: every approver must approve.
+  mode               String  @default("ANY")
+  /// Optional condition: the step runs only when it holds.
+  /// field: amount | department | location | privileged ; op: GT | GTE | LT | LTE | EQ | NEQ
+  conditionField     String?
+  conditionOp        String?
+  conditionValue     String?
+  /// Hours before the step is escalated; null never escalates.
+  slaHours           Int?
+  /// MANAGER_OF_APPROVER | USER | ADMINS
+  escalateTo         String?
+  escalateUserId     String?
+
+  @@index([definitionId, order])
+  @@map("workflow_steps")
+}
+
+model WorkflowRequest {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// The definition version it runs on; null when the built-in route was used.
+  definitionId String?
+  definition   WorkflowDefinition? @relation(fields: [definitionId], references: [id], onDelete: SetNull)
+  entityType   String
+  /// The record the request is about (an AccessRequest, a webhook…).
+  entityId     String?
+  /// For GENERIC_REQUEST: the category the employee picked.
+  category     String?
+  title        String
+  details      String?
+  amount       Decimal?            @db.Decimal(18, 2)
+  data         Json?
+
+  requesterUserId   String
+  subjectEmployeeId String?
+
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN | ERROR
+  status      String    @default("PENDING")
+  currentStep Int       @default(0)
+  /// Built-in route snapshot when no definition applied: [{ name, approverUserIds }]
+  route       Json?
+  lastError   String?
+  decidedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tasks  WorkflowTask[]
+  events WorkflowEvent[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, entityType, entityId])
+  @@index([requesterUserId])
+  @@map("workflow_requests")
+}
+
+model WorkflowTask {
+  id        String          @id @default(cuid())
+  tenantId  String
+  requestId String
+  request   WorkflowRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  stepOrder           Int
+  stepName            String
+  mode                String    @default("ANY")
+  approverUserId      String
+  /// Set when a delegation routed the task away from its approver.
+  delegatedFromUserId String?
+  /// PENDING | APPROVED | REJECTED | SKIPPED | CANCELLED | ESCALATED
+  status              String    @default("PENDING")
+  comment             String?
+  dueAt               DateTime?
+  escalatedAt         DateTime?
+  remindedAt          DateTime?
+  decidedAt           DateTime?
+  createdAt           DateTime  @default(now())
+
+  @@index([tenantId, approverUserId, status])
+  @@index([requestId, stepOrder])
+  @@index([status, dueAt])
+  @@map("workflow_tasks")
+}
+
+model WorkflowEvent {
+  id          String          @id @default(cuid())
+  tenantId    String
+  requestId   String
+  request     WorkflowRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  /// SUBMITTED | STEP_STARTED | APPROVED | REJECTED | ESCALATED | DELEGATED |
+  /// SKIPPED | COMPLETED | WITHDRAWN | REMINDED | ERROR | RETRIED | AUTO_APPROVED
+  kind        String
+  actorUserId String?
+  note        String?
+  createdAt   DateTime        @default(now())
+
+  @@index([requestId, createdAt])
+  @@map("workflow_events")
+}
+
+/// Out-of-office delegation: tasks that would go to the delegator go to the
+/// delegate while it is in force.
+model ApproverDelegation {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  delegatorUserId String
+  delegateUserId  String
+  startsOn        DateTime
+  endsOn          DateTime
+  /// Empty: every entity type.
+  entityTypes     String[]  @default([])
+  reason          String?
+  revokedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([tenantId, delegatorUserId])
+  @@map("approver_delegations")
+}
+
+model AutomationRule {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name         String
+  description  String?
+  /// EMPLOYEE_CREATED | EMPLOYEE_UPDATED | REQUEST_APPROVED | REQUEST_REJECTED |
+  /// PROBATION_END | BIRTHDAY | WORK_ANNIVERSARY | CONTRACT_END | DOCUMENT_EXPIRY
+  trigger      String
+  /// Date triggers: fire this many days before the date (negative: after).
+  offsetDays   Int       @default(0)
+  /// Optional filters on the subject employee.
+  departmentId String?
+  locationId   String?
+  /// For REQUEST_* triggers: only this entity type (null: any).
+  entityType   String?
+  /// [{ type: EMAIL|NOTIFY|TASK|WEBHOOK|LETTER, to, subject, body, endpointId, templateId, dueInDays }]
+  actions      Json
+  /// Also a notification rule: shown under Notification rules.
+  /// DRAFT | PENDING_APPROVAL | ACTIVE | PAUSED
+  status       String    @default("DRAFT")
+  /// Event triggers look at records changed after this point.
+  watermark    DateTime  @default(now())
+  lastRunAt    DateTime?
+  createdBy    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  runs AutomationRun[]
+
+  @@index([tenantId, status])
+  @@map("automation_rules")
+}
+
+model AutomationRun {
+  id          String         @id @default(cuid())
+  tenantId    String
+  ruleId      String
+  rule        AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  /// Once per subject and occasion, e.g. "emp_123:2026-10-04".
+  dedupeKey   String
+  subjectType String
+  subjectId   String
+  /// SUCCESS | FAILED | PARTIAL
+  status      String
+  actionsRun  Int            @default(0)
+  detail      Json?
+  error       String?
+  createdAt   DateTime       @default(now())
+
+  @@unique([ruleId, dedupeKey])
+  @@index([tenantId, createdAt])
+  @@map("automation_runs")
+}
+
+/// A to-do created by an automation rule (or by a workflow), worked from the inbox.
+model WorkTask {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title             String
+  description       String?
+  assigneeUserId    String
+  dueOn             DateTime?
+  /// OPEN | DONE
+  status            String    @default("OPEN")
+  sourceType        String?
+  sourceId          String?
+  subjectEmployeeId String?
+  completedAt       DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, assigneeUserId, status])
+  @@map("work_tasks")
+}
+
+// ---------------------------------------------------------------------------
+//  SECURITY & IAM
+// ---------------------------------------------------------------------------
+
+/// Tenant-wide governance switches.
+model GovernanceSetting {
+  id       String @id @default(cuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Refuse sign-in from addresses outside the allowlist.
+  ipAllowlistEnforced  Boolean @default(false)
+  /// Role grants and role permission edits need a second administrator.
+  roleChangeApproval   Boolean @default(false)
+  /// Security policy (password, lockout, 2FA) changes need a second administrator.
+  policyChangeApproval Boolean @default(false)
+  /// New webhook endpoints stay inactive until the approval workflow approves them.
+  webhookApproval      Boolean @default(false)
+  /// Logins unused this long are reported inactive.
+  inactiveDays         Int     @default(90)
+  /// Failed sign-ins for one account within an hour that raise an alert.
+  failedLoginAlert     Int     @default(5)
+  /// Hours an approval step waits before a reminder.
+  reminderHours        Int     @default(24)
+
+  updatedAt DateTime @updatedAt
+
+  @@map("governance_settings")
+}
+
+model IpAllowRule {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// An IPv4/IPv6 address or CIDR range.
+  cidr      String
+  label     String?
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, cidr])
+  @@map("ip_allow_rules")
+}
+
+/// An employee asks for a role; the workflow decides; the grant may expire.
+model AccessRequest {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  requesterUserId   String
+  /// Who gets the role (usually the requester).
+  targetUserId      String
+  roleId            String
+  justification     String
+  /// Requested duration; null is permanent.
+  durationDays      Int?
+  privileged        Boolean   @default(false)
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN | EXPIRED | REVOKED
+  status            String    @default("PENDING")
+  workflowRequestId String?
+  assignmentId      String?
+  expiresAt         DateTime?
+  decidedAt         DateTime?
+  revokedAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@index([requesterUserId])
+  @@map("access_requests")
+}
+
+model AccessReviewCampaign {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name           String
+  /// MANAGER: each user's reporting manager reviews (falls back to the owner). USER: one reviewer.
+  reviewerMode   String    @default("USER")
+  reviewerUserId String?
+  /// Roles in scope; empty is every role.
+  roleIds        String[]  @default([])
+  dueOn          DateTime
+  /// ACTIVE | COMPLETED
+  status         String    @default("ACTIVE")
+  /// What happens to undecided items at close: KEEP | REVOKE
+  closeAction    String    @default("KEEP")
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  items AccessReviewItem[]
+
+  @@index([tenantId, status])
+  @@map("access_review_campaigns")
+}
+
+model AccessReviewItem {
+  id         String               @id @default(cuid())
+  tenantId   String
+  campaignId String
+  campaign   AccessReviewCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  userId         String
+  roleId         String
+  roleName       String
+  assignmentId   String
+  reviewerUserId String
+  /// PENDING | CONFIRMED | REVOKED
+  decision       String    @default("PENDING")
+  note           String?
+  decidedAt      DateTime?
+  decidedBy      String?
+
+  @@index([campaignId, decision])
+  @@index([tenantId, reviewerUserId, decision])
+  @@map("access_review_items")
+}
+
+/// A role grant / revoke, a role's permission set, or the security policy,
+/// waiting for a second administrator (maker-checker).
+model ChangeRequest {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// ROLE_GRANT | ROLE_PERMISSIONS | SECURITY_POLICY
+  kind              String
+  summary           String
+  payload           Json
+  /// PENDING | APPLIED | REJECTED | WITHDRAWN | FAILED
+  status            String    @default("PENDING")
+  requestedBy       String
+  workflowRequestId String?
+  error             String?
+  appliedAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@map("change_requests")
+}
+
+model SecurityAlert {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// FAILED_LOGINS | IP_BLOCKED | PRIVILEGED_GRANT | ACCESS_EXPIRED
+  kind           String
+  /// LOW | MEDIUM | HIGH
+  severity       String   @default("MEDIUM")
+  summary        String
+  userId         String?
+  dedupeKey      String
+  /// OPEN | ACKNOWLEDGED
+  status         String   @default("OPEN")
+  acknowledgedBy String?
+  createdAt      DateTime @default(now())
+
+  @@unique([tenantId, dedupeKey])
+  @@index([tenantId, status])
+  @@map("security_alerts")
+}
+
+// ---------------------------------------------------------------------------
+//  COMPLIANCE & AUDIT
+// ---------------------------------------------------------------------------
+
+model RetentionRule {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// LOGIN_EVENTS | NOTIFICATIONS | EMAIL_OUTBOX | WEBHOOK_DELIVERIES | AUDIT_LOGS | EXITED_EMPLOYEES
+  dataType      String
+  retentionDays Int
+  /// PURGE | ANONYMISE
+  action        String   @default("PURGE")
+  /// The nightly job applies it; otherwise only on approval of a purge request.
+  autoApply     Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  description   String?
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  runs RetentionRun[]
+
+  @@unique([tenantId, dataType])
+  @@map("retention_rules")
+}
+
+model RetentionRun {
+  id       String        @id @default(cuid())
+  tenantId String
+  ruleId   String
+  rule     RetentionRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  dryRun            Boolean
+  cutoff            DateTime
+  matched           Int
+  heldBack          Int      @default(0)
+  affected          Int      @default(0)
+  /// DRY_RUN | APPLIED | PENDING_APPROVAL | REJECTED | FAILED
+  status            String
+  sample            Json?
+  workflowRequestId String?
+  runBy             String?
+  error             String?
+  createdAt         DateTime @default(now())
+
+  @@index([ruleId, createdAt])
+  @@map("retention_runs")
+}
+
+model LegalHold {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name       String
+  reason     String
+  /// The employee whose records are held; null holds the data type tenant-wide.
+  employeeId String?
+  /// Null holds every data type.
+  dataType   String?
+  matterRef  String?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  releasedAt DateTime?
+  releasedBy String?
+
+  @@index([tenantId, releasedAt])
+  @@map("legal_holds")
+}
+
+model ConsentPurpose {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  key         String
+  title       String
+  description String
+  version     Int       @default(1)
+  /// Required to use the product (e.g. payroll processing).
+  mandatory   Boolean   @default(false)
+  /// DRAFT | PENDING_APPROVAL | PUBLISHED | RETIRED
+  status      String    @default("DRAFT")
+  publishedAt DateTime?
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+
+  records ConsentRecord[]
+
+  @@unique([tenantId, key, version])
+  @@index([tenantId, status])
+  @@map("consent_purposes")
+}
+
+model ConsentRecord {
+  id          String         @id @default(cuid())
+  tenantId    String
+  purposeId   String
+  purpose     ConsentPurpose @relation(fields: [purposeId], references: [id], onDelete: Cascade)
+  employeeId  String
+  version     Int
+  /// GRANTED | DECLINED | WITHDRAWN
+  decision    String
+  ipAddress   String?
+  recordedAt  DateTime       @default(now())
+  withdrawnAt DateTime?
+
+  @@unique([purposeId, employeeId])
+  @@index([tenantId, employeeId])
+  @@map("consent_records")
+}
+
+/// A statutory / internal compliance obligation with a due date, an owner,
+/// evidence and a review.
+model ComplianceItem {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title             String
+  description       String?
+  /// STATUTORY | LABOUR | TAX | DATA_PROTECTION | INTERNAL
+  category          String    @default("STATUTORY")
+  /// The law / regulation / control it maps to, e.g. "EPF Act s.6".
+  regulation        String?
+  authority         String?
+  /// ONE_TIME | MONTHLY | QUARTERLY | ANNUAL
+  frequency         String    @default("ONE_TIME")
+  dueOn             DateTime
+  ownerUserId       String
+  reviewerUserId    String?
+  /// OPEN | IN_PROGRESS | SUBMITTED | COMPLETED | EXCEPTION
+  status            String    @default("OPEN")
+  evidenceFileIds   String[]  @default([])
+  notes             String?
+  exceptionReason   String?
+  workflowRequestId String?
+  submittedAt       DateTime?
+  completedAt       DateTime?
+  /// The occurrence this one was rolled forward from.
+  previousId        String?
+  createdBy         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([tenantId, status, dueOn])
+  @@map("compliance_items")
+}
+
+/// Acknowledgement campaign for a policy document (OrgDocument).
+model PolicyCampaign {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  documentId        String
+  name              String
+  /// Empty: everyone active.
+  departmentIds     String[]  @default([])
+  dueOn             DateTime
+  /// PENDING_APPROVAL | ACTIVE | CLOSED
+  status            String    @default("ACTIVE")
+  lastRemindedAt    DateTime?
+  workflowRequestId String?
+  createdBy         String?
+  createdAt         DateTime  @default(now())
+  closedAt          DateTime?
+
+  @@index([tenantId, status])
+  @@map("policy_campaigns")
+}
+
+/// An audit / compliance finding with its corrective action.
+model AuditFinding {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title            String
+  detail           String?
+  /// LOW | MEDIUM | HIGH | CRITICAL
+  severity         String    @default("MEDIUM")
+  /// INTERNAL_AUDIT | EXTERNAL_AUDIT | ACCESS_REVIEW | SELF_ASSESSMENT
+  source           String    @default("INTERNAL_AUDIT")
+  complianceItemId String?
+  ownerUserId      String
+  correctiveAction String?
+  dueOn            DateTime
+  /// OPEN | IN_REMEDIATION | CLOSED
+  status           String    @default("OPEN")
+  escalatedAt      DateTime?
+  closedAt         DateTime?
+  closureNote      String?
+  createdBy        String?
+  createdAt        DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@map("audit_findings")
+}
+
+/// The audit log hash chain. Each sealed entry's hash covers its content and
+/// the previous hash, so an edited or deleted entry breaks verification.
+/// auditLogId deliberately has no foreign key: a deleted entry must leave its
+/// seal behind to be detected.
+model AuditSeal {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  seq        Int
+  auditLogId String   @unique
+  prevHash   String
+  hash       String
+  sealedAt   DateTime @default(now())
+
+  @@unique([tenantId, seq])
+  @@map("audit_seals")
+}

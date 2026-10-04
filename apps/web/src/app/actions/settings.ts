@@ -2,7 +2,7 @@
 
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
-import { deliverOutbox } from "@keka/services";
+import { deliverOutbox, governanceSettings, requestChange } from "@keka/services";
 import { requireAuth } from "@/lib/context";
 import { fileTransport } from "@/lib/mail";
 import { z, parseForm, toErrorState, writeAudit, actionDone as done, zName, zRequiredNumber, zNumber, zBool, type ActionState } from "@/lib/forms";
@@ -58,6 +58,10 @@ export async function saveSecurityPolicy(_prev: ActionState, formData: FormData)
   const parsed = parseForm(securitySchema, formData);
   if (parsed.state) return parsed.state;
   const data = { ...parsed.data, passwordExpiryDays: parsed.data.passwordExpiryDays ?? null };
+  if ((await governanceSettings(viewer.tenantId)).policyChangeApproval) {
+    const res = await requestChange({ tenantId: viewer.tenantId, requestedBy: viewer.user.id, kind: "SECURITY_POLICY", summary: `Security policy: 2FA ${data.twoFactorPolicy.toLowerCase()}, ${data.minPasswordLength}+ chars, lockout after ${data.maxFailedAttempts}`, payload: data });
+    return res.ok ? done(["/admin/settings", "/admin/security"], res.message) : { ok: false, message: res.message };
+  }
   const before = await prisma.tenantSecuritySetting.findUnique({ where: { tenantId: viewer.tenantId } });
   await prisma.tenantSecuritySetting.upsert({ where: { tenantId: viewer.tenantId }, create: { tenantId: viewer.tenantId, ...data }, update: data });
   await writeAudit(viewer, { module: "AUTH", action: "UPDATE", entityType: "TenantSecuritySetting", entityId: viewer.tenantId, summary: `Security policy: 2FA ${data.twoFactorPolicy.toLowerCase()}, ${data.minPasswordLength}+ chars, lockout after ${data.maxFailedAttempts}`, oldValue: before ?? undefined, newValue: data });

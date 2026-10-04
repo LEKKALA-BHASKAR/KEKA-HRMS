@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { selectStructureForCtc } from "@keka/payroll";
-import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision, requestJobChange, jobChangeLabel, jobChangeDue, beyondPlanWarning } from "@keka/services";
+import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision, requestJobChange, jobChangeLabel, jobChangeDue, beyondPlanWarning, employeeOnHold } from "@keka/services";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
 import {
@@ -885,6 +885,8 @@ export async function deleteSubRecord(_prev: ActionState, formData: FormData): P
   };
   const fn = deleters[kind];
   if (!fn) return { ok: false, message: "Unknown record type" };
+  // A legal hold (Admin › Compliance) freezes the person's records.
+  if (await employeeOnHold(viewer.tenantId, employeeId)) return { ok: false, message: "This employee's records are under a legal hold and cannot be deleted." };
   await fn();
   await recomputeCompletion(employeeId);
   return done([`/employees/${employeeId}`], "Removed.");

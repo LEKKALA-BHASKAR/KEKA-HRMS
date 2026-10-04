@@ -57,6 +57,8 @@ model WebhookEndpoint {
   /// Shared secret for the X-Keka-Signature HMAC; shown once at creation.
   secret      String
   isActive    Boolean   @default(true)
+  /// PENDING_APPROVAL until the endpoint's approval workflow approves it; APPROVED; REJECTED.
+  approvalStatus String  @default("APPROVED")
   /// Consecutive failed deliveries; the endpoint is paused at the limit.
   failureCount Int      @default(0)
   lastSuccessAt DateTime?

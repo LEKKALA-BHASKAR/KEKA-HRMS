@@ -4,6 +4,7 @@ import { timeSources } from "./time";
 import { coreSources } from "./sources";
 import { jobChangeSources } from "./job-changes";
 import { talentSources } from "./talent";
+import { workflowSources } from "./workflows";
 import type { SourceFactory, TakeSource } from "./types";
 
 /**
@@ -17,6 +18,7 @@ export const SOURCE_FACTORIES: SourceFactory[] = [
   coreSources,
   jobChangeSources,
   talentSources,
+  workflowSources,
 ];
 
 export async function takeActionSources(viewer: Viewer): Promise<TakeSource[]> {

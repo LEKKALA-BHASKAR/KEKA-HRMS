@@ -77,6 +77,11 @@ export * from "./timesheet-policy";
 export * from "./psa";
 export * from "./payroll-depth-math";
 export * from "./payroll-depth";
+export * from "./governance-math";
+export * from "./governance-core";
+export * from "./automation";
+export * from "./workflow-engine";
+export * from "./governance";
 // psa-math and import-math both define parseCsv; PSA's trims unquoted fields, so its callers take it as psaParseCsv.
 export { parseCsv } from "./import-math";
 export { parseCsv as psaParseCsv } from "./psa-math";

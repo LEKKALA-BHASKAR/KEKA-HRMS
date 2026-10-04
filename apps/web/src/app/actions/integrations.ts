@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { prisma } from "@keka/db";
 import { PERMISSIONS as P } from "@keka/rbac";
-import { createApiKey, revokeApiKey, API_SCOPES, createWebhook, setWebhookActive, deleteWebhook, emitEvent, retryDelivery, type ApiScope } from "@keka/services";
+import { createApiKey, revokeApiKey, API_SCOPES, createWebhook, setWebhookActive, deleteWebhook, emitEvent, retryDelivery, governanceSettings, startWorkflow, type ApiScope } from "@keka/services";
 import { requireAuth } from "@/lib/context";
 import { actionDone as done, parseForm, writeAudit, toErrorState, zName, zOptionalId, type ActionState } from "@/lib/forms";
 
@@ -82,6 +82,14 @@ export async function createWebhookAction(_prev: ActionState, formData: FormData
   });
   if (!res.ok) return { ok: false, message: res.message };
   await writeAudit(viewer, { module: "SYSTEM", action: "CREATE", entityType: "WebhookEndpoint", entityId: res.id, summary: `Added webhook ${String(formData.get("url"))}` });
+  if (res.id && (await governanceSettings(viewer.tenantId)).webhookApproval) {
+    // Inactive until a security administrator approves it (Admin > Security).
+    await prisma.webhookEndpoint.update({ where: { id: res.id }, data: { isActive: false, approvalStatus: "PENDING_APPROVAL" } });
+    const wf = await startWorkflow({ tenantId: viewer.tenantId, entityType: "WEBHOOK_ENDPOINT", entityId: res.id, title: `Approve webhook endpoint ${String(formData.get("url"))}`, requesterUserId: viewer.user.id, subjectEmployeeId: viewer.employee?.id ?? null });
+    const after = await prisma.webhookEndpoint.findUnique({ where: { id: res.id }, select: { approvalStatus: true } });
+    done(["/admin/integrations"], "");
+    return { ok: true, message: `${res.message} ${after?.approvalStatus === "APPROVED" ? "It is active." : wf.ok ? "It stays paused until approved." : wf.message}`, secret: res.secret };
+  }
   // As with API keys: keep the one-time secret on screen.
   return { ok: true, message: res.message, secret: res.secret };
 }
@@ -90,8 +98,9 @@ export async function webhookOpAction(_prev: ActionState, formData: FormData): P
   const viewer = await requireAuth(P.API_KEY_MANAGE);
   const id = String(formData.get("id") ?? "");
   const op = String(formData.get("op") ?? "");
-  const ep = await prisma.webhookEndpoint.findFirst({ where: { id, tenantId: viewer.tenantId }, select: { id: true, url: true } });
+  const ep = await prisma.webhookEndpoint.findFirst({ where: { id, tenantId: viewer.tenantId }, select: { id: true, url: true, approvalStatus: true } });
   if (!ep) return { ok: false, message: "Webhook not found." };
+  if ((op === "resume" || op === "ping") && ep.approvalStatus !== "APPROVED") return { ok: false, message: ep.approvalStatus === "REJECTED" ? "This endpoint was rejected; add it again to resubmit." : "This endpoint is waiting for approval." };
   let res: { ok: boolean; message: string };
   if (op === "ping") {
     const queued = await emitEvent(viewer.tenantId, "ping", { message: "Test event from BooS-HR" }, id);

@@ -25,6 +25,8 @@ export const WEBHOOK_EVENTS = {
   "employee.exited": "An employee's exit is completed",
   "leave.approved": "A leave request is approved",
   "payroll.finalized": "A payroll run is finalised",
+  "workflow.completed": "A workflow request is approved or rejected",
+  "automation.triggered": "An automation rule with a webhook action fires",
   "ping": "A test event sent from settings",
 } as const;
 export type WebhookEvent = keyof typeof WEBHOOK_EVENTS;

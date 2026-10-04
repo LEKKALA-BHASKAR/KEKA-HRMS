@@ -159,6 +159,7 @@ systemctl restart keka-web
 cat > /etc/cron.d/keka <<EOF
 */5 * * * * ${APP_USER} cd ${APP_DIR} && set -a && . ./.env && set +a && npm run jobs -- deliver-mail >> /var/log/keka-jobs.log 2>&1
 30 1 * * *  ${APP_USER} cd ${APP_DIR} && set -a && . ./.env && set +a && npm run jobs -- nightly >> /var/log/keka-jobs.log 2>&1
+15 * * * * ${APP_USER} cd ${APP_DIR} && set -a && . ./.env && set +a && npm run jobs -- automations >> /var/log/keka-jobs.log 2>&1
 EOF
 touch /var/log/keka-jobs.log && chown "$APP_USER" /var/log/keka-jobs.log
 
