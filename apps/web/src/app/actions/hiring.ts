@@ -7,7 +7,7 @@ import {
   draftOffer, approveOffer, extendOffer, recordOfferResponse, completeHire, notify,
   raiseRequisition, updateRequisition, decideRequisitions, archiveRequisition, isSuperApprover, saveScorecard,
   requisitionProblems, parseKit, plainText, type RequisitionInput,
-  parseManualBreakup, issueOfferLink, revokeOfferLink,
+  parseManualBreakup, issueOfferLink, revokeOfferLink, beyondPlanWarning,
 } from "@keka/services";
 import { foreignReference } from "@/lib/ownership";
 import { requireAuth, requireViewer, can, canAny, type Viewer } from "@/lib/context";
@@ -86,7 +86,9 @@ export async function raiseRequisitionAction(_prev: ActionState, formData: FormD
   const res = await raiseRequisition(viewer.tenantId, input, viewer.user.id);
   if (!res.ok) return { ok: false, message: res.message, values: values(formData) };
   await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Requisition", entityId: res.id!, summary: "Created Requisition", newValue: { code: res.code, title: input.title } });
-  return { ...done(REQ_PATHS, res.message), values: { id: res.id! } };
+  // Requisitions past the department's active workforce plan are allowed, but flagged.
+  const beyondPlan = await beyondPlanWarning(viewer.tenantId, input.departmentId || null);
+  return { ...done(REQ_PATHS, res.message + beyondPlan), values: { id: res.id! } };
 }
 
 export async function updateRequisitionAction(_prev: ActionState, formData: FormData): Promise<ActionState> {

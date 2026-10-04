@@ -165,6 +165,9 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         ? { label: "Employees", href: "/employees", paths: ["/employees", "/directory"] }
         : { label: "Employees", href: "/directory" },
       can(viewer, P.ORG_MANAGE) && { label: "Org Structure", href: "/org" },
+      can(viewer, P.POSITION_VIEW) && { label: "Positions", href: "/positions" },
+      can(viewer, P.WORKFORCE_PLAN_VIEW) && { label: "Workforce Planning", href: "/workforce-planning" },
+      can(viewer, P.CONTINGENT_VIEW) && { label: "Contingent Workforce", href: "/contingent" },
       can(viewer, P.ONBOARDING_VIEW) && { label: "Onboarding", href: "/onboarding" },
       can(viewer, P.PROBATION_MANAGE) && { label: "Probation", href: "/probation", count: counts.probation },
       canAny(viewer, [P.EXIT_MANAGE, P.EXIT_APPROVE, P.FNF_MANAGE]) && { label: "Exits", href: "/exits", count: counts.exits },

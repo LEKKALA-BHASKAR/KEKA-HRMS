@@ -12,6 +12,16 @@ export const PERMISSIONS = {
   ORG_MANAGE: "org.structure.manage",
   ORG_ENTITY_MANAGE: "org.legal_entity.manage",
   ORG_SETTINGS_MANAGE: "org.settings.manage",
+  // Positions & job architecture, workforce planning, contingent workforce
+  POSITION_VIEW: "org.position.view",
+  POSITION_MANAGE: "org.position.manage",
+  POSITION_APPROVE: "org.position.approve",
+  WORKFORCE_PLAN_VIEW: "org.workforce_plan.view",
+  WORKFORCE_PLAN_MANAGE: "org.workforce_plan.manage",
+  WORKFORCE_PLAN_APPROVE: "org.workforce_plan.approve",
+  CONTINGENT_VIEW: "org.contingent.view",
+  CONTINGENT_MANAGE: "org.contingent.manage",
+  CONTINGENT_APPROVE: "org.contingent.approve",
 
   // --- Employees ----------------------------------------------------------
   EMPLOYEE_VIEW: "employee.record.view",
@@ -212,6 +222,21 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.ORG_MANAGE, label: "Manage org structure" },
       { key: PERMISSIONS.ORG_ENTITY_MANAGE, label: "Manage legal entities" },
       { key: PERMISSIONS.ORG_SETTINGS_MANAGE, label: "Manage org settings" },
+    ],
+  },
+  {
+    module: "workforce",
+    label: "Positions & Workforce",
+    permissions: [
+      { key: PERMISSIONS.POSITION_VIEW, label: "View positions & job architecture" },
+      { key: PERMISSIONS.POSITION_MANAGE, label: "Manage positions, jobs, families & levels" },
+      { key: PERMISSIONS.POSITION_APPROVE, label: "Approve positions & job descriptions" },
+      { key: PERMISSIONS.WORKFORCE_PLAN_VIEW, label: "View workforce plans & budgets" },
+      { key: PERMISSIONS.WORKFORCE_PLAN_MANAGE, label: "Manage workforce plans, budgets & capacity" },
+      { key: PERMISSIONS.WORKFORCE_PLAN_APPROVE, label: "Approve workforce plans & budgets" },
+      { key: PERMISSIONS.CONTINGENT_VIEW, label: "View contingent workforce" },
+      { key: PERMISSIONS.CONTINGENT_MANAGE, label: "Manage contractors, vendors & contracts" },
+      { key: PERMISSIONS.CONTINGENT_APPROVE, label: "Approve contracts, extensions & payment profiles" },
     ],
   },
   {

@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { selectStructureForCtc } from "@keka/payroll";
-import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision, requestJobChange, jobChangeLabel, jobChangeDue } from "@keka/services";
+import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision, requestJobChange, jobChangeLabel, jobChangeDue, beyondPlanWarning } from "@keka/services";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
 import {
@@ -340,7 +340,9 @@ export async function createEmployee(_prev: ActionState, formData: FormData): Pr
         (d.inviteToPortal ? " A login was created — send them a password reset to activate it." : "") +
         (journey.created ? ` Onboarding started with ${journey.tasks} task(s).` : "") +
         (probation?.created ? ` ${probation.message}` : "") +
-        (docs ? ` Requested ${docs} mandatory document(s).` : ""),
+        (docs ? ` Requested ${docs} mandatory document(s).` : "") +
+        // Hiring past the department's active workforce plan is allowed, but flagged.
+        (await beyondPlanWarning(viewer.tenantId, d.departmentId)),
     );
   } catch (err) {
     return toErrorState(err);

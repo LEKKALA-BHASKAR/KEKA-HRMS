@@ -244,6 +244,19 @@ model Tenant {
   probationPolicies ProbationPolicy[]
   probations        EmployeeProbation[]
 
+  // --- Workforce: positions, planning, contingent (30-workforce) ---
+  workforceRequests   WorkforceRequest[]
+  jobFamilies         JobFamily[]
+  jobLevels           JobLevel[]
+  jobProfiles         JobProfile[]
+  positions           Position[]
+  workforcePlans      WorkforcePlan[]
+  workforceBudgets    WorkforceBudget[]
+  capacityPlans       CapacityPlan[]
+  contingentVendors   ContingentVendor[]
+  contingentWorkers   ContingentWorker[]
+  contractorRateCards ContractorRateCard[]
+
   @@index([subdomain])
   @@map("tenants")
 }

@@ -1,0 +1,664 @@
+// ============================================================================
+//  BooS-HR — Workforce: job architecture and positions, workforce planning
+//  and budgeting, contingent workforce
+// ============================================================================
+//  Job architecture: JobFamily (nested) × JobLevel → JobProfile (the job
+//  catalogue, with versioned descriptions). A Position is a budgeted seat for
+//  a job in a department/location/cost centre, vacant, filled (incumbent),
+//  frozen or closed. Positions, families, levels and job descriptions go
+//  through approval (WorkforceRequest) before they become active.
+//
+//  Workforce planning: a WorkforcePlan per fiscal year (and optionally a
+//  department) holds headcount lines; actual, pre-joining, exiting and open
+//  requisition counts are computed live from employees and requisitions.
+//  Scenarios are copies of a plan with changed assumptions. Budgets are
+//  versioned salary/benefit/contractor envelopes compared with payroll.
+//  Capacity plans set FTE demand per role against live supply.
+//
+//  Contingent workforce: agencies (ContingentVendor), contractors and vendor
+//  workers (ContingentWorker — never employees), their contract assignments,
+//  payment profile, rate cards, timesheets, expenses, SOW milestones,
+//  access requests and feedback.
+//
+//  Only root records carry a Tenant relation (so a deleted tenant takes them
+//  with it); children cascade from their parent. Links to org records
+//  (department, location, employee …) are plain id columns validated in the
+//  action layer, so this file adds nothing to those models.
+// ============================================================================
+
+/// Lifecycle of an approvable master (job family, level, job, plan, budget).
+enum WorkforceRecordStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  REJECTED
+  RETIRED
+}
+
+enum PositionStatus {
+  /// Requested, waiting on approval.
+  PROPOSED
+  VACANT
+  FILLED
+  FROZEN
+  CLOSED
+  REJECTED
+}
+
+enum WorkforceRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+// ---------------------------------------------------------------------------
+//  Approvals shared by every workforce object
+// ---------------------------------------------------------------------------
+
+/// One request → decision. `kind` names what approving does
+/// (services/workforce: REQUEST_KINDS). The requester can never decide it.
+model WorkforceRequest {
+  id         String                 @id @default(cuid())
+  tenantId   String
+  tenant     Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind       String
+  entityType String
+  entityId   String
+  /// Short human label of the record, frozen at request time.
+  label      String
+  /// What the request changes (new end date, new budget …).
+  payload    Json?
+  reason     String?
+  status     WorkforceRequestStatus @default(PENDING)
+
+  requestedBy  String
+  requestedAt  DateTime  @default(now())
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
+
+  @@index([tenantId, status])
+  @@index([tenantId, entityType, entityId])
+  @@map("workforce_requests")
+}
+
+// ---------------------------------------------------------------------------
+//  Job architecture
+// ---------------------------------------------------------------------------
+
+model JobFamily {
+  id          String                @id @default(cuid())
+  tenantId    String
+  tenant      Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  code        String?
+  description String?
+  /// Sub-family of; families nest into a job family architecture.
+  parentId    String?
+  parent      JobFamily?            @relation("JobFamilyTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    JobFamily[]           @relation("JobFamilyTree")
+  status      WorkforceRecordStatus @default(DRAFT)
+  createdBy   String?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  jobs JobProfile[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+  @@map("job_families")
+}
+
+model JobLevel {
+  id               String                @id @default(cuid())
+  tenantId         String
+  tenant           Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name             String
+  code             String?
+  /// Seniority order; higher is more senior.
+  rank             Int                   @default(0)
+  /// IC | MANAGER | EXECUTIVE
+  track            String                @default("IC")
+  /// What is expected at this career level.
+  careerDefinition String?
+  /// Maps onto the existing band and the pay grade (compensation range).
+  bandId           String?
+  payGradeId       String?
+  status           WorkforceRecordStatus @default(DRAFT)
+  createdBy        String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  jobs JobProfile[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+  @@map("job_levels")
+}
+
+/// The job catalogue: what the work is, independent of any seat.
+model JobProfile {
+  id               String                @id @default(cuid())
+  tenantId         String
+  tenant           Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// "JOB-0001"
+  code             String
+  title            String
+  familyId         String?
+  family           JobFamily?            @relation(fields: [familyId], references: [id], onDelete: SetNull)
+  levelId          String?
+  level            JobLevel?             @relation(fields: [levelId], references: [id], onDelete: SetNull)
+  /// The org job title employees in this job carry.
+  jobTitleId       String?
+  summary          String?
+  responsibilities String?
+  qualifications   String?
+  competencies     String[]              @default([])
+  skills           String[]              @default([])
+  /// Current approved description version (JobDescriptionVersion.version).
+  version          Int                   @default(1)
+  status           WorkforceRecordStatus @default(DRAFT)
+  createdBy        String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  versions  JobDescriptionVersion[]
+  positions Position[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@map("job_profiles")
+}
+
+/// Every saved revision of a job description; the approved one is current.
+model JobDescriptionVersion {
+  id               String                @id @default(cuid())
+  jobId            String
+  job              JobProfile            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  version          Int
+  summary          String?
+  responsibilities String?
+  qualifications   String?
+  competencies     String[]              @default([])
+  skills           String[]              @default([])
+  status           WorkforceRecordStatus @default(DRAFT)
+  createdBy        String?
+  createdAt        DateTime              @default(now())
+  approvedBy       String?
+  approvedAt       DateTime?
+
+  @@unique([jobId, version])
+  @@map("job_description_versions")
+}
+
+model Position {
+  id                   String         @id @default(cuid())
+  tenantId             String
+  tenant               Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Position control number, "POS-0001".
+  code                 String
+  title                String
+  jobId                String?
+  job                  JobProfile?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  departmentId         String?
+  locationId           String?
+  costCenterId         String?
+  payGradeId           String?
+  reportsToId          String?
+  reportsTo            Position?      @relation("PositionTree", fields: [reportsToId], references: [id], onDelete: SetNull)
+  directReports        Position[]     @relation("PositionTree")
+  status               PositionStatus @default(PROPOSED)
+  /// Counts toward approved headcount.
+  isHeadcount          Boolean        @default(true)
+  fte                  Decimal        @default(1) @db.Decimal(4, 2)
+  budgetedAnnualSalary Decimal?       @db.Decimal(18, 2)
+  /// BUDGETED | UNBUDGETED
+  budgetStatus         String         @default("BUDGETED")
+  incumbentEmployeeId  String?
+  filledAt             DateTime?
+  vacantSince          DateTime?
+  /// NEW | RESIGNATION | TERMINATION | TRANSFER | PROMOTION | RETIREMENT
+  vacancyReason        String?
+  /// LOW | MEDIUM | HIGH | CRITICAL
+  criticality          String         @default("MEDIUM")
+  /// ONSITE | HYBRID | REMOTE
+  workMode             String         @default("ONSITE")
+  /// Locations the seat may be filled from (empty = only its own location).
+  allowedLocationIds   String[]       @default([])
+  skills               String[]       @default([])
+  competencies         String[]       @default([])
+  effectiveFrom        DateTime
+  effectiveTo          DateTime?
+  frozenAt             DateTime?
+  frozenReason         String?
+  /// Requisition raised to fill it.
+  requisitionId        String?
+  createdBy            String?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  incumbencies PositionIncumbency[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@index([tenantId, departmentId])
+  @@map("positions")
+}
+
+/// Who held a position, when.
+model PositionIncumbency {
+  id         String    @id @default(cuid())
+  positionId String
+  position   Position  @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  employeeId String
+  startDate  DateTime
+  endDate    DateTime?
+  endReason  String?
+  createdAt  DateTime  @default(now())
+
+  @@index([positionId])
+  @@index([employeeId])
+  @@map("position_incumbencies")
+}
+
+// ---------------------------------------------------------------------------
+//  Workforce planning and budgeting
+// ---------------------------------------------------------------------------
+
+model WorkforcePlan {
+  id                String                @id @default(cuid())
+  tenantId          String
+  tenant            Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name              String
+  /// Fiscal year by its starting calendar year (FY 2026-27 = 2026, April–March).
+  fiscalYear        Int
+  /// Null = whole organisation.
+  departmentId      String?
+  status            WorkforceRecordStatus @default(DRAFT)
+  /// The approved plan in force for its year/department; hiring is checked against it.
+  isActive          Boolean               @default(false)
+  isScenario        Boolean               @default(false)
+  /// The plan this was copied from (scenarios and templates).
+  baseplanId        String?
+  baseplan          WorkforcePlan?        @relation("PlanScenarios", fields: [baseplanId], references: [id], onDelete: SetNull)
+  scenarios         WorkforcePlan[]       @relation("PlanScenarios")
+  isTemplate        Boolean               @default(false)
+  // --- Assumptions, percentages of salary unless noted ---
+  attritionPct      Decimal               @default(0) @db.Decimal(6, 2)
+  salaryIncreasePct Decimal               @default(0) @db.Decimal(6, 2)
+  benefitsLoadPct   Decimal               @default(0) @db.Decimal(6, 2)
+  overtimePct       Decimal               @default(0) @db.Decimal(6, 2)
+  /// Annual contractor spend assumed, in currency.
+  contractorCost    Decimal               @default(0) @db.Decimal(18, 2)
+  notes             String?
+  submittedBy       String?
+  submittedAt       DateTime?
+  approvedBy        String?
+  approvedAt        DateTime?
+  rejectReason      String?
+  createdBy         String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  lines WorkforcePlanLine[]
+
+  @@index([tenantId, fiscalYear])
+  @@map("workforce_plans")
+}
+
+/// Headcount plan line: the target for a department (+ optional location, job).
+model WorkforcePlanLine {
+  id               String        @id @default(cuid())
+  planId           String
+  plan             WorkforcePlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  departmentId     String
+  locationId       String?
+  jobId            String?
+  /// Year-end headcount target.
+  plannedHeadcount Int
+  /// Of which new (growth) seats, and replacements for expected attrition.
+  newHires         Int           @default(0)
+  replacementHires Int           @default(0)
+  avgAnnualSalary  Decimal       @default(0) @db.Decimal(18, 2)
+  /// Fiscal month (1 = April) the hires are expected to start.
+  hireMonth        Int           @default(1)
+  note             String?
+
+  @@index([planId])
+  @@map("workforce_plan_lines")
+}
+
+model WorkforceBudget {
+  id               String                @id @default(cuid())
+  tenantId         String
+  tenant           Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name             String
+  fiscalYear       Int
+  departmentId     String?
+  planId           String?
+  /// Budget version control: each revision is a new row pointing at the last.
+  version          Int                   @default(1)
+  previousId       String?
+  salaryBudget     Decimal               @default(0) @db.Decimal(18, 2)
+  benefitsBudget   Decimal               @default(0) @db.Decimal(18, 2)
+  hiringBudget     Decimal               @default(0) @db.Decimal(18, 2)
+  contractorBudget Decimal               @default(0) @db.Decimal(18, 2)
+  status           WorkforceRecordStatus @default(DRAFT)
+  /// False once a newer version replaces it.
+  isCurrent        Boolean               @default(true)
+  notes            String?
+  createdBy        String?
+  approvedBy       String?
+  approvedAt       DateTime?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@index([tenantId, fiscalYear])
+  @@map("workforce_budgets")
+}
+
+model CapacityPlan {
+  id           String                @id @default(cuid())
+  tenantId     String
+  tenant       Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  departmentId String?
+  periodStart  DateTime
+  periodEnd    DateTime
+  status       WorkforceRecordStatus @default(DRAFT)
+  notes        String?
+  createdBy    String?
+  approvedBy   String?
+  approvedAt   DateTime?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  lines CapacityPlanLine[]
+
+  @@index([tenantId])
+  @@map("capacity_plans")
+}
+
+/// FTE demand for one role; supply is counted live from employees.
+model CapacityPlanLine {
+  id           String       @id @default(cuid())
+  planId       String
+  plan         CapacityPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  /// Role name matched against employees' job titles.
+  role         String
+  departmentId String?
+  demandFte    Decimal      @db.Decimal(8, 2)
+  note         String?
+
+  @@index([planId])
+  @@map("capacity_plan_lines")
+}
+
+// ---------------------------------------------------------------------------
+//  Contingent workforce
+// ---------------------------------------------------------------------------
+
+model ContingentVendor {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  code        String?
+  gstin       String?
+  pan         String?
+  contactName String?
+  email       String?
+  phone       String?
+  address     String?
+  /// ONBOARDING | ACTIVE | SUSPENDED | INACTIVE
+  status      String   @default("ONBOARDING")
+  /// Onboarding checklist keys done (services/workforce VENDOR_CHECKLIST).
+  checklist   String[] @default([])
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  documents VendorDocument[]
+  workers   ContingentWorker[]
+  rateCards ContractorRateCard[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("contingent_vendors")
+}
+
+model VendorDocument {
+  id         String           @id @default(cuid())
+  vendorId   String
+  vendor     ContingentVendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  /// MSA | GST_CERT | PAN | INSURANCE | LABOUR_LICENCE | PF_REG | ESI_REG | OTHER
+  docType    String
+  number     String?
+  validFrom  DateTime?
+  validUntil DateTime?
+  createdAt  DateTime         @default(now())
+
+  @@index([vendorId])
+  @@map("vendor_documents")
+}
+
+/// A contractor or agency worker — not an employee, never on payroll.
+model ContingentWorker {
+  id                  String            @id @default(cuid())
+  tenantId            String
+  tenant              Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// "CW-0001"
+  code                String
+  firstName           String
+  lastName            String
+  email               String?
+  phone               String?
+  /// CONTRACTOR (independent) | VENDOR_WORKER (through an agency)
+  workerKind          String            @default("CONTRACTOR")
+  /// FIXED_TERM | TIME_AND_MATERIAL | SOW | RETAINER | CONSULTANT
+  engagementType      String            @default("FIXED_TERM")
+  vendorId            String?
+  vendor              ContingentVendor? @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  pan                 String?
+  skills              String[]          @default([])
+  departmentId        String?
+  managerEmployeeId   String?
+  /// PENDING_APPROVAL | ACTIVE | ENDED | CONVERTED | REJECTED
+  status              String            @default("PENDING_APPROVAL")
+  startedAt           DateTime?
+  endedAt             DateTime?
+  convertedEmployeeId String?
+  notes               String?
+  createdBy           String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  assignments    ContractAssignment[]
+  paymentProfile ContractorPaymentProfile?
+  accessRequests ContractorAccess[]
+  feedback       ContractorFeedback[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@map("contingent_workers")
+}
+
+model ContractAssignment {
+  id                String           @id @default(cuid())
+  tenantId          String
+  workerId          String
+  worker            ContingentWorker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  role              String
+  departmentId      String?
+  projectId         String?
+  managerEmployeeId String?
+  startDate         DateTime
+  endDate           DateTime
+  /// HOURLY | DAILY | MONTHLY | FIXED
+  rateType          String           @default("MONTHLY")
+  rate              Decimal          @db.Decimal(18, 2)
+  currency          String           @default("INR")
+  poNumber          String?
+  poAmount          Decimal?         @db.Decimal(18, 2)
+  sowReference      String?
+  sowDescription    String?
+  /// PENDING_APPROVAL | ACTIVE | ENDED | REJECTED
+  status            String           @default("PENDING_APPROVAL")
+  endReason         String?
+  extensions        Int              @default(0)
+  /// Date the last expiry alert went out, so the job alerts once per window.
+  alertedAt         DateTime?
+  createdBy         String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  milestones SowMilestone[]
+  timesheets ContractorTimesheet[]
+  expenses   ContractorExpense[]
+
+  @@index([tenantId, status])
+  @@index([workerId])
+  @@index([tenantId, endDate])
+  @@map("contract_assignments")
+}
+
+model SowMilestone {
+  id           String             @id @default(cuid())
+  assignmentId String
+  assignment   ContractAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  name         String
+  dueDate      DateTime
+  amount       Decimal            @db.Decimal(18, 2)
+  /// PENDING | COMPLETED | PAID
+  status       String             @default("PENDING")
+  completedAt  DateTime?
+  createdAt    DateTime           @default(now())
+
+  @@index([assignmentId])
+  @@map("sow_milestones")
+}
+
+model ContractorPaymentProfile {
+  id            String           @id @default(cuid())
+  workerId      String           @unique
+  worker        ContingentWorker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  /// WORKER (paid directly) | VENDOR (invoice from the agency)
+  payee         String           @default("WORKER")
+  /// HOURLY | DAILY | MONTHLY | FIXED
+  rateType      String           @default("MONTHLY")
+  gstRegistered Boolean          @default(false)
+  gstin         String?
+  gstRatePct    Decimal          @default(18) @db.Decimal(5, 2)
+  /// 194C | 194J
+  tdsSection    String           @default("194J")
+  tdsRatePct    Decimal          @default(10) @db.Decimal(5, 2)
+  bankName      String?
+  accountNumber String?
+  ifsc          String?
+  accountHolder String?
+  /// PENDING_APPROVAL | VERIFIED | REJECTED
+  status        String           @default("PENDING_APPROVAL")
+  verifiedBy    String?
+  verifiedAt    DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@map("contractor_payment_profiles")
+}
+
+/// Contractor rate card, effective-dated per role (optionally per agency).
+model ContractorRateCard {
+  id            String            @id @default(cuid())
+  tenantId      String
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  vendorId      String?
+  vendor        ContingentVendor? @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  role          String
+  rateType      String            @default("HOURLY")
+  rate          Decimal           @db.Decimal(18, 2)
+  currency      String            @default("INR")
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  createdAt     DateTime          @default(now())
+
+  @@index([tenantId, role])
+  @@map("contractor_rate_cards")
+}
+
+/// Time (and days present) a contingent worker bills for a period.
+model ContractorTimesheet {
+  id           String             @id @default(cuid())
+  tenantId     String
+  assignmentId String
+  assignment   ContractAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  periodStart  DateTime
+  periodEnd    DateTime
+  hours        Decimal            @db.Decimal(8, 2)
+  daysPresent  Decimal            @default(0) @db.Decimal(5, 1)
+  amount       Decimal            @default(0) @db.Decimal(18, 2)
+  /// SUBMITTED | APPROVED | REJECTED
+  status       String             @default("SUBMITTED")
+  note         String?
+  submittedBy  String?
+  decidedBy    String?
+  decidedAt    DateTime?
+  createdAt    DateTime           @default(now())
+
+  @@unique([assignmentId, periodStart])
+  @@index([tenantId, status])
+  @@map("contractor_timesheets")
+}
+
+model ContractorExpense {
+  id           String             @id @default(cuid())
+  tenantId     String
+  assignmentId String
+  assignment   ContractAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  date         DateTime
+  category     String
+  amount       Decimal            @db.Decimal(18, 2)
+  description  String?
+  /// SUBMITTED | APPROVED | REJECTED
+  status       String             @default("SUBMITTED")
+  decidedBy    String?
+  decidedAt    DateTime?
+  createdAt    DateTime           @default(now())
+
+  @@index([tenantId, status])
+  @@map("contractor_expenses")
+}
+
+/// Access to a system or site, requested for a contingent worker.
+model ContractorAccess {
+  id        String           @id @default(cuid())
+  tenantId  String
+  workerId  String
+  worker    ContingentWorker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  system    String
+  level     String           @default("STANDARD")
+  /// PENDING_APPROVAL | GRANTED | REJECTED | REVOKED
+  status    String           @default("PENDING_APPROVAL")
+  revokedAt DateTime?
+  createdBy String?
+  createdAt DateTime         @default(now())
+
+  @@index([workerId])
+  @@map("contractor_access")
+}
+
+model ContractorFeedback {
+  id           String           @id @default(cuid())
+  tenantId     String
+  workerId     String
+  worker       ContingentWorker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  assignmentId String?
+  /// 1–5
+  rating       Int
+  comment      String?
+  givenBy      String
+  createdAt    DateTime         @default(now())
+
+  @@index([workerId])
+  @@map("contractor_feedback")
+}
