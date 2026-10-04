@@ -277,6 +277,7 @@ async function ViewOrEditModal({ viewer, id, edit, closeHref, editHref, viewHref
           <div className={s.kv}>
             {kv.map(([k, v]) => <div key={k}><div className={s.kvLabel}>{k}</div><div className={s.kvValue}>{v}</div></div>)}
           </div>
+          <div style={{ marginTop: 16 }}><Link className="btn sm" href={`/hiring/requisitions/${r.id}/intake`}>Intake questionnaire</Link></div>
           {r.rejectReason && r.status === "REJECTED" ? <div className="callout danger" style={{ marginTop: 24 }}><div><strong>Rejected:</strong> {r.rejectReason}</div></div> : null}
           {r.backfills.length ? (
             <>

@@ -25,6 +25,7 @@ export const WORKFLOW_ENTITY_TYPES = {
   COMPLIANCE_ITEM: "Compliance checklist sign-off",
   POLICY_PUBLISH: "Policy acknowledgement campaigns",
   CONSENT_PURPOSE: "Consent purpose publication",
+  HIRE_REQUEST: "Hiring requests (campaigns, career content, referral bonuses, offer revisions…)",
 } as const;
 export type WorkflowEntityType = keyof typeof WORKFLOW_ENTITY_TYPES;
 export const isWorkflowEntityType = (v: string): v is WorkflowEntityType => v in WORKFLOW_ENTITY_TYPES;

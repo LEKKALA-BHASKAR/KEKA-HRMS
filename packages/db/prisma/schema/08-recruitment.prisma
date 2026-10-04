@@ -138,6 +138,13 @@ model HiringStage {
   requireScorecard Boolean @default(false)
   /// Auto-reject a candidate idle in this stage for N days.
   staleAfterDays   Int?
+  // --- Hire depth (36-hire-depth): stage entry criteria ---
+  /// Entering needs an average interview score of at least this.
+  entryMinScore         Decimal? @db.Decimal(9, 2)
+  /// Entering needs a résumé on file.
+  entryRequiresResume   Boolean  @default(false)
+  /// Entering needs an approval (workflow engine) before the move happens.
+  entryRequiresApproval Boolean  @default(false)
 
   applications ApplicationStageHistory[]
 
@@ -259,6 +266,13 @@ model Candidate {
   education   String?
   talentPools TalentPoolMember[]
   eeo         CandidateEeo?
+  // --- Hire depth (36-hire-depth) ---
+  sourcingProfile    CandidateSourcingProfile?
+  projectEntries     SourcingProjectCandidate[]
+  cadenceEnrollments CadenceEnrollment[]
+  communications     CandidateCommunication[]
+  documents          CandidateDocument[]
+  referralRecord     ReferralRecord?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

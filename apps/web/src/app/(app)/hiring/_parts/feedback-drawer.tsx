@@ -99,6 +99,11 @@ export function FeedbackDrawer({ interviewId, firstName, sections, draft, closeH
           <textarea name="notes" className={s.editorArea} style={{ minHeight: 170 }} placeholder="Add Feedback" value={notes} maxLength={5000} onChange={(e) => setNotes(e.target.value)} aria-label="Feedback" />
         </div>
         {aiAssisted ? <div className="text-xs subtle" style={{ marginTop: 6 }}>Drafted with AI from your ratings and notes — review before you submit.</div> : null}
+        {state.errors?.biasReviewed ? (
+          <label className="row gap-2 text-sm" style={{ marginTop: 8 }} data-testid="bias-ack">
+            <input type="checkbox" name="biasReviewed" value="1" /> I have reviewed the flagged wording and it is about job-related evidence
+          </label>
+        ) : null}
 
         <h3 className={s.scoreTitle}>Scorecard</h3>
         {sections.map((sec) => (

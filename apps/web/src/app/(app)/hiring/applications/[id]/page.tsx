@@ -15,6 +15,7 @@ import { SummarizeButton, CandidateFeedbackButton } from "../../_parts/summary";
 import { QuestionsButton, type QSection } from "../../_parts/questions";
 import { FlashToast } from "../../_parts/toast";
 import { TalentPanel } from "../../_parts/talent-panel";
+import { HireDepthPanel, PanelResponses } from "../../_parts/hire-depth-panel";
 import { userNames, kDate, kDateTime } from "../../_lib/data";
 import s from "../../hire.module.css";
 
@@ -158,6 +159,7 @@ export default async function ApplicationPage({ params, searchParams }: { params
         {TABS.filter(([k]) => recruiter || k !== "profile").map(([k, label]) => <Link key={k} href={`${base}?tab=${k}`} className={`${s.candTab}${tab === k ? ` ${s.active}` : ""}`}>{label}</Link>)}
       </nav>
 
+      <PanelResponses viewer={viewer} applicationId={app.id} />
       {tab === "feedback" ? <Feedback /> : tab === "activity" ? <Activity /> : <Profile />}
       {fbInterview && myCard?.status !== "SUBMITTED" ? (
         <FeedbackDrawer interviewId={fbInterview.id} firstName={name} sections={sections} jobId={app.jobId} maxQuestions={maxQ} closeHref={`${base}?tab=feedback`} aiOn={aiEnabled()} aiUnavailable={AI_UNAVAILABLE}
@@ -186,6 +188,7 @@ export default async function ApplicationPage({ params, searchParams }: { params
             ]} />
           </div>
           <OfferCard />
+          <HireDepthPanel viewer={viewer} applicationId={app!.id} />
           <TalentPanel viewer={viewer} applicationId={app!.id} />
         </div>
         <NotesCard />

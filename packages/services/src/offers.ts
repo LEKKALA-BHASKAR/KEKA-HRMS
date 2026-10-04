@@ -49,6 +49,15 @@ export async function offerTemplate(tenantId: string, templateId: string | null 
   return t ? { id: t.id, name: t.name, body: t.body } : { id: null, name: "Offer letter", body: DEFAULT_OFFER_TEMPLATE };
 }
 
+/**
+ * The template with the offer's frozen clauses (conditional clauses, offer
+ * components, tax disclaimers — chosen when the offer is drafted) appended.
+ */
+export async function withOfferClauses<T extends { body: string }>(template: T, applicationId: string): Promise<T> {
+  const extra = await prisma.offerExtra.findUnique({ where: { applicationId }, select: { clausesHtml: true } });
+  return extra?.clausesHtml ? { ...template, body: `${template.body}${extra.clausesHtml}` } : template;
+}
+
 /** The breakup of a CTC through a salary structure: everything inside CTC except employee deductions. */
 export async function structureBreakup(tenantId: string, annualCtc: number, structureId?: string | null): Promise<{ rows: BreakupRow[]; structureName: string | null }> {
   const structures = await prisma.salaryStructure.findMany({
@@ -104,7 +113,7 @@ export async function previewOfferLetter(tenantId: string, applicationId: string
   const app = await prisma.application.findFirst({ where: { id: applicationId, tenantId }, include: OFFER_INCLUDE });
   if (!app?.offer) return { ok: false, message: "Draft an offer first." };
   if (app.offer.renderedBody) return { ok: true, message: "As extended.", html: app.offer.renderedBody, missing: [], breakup: await breakupOf(tenantId, app.offer), templateName: "Extended letter" };
-  const [template, values, breakup] = await Promise.all([offerTemplate(tenantId, app.offer.templateId), offerValues(app), breakupOf(tenantId, app.offer)]);
+  const [template, values, breakup] = await Promise.all([offerTemplate(tenantId, app.offer.templateId).then((t) => withOfferClauses(t, app.id)), offerValues(app), breakupOf(tenantId, app.offer)]);
   const { html, missing } = renderOfferHtml(template.body, values, breakup);
   return { ok: true, message: "Preview.", html, missing, breakup, templateName: template.name };
 }
@@ -159,7 +168,7 @@ export async function extendOfferFromTemplate(
   if (app.offer.status !== "APPROVED") return { ok: false, message: app.offer.status === "PENDING_APPROVAL" ? "The offer is waiting for approval." : "This offer cannot be extended." };
   if (app.offer.expiresOn && linkExpiry(app.offer.expiresOn) <= new Date()) return { ok: false, message: "The offer's expiry date has passed. Draft it again with a new date." };
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: app.tenantId } });
-  const [template, values, breakup] = await Promise.all([offerTemplate(app.tenantId, app.offer.templateId), offerValues(app), breakupOf(app.tenantId, app.offer)]);
+  const [template, values, breakup] = await Promise.all([offerTemplate(app.tenantId, app.offer.templateId).then((t) => withOfferClauses(t, app.id)), offerValues(app), breakupOf(app.tenantId, app.offer)]);
   const { html, missing } = renderOfferHtml(template.body, values, breakup);
   const pdf = renderOfferLetter({
     company: { name: values.legal_entity_name || tenant.name, address: values.location || null },
@@ -312,7 +321,7 @@ export async function acceptOfferByLink(input: {
   // The signed copy: the letter as sent, with the signing record.
   const app = await prisma.application.findUniqueOrThrow({ where: { id: view.applicationId }, include: OFFER_INCLUDE });
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: app.tenantId } });
-  const template = await offerTemplate(app.tenantId, app.offer!.templateId);
+  const template = await withOfferClauses(await offerTemplate(app.tenantId, app.offer!.templateId), app.id);
   const values = await offerValues(app, app.offer!.extendedAt ?? new Date());
   const breakup = await breakupOf(app.tenantId, app.offer!);
   const at = new Date();

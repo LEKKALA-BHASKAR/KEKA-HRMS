@@ -45,6 +45,7 @@ export default async function JobPage({ params, searchParams }: { params: Promis
         <div className={s.headActions}>
           <span className={`${s.statusChip} ${job.status === "OPEN" ? s.good : ""}`}>{job.status.toLowerCase().replace("_", " ")}</span>
           {manage ? <JobStatus jobId={job.id} status={job.status} /> : null}
+          {manage ? <Link className="btn sm" href={`/hiring/jobs/${job.id}/plan`}>Interview plan & posting</Link> : null}
         </div>
       </div>
       <nav className={s.candTabs} style={{ padding: 0 }}>

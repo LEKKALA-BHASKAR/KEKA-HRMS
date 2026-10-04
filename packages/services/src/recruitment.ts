@@ -176,7 +176,9 @@ export async function draftOffer(opts: {
 }): Promise<Result> {
   const app = await prisma.application.findUnique({ where: { id: opts.applicationId }, include: { job: true, offer: true } });
   if (!app) return { ok: false, message: "Application not found." };
-  if (app.status !== "ACTIVE") return { ok: false, message: "Only an active application can get an offer." };
+  // A declined offer can be renegotiated: redrafting reopens the application.
+  const reopen = app.status === "OFFER_DECLINED" && app.offer?.status === "DECLINED";
+  if (app.status !== "ACTIVE" && !reopen) return { ok: false, message: "Only an active application can get an offer." };
   if (app.offer && !["DECLINED", "WITHDRAWN", "EXPIRED"].includes(app.offer.status)) return { ok: false, message: "There is already an offer in progress." };
   if (opts.expiresOn <= new Date()) return { ok: false, message: "The offer must expire in the future." };
   if (opts.proposedJoiningDate < opts.expiresOn) return { ok: false, message: "The joining date should be after the offer expires." };
@@ -193,6 +195,7 @@ export async function draftOffer(opts: {
     salaryBreakup: opts.breakup?.length ? (opts.breakup as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
     breakupSource: opts.breakup?.length ? "MANUAL" : "STRUCTURE", renderedBody: null, contentHash: null, letterUrl: null,
   };
+  if (reopen) await prisma.application.update({ where: { id: app.id }, data: { status: "ACTIVE" } });
   if (app.offer) await prisma.offer.update({ where: { id: app.offer.id }, data });
   else await prisma.offer.create({ data: { ...data, applicationId: app.id } });
   if (needsApproval) {

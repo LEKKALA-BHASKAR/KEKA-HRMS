@@ -5,12 +5,15 @@ import { applyToJobAction } from "../actions";
 
 export interface EeoQuestion { name: string; label: string; options: readonly string[] }
 
-export function ApplyForm({ jobId, eeo }: { jobId: string; eeo?: EeoQuestion[] }) {
+export function ApplyForm({ jobId, eeo, tracking }: { jobId: string; eeo?: EeoQuestion[]; tracking?: { utmSource?: string; utmCampaign?: string; campaign?: string } }) {
   const [state, formAction, pending] = useForm(applyToJobAction);
   if (state.ok) return <div className="callout success"><strong>Thanks, your application is in.</strong> {state.message}</div>;
   return (
     <form action={formAction} className="stack gap-2">
       <input type="hidden" name="jobId" value={jobId} />
+      {tracking?.utmSource ? <input type="hidden" name="utm_source" value={tracking.utmSource} /> : null}
+      {tracking?.utmCampaign ? <input type="hidden" name="utm_campaign" value={tracking.utmCampaign} /> : null}
+      {tracking?.campaign ? <input type="hidden" name="campaign" value={tracking.campaign} /> : null}
       {/* Left empty by people; bots tend to fill it. */}
       <input type="text" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true" style={{ position: "absolute", left: -10000, width: 1, height: 1, opacity: 0 }} />
       <div className="grid grid-2">
