@@ -108,6 +108,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
       tabs: tabs([
         { label: "Attendance", href: "/me/attendance" },
         { label: "Leave", href: "/me/leave" },
+        { label: "Work Log", href: "/me/work-log" },
         on("performance") && { label: "Performance", href: "/me/performance", paths: ["/me/performance", "/me/career"] },
         on("expenses") && { label: "Expenses & Travel", href: "/me/expenses" },
         on("helpdesk") && { label: "Helpdesk", href: "/me/helpdesk" },
@@ -255,6 +256,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         can(viewer, P.SHIFT_MANAGE) && { label: "Roster", href: "/attendance/roster" },
         (hrAttendance || can(viewer, P.PAYROLL_RUN)) && { label: "Overtime", href: "/time/overtime" },
         can(viewer, P.REPORT_VIEW) && { label: "Reports", href: "/time/reports" },
+        canAny(viewer, [P.LEAVE_MANAGE, P.ATTENDANCE_MANAGE, P.SHIFT_MANAGE]) && { label: "Settings", href: "/time/settings" },
       ]),
     });
   }
@@ -317,6 +319,9 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     me && { label: "Request overtime", href: "/me/attendance?view=overtime&request=OT", keywords: "overtime ot extra hours" },
     me && { label: "Request comp off", href: "/me/leave?compoff=1", keywords: "comp off compensatory holiday worked" },
     me && { label: "Encash leave", href: "/me/leave?encash=1", keywords: "leave encashment" },
+    me && { label: "Log work hours", href: "/me/work-log", keywords: "work log timesheet hours daily" },
+    canAny(viewer, [P.LEAVE_MANAGE, P.LEAVE_APPROVE]) && { label: "Encash leave for an employee", href: "/time/settings?tab=encash", keywords: "leave encashment on behalf" },
+    can(viewer, P.ATTENDANCE_MANAGE) && { label: "Attendance kiosks", href: "/time/settings?tab=kiosks", keywords: "kiosk punch pin tablet" },
     me && { label: "View my payslips", href: "/finances/pay/payslips", keywords: "salary payslip pay slip" },
     me && { label: "Declare investments", href: "/finances/tax", keywords: "tax declaration 80c regime" },
     me && { label: "Claim a reimbursement", href: "/finances/pay/component-claims", keywords: "fbp reimbursement claim fuel telephone" },

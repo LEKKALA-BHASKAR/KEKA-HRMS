@@ -27,14 +27,18 @@ const PORTIONS: Option[] = [
 export function ApplyLeaveForm({
   types, employees, defaultEmployeeId,
 }: {
-  types: Array<Option & { allowHalfDay: boolean }>;
+  /** unit "HOURS" switches the form to one date and a number of hours. */
+  types: Array<Option & { allowHalfDay: boolean; unit?: string; maxHours?: number | null; stepMinutes?: number | null }>;
   /** Present when the viewer may apply on others' behalf. */
   employees?: Option[];
   defaultEmployeeId?: string;
 }) {
   const [state, formAction, pending] = useForm(applyLeaveAction);
   const [single, setSingle] = useState(true);
+  const [typeId, setTypeId] = useState(state.values?.leaveTypeId ?? "");
   const today = new Date().toISOString().slice(0, 10);
+  const chosen = types.find((t) => t.value === typeId);
+  const hourly = chosen?.unit === "HOURS";
 
   return (
     <form action={formAction}>
@@ -46,8 +50,26 @@ export function ApplyLeaveForm({
         </Field>
       ) : null}
       <Field label="Leave type" name="leaveTypeId" state={state} required>
-        <SelectInput name="leaveTypeId" state={state} options={types} placeholder="Select…" required />
+        <select id="leaveTypeId" name="leaveTypeId" className="select" value={typeId} onChange={(e) => setTypeId(e.target.value)} required>
+          <option value="">Select…</option>
+          {types.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
       </Field>
+      {hourly ? (
+        <div className="grid grid-3">
+          <Field label="Date" name="fromDate" state={state} required>
+            <TextInput name="fromDate" type="date" state={state} defaultValue={today} required />
+          </Field>
+          <Field label="Hours" name="hours" state={state} required
+            hint={`In steps of ${chosen?.stepMinutes ?? 15} minutes${chosen?.maxHours ? `, up to ${chosen.maxHours}` : ""}`}>
+            <TextInput name="hours" type="number" step={(chosen?.stepMinutes ?? 15) / 60} min={0.25} max={chosen?.maxHours ?? 24} state={state} defaultValue={1} required />
+          </Field>
+          <Field label="From (time)" name="startTime" state={state} hint="Optional">
+            <TextInput name="startTime" type="time" state={state} />
+          </Field>
+        </div>
+      ) : null}
+      {hourly ? null : (<>
       <div className="grid grid-2">
         <Field label="From" name="fromDate" state={state} required>
           <TextInput name="fromDate" type="date" state={state} defaultValue={today} required />
@@ -67,6 +89,7 @@ export function ApplyLeaveForm({
         <input type="checkbox" checked={single} onChange={(e) => setSingle(e.target.checked)} />
         <span className="text-xs subtle">Single day — the first day&apos;s session applies</span>
       </label>
+      </>)}
       <Field label="Reason" name="reason" state={state}>
         <TextArea name="reason" state={state} rows={2} placeholder="Optional unless the leave type requires it" />
       </Field>

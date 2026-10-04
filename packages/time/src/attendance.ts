@@ -31,6 +31,11 @@ export interface AttendanceRules {
   noAttendanceIsLop: boolean;
   overtimeEnabled: boolean;
   overtimeMinMinutes: number;
+  /**
+   * Which hours judge the day against the thresholds: EFFECTIVE (the sum of
+   * in-out pairs, the default) or GROSS (first in to last out).
+   */
+  hoursBasis?: "EFFECTIVE" | "GROSS";
 }
 
 export const DEFAULT_RULES: AttendanceRules = {
@@ -274,18 +279,19 @@ export function evaluateDay(input: DayInput): DayResult {
     worked = 1;
     notes.push("Missing punch — presence counted, subject to the monthly missing-punch rule");
   } else {
-    const pct = workRequired <= 0 ? 100 : (effectiveHours / workRequired) * 100;
+    const judged = rules.hoursBasis === "GROSS" ? Math.max(grossHours, effectiveHours) : effectiveHours;
+    const pct = workRequired <= 0 ? 100 : (judged / workRequired) * 100;
     if (pct >= rules.fullDayThresholdPct) {
       worked = 1;
       status = leaveShare > 0 ? "HALF_DAY" : "PRESENT";
     } else if (pct >= rules.halfDayThresholdPct) {
       worked = 0.5;
       status = "HALF_DAY";
-      notes.push(`Worked ${effectiveHours}h of ${r2(workRequired)}h required — half day`);
+      notes.push(`Worked ${judged}h of ${r2(workRequired)}h required — half day`);
     } else {
       worked = 0;
       status = partShare > 0 ? "HALF_DAY" : "ABSENT";
-      notes.push(`Worked ${effectiveHours}h of ${r2(workRequired)}h required — below the half-day threshold`);
+      notes.push(`Worked ${judged}h of ${r2(workRequired)}h required — below the half-day threshold`);
     }
   }
 

@@ -251,6 +251,9 @@ model Employee {
   componentOverrides    EmployeeComponentOverride[]
   taxWindowOverrides    TaxWindowOverride[]
   loanPolicyAssignments LoanPolicyAssignment[]
+  // --- Time & leave depth (26-time-leave-depth) ---
+  kioskPin     KioskPin?
+  workLogWeeks WorkLogWeek[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId, status])

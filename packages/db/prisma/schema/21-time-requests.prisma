@@ -127,6 +127,8 @@ model LeaveEncashmentRequest {
   decisionNote       String?
   /// AdhocTransaction (sourceType "LeaveEncashmentRequest") an approval raised.
   adhocTransactionId String?
+  /// Employee who raised it on the employee's behalf (HR or manager).
+  requestedBy        String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 

@@ -1,0 +1,97 @@
+// ============================================================================
+//  BooS-HR — Time & leave depth (Keka parity)
+// ============================================================================
+//  Web kiosks with employee PINs, and a simple daily-hours timesheet for people
+//  who are not on projects. Field additions for the same work:
+//    LeaveType (06-time): hourly leave config, encashment window / minimum
+//      balance, advance leave, comp-off minimum hours.
+//    LeaveRequest (06-time): hours and start time of an hourly request, and
+//      the part taken in advance of accrual.
+//    AttendancePolicy (12-time-ops): hours basis, AWOL rule, new-joiner grace,
+//      regularisation limits, remote-work rules, overtime-to-comp-off.
+// ============================================================================
+
+/// A shared device (reception tablet, factory gate PC) where employees punch
+/// with their employee number and a personal PIN. The device is unlocked once
+/// with the kiosk PIN; the token in /kiosk/<token> identifies the kiosk.
+model AttendanceKiosk {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  locationId String?
+  /// Unguessable token in the kiosk URL.
+  token      String    @unique
+  /// scrypt hash of the kiosk unlock PIN ("salt:hash").
+  pinHash    String
+  isActive   Boolean   @default(true)
+  lastUsedAt DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("attendance_kiosks")
+}
+
+/// An employee's personal kiosk PIN. Repeated wrong PINs lock it for a while.
+model KioskPin {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId     String    @unique
+  employee       Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  pinHash        String
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@map("kiosk_pins")
+}
+
+enum WorkLogStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+/// A week of daily hours for someone not on project timesheets. Submitted
+/// weekly, approved by the reporting manager.
+model WorkLogWeek {
+  id           String        @id @default(cuid())
+  tenantId     String
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  /// Monday of the week.
+  weekStart    DateTime
+  status       WorkLogStatus @default(DRAFT)
+  totalHours   Decimal       @default(0) @db.Decimal(6, 2)
+  submittedAt  DateTime?
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  days WorkLogDay[]
+
+  @@unique([employeeId, weekStart])
+  @@index([tenantId, status])
+  @@map("work_log_weeks")
+}
+
+model WorkLogDay {
+  id     String      @id @default(cuid())
+  weekId String
+  week   WorkLogWeek @relation(fields: [weekId], references: [id], onDelete: Cascade)
+  date   DateTime
+  hours  Decimal     @default(0) @db.Decimal(5, 2)
+  notes  String?
+
+  @@unique([weekId, date])
+  @@map("work_log_days")
+}
