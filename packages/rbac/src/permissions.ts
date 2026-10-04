@@ -192,6 +192,13 @@ export const PERMISSIONS = {
   API_KEY_MANAGE: "admin.apikey.manage",
   WEBHOOK_MANAGE: "admin.webhook.manage",
   BILLING_VIEW: "admin.billing.view",
+  /// Workflow definitions, delegations and automation rules.
+  WORKFLOW_MANAGE: "admin.workflow.manage",
+  /// Access requests, access reviews, IP allowlist, account hygiene, change approvals.
+  SECURITY_GOVERN: "admin.security.govern",
+  COMPLIANCE_VIEW: "admin.compliance.view",
+  /// Retention, legal holds, consent, compliance checklist, policy campaigns, findings.
+  COMPLIANCE_MANAGE: "admin.compliance.manage",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -453,6 +460,10 @@ export const PERMISSION_GROUPS: Array<{
       { key: PERMISSIONS.API_KEY_MANAGE, label: "Manage API keys" },
       { key: PERMISSIONS.WEBHOOK_MANAGE, label: "Manage webhooks" },
       { key: PERMISSIONS.BILLING_VIEW, label: "View billing" },
+      { key: PERMISSIONS.WORKFLOW_MANAGE, label: "Manage workflows & automation" },
+      { key: PERMISSIONS.SECURITY_GOVERN, label: "Govern access & security" },
+      { key: PERMISSIONS.COMPLIANCE_VIEW, label: "View compliance" },
+      { key: PERMISSIONS.COMPLIANCE_MANAGE, label: "Manage compliance & retention" },
     ],
   },
 ];

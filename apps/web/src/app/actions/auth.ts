@@ -15,7 +15,7 @@ import {
 import { requireViewer } from "@/lib/context";
 import { hostSubdomain } from "@/lib/tenant-host";
 import { companyUrl } from "@/lib/tenant-host-shared";
-import { passwordAllowed } from "@keka/services";
+import { passwordAllowed, signInIpAllowed } from "@keka/services";
 
 /**
  * Sign-in, second factor, password change and reset.
@@ -81,6 +81,12 @@ export async function signIn(_prev: SignInState, formData: FormData): Promise<Si
     return { error: "This company's BooS-HR account is suspended. Contact your administrator." };
   }
   const policy = await securityPolicy(tenant.id);
+
+  // The company's IP allowlist (Admin > Security), when enforced, applies before anything else is checked.
+  if (!(await signInIpAllowed(tenant.id, ip))) {
+    await logLogin({ tenantId: tenant.id, email, ip, userAgent, success: false, outcome: "IP_BLOCKED" });
+    return { error: "Your company only allows sign-in from approved networks. Connect from the office or VPN and try again." };
+  }
 
   const lock = await emailLocked(tenant.id, email, policy);
   if (lock.locked) {

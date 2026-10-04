@@ -3,6 +3,7 @@ import type { Viewer } from "@/lib/context";
 import { timeSources } from "./time";
 import { coreSources } from "./sources";
 import { jobChangeSources } from "./job-changes";
+import { workflowSources } from "./workflows";
 import type { SourceFactory, TakeSource } from "./types";
 
 /**
@@ -15,6 +16,7 @@ export const SOURCE_FACTORIES: SourceFactory[] = [
   timeSources,
   coreSources,
   jobChangeSources,
+  workflowSources,
 ];
 
 export async function takeActionSources(viewer: Viewer): Promise<TakeSource[]> {

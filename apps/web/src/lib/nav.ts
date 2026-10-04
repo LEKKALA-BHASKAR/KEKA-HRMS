@@ -112,6 +112,8 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         on("expenses") && { label: "Expenses & Travel", href: "/me/expenses" },
         on("helpdesk") && { label: "Helpdesk", href: "/me/helpdesk" },
         { label: "Apps", href: "/me/apps", paths: ["/me/apps", "/me/assets"] },
+        { label: "Requests", href: "/me/requests" },
+        { label: "Policies", href: "/me/policies" },
       ]),
     });
   }
@@ -175,6 +177,9 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
       can(viewer, P.DOCUMENT_VIEW) && { label: "Documents", href: "/documents", count: counts.documents },
       canAny(viewer, [P.ASSET_MANAGE, P.ASSET_ASSIGN]) && { label: "Assets", href: "/assets", count: counts.assets },
       on("helpdesk") && (can(viewer, P.HELPDESK_MANAGE) || opts.isHelpdeskAgent) && { label: "Helpdesk", href: "/helpdesk", count: counts.tickets },
+      can(viewer, P.WORKFLOW_MANAGE) && { label: "Workflows", href: "/admin/workflows" },
+      can(viewer, P.SECURITY_GOVERN) && { label: "Security", href: "/admin/security" },
+      can(viewer, P.COMPLIANCE_VIEW) && { label: "Compliance", href: "/admin/compliance" },
       !!settingsHref && { label: "Settings", href: settingsHref, paths: ["/admin"] },
     ]),
   });
@@ -340,6 +345,11 @@ export function quickActions(viewer: Viewer): Array<{ label: string; href: strin
     can(viewer, P.EMPLOYEE_CREATE) && { label: "Add an employee", href: "/employees/new", keywords: "hire onboard new joinee" },
     canAny(viewer, [P.EMPLOYEE_CREATE, P.LEAVE_MANAGE, P.SALARY_REVISE, P.EMPLOYEE_MANAGE_FINANCIALS]) && { label: "Bulk import", href: "/admin/import", keywords: "import csv upload spreadsheet migrate employees balances salary bank" },
     canAny(viewer, [P.API_KEY_MANAGE, P.ATTENDANCE_MANAGE]) && { label: "Integrations", href: "/admin/integrations", keywords: "api key biometric device punch integration token webhook" },
+    me && { label: "Raise a request", href: "/me/requests", keywords: "general request letter approval workflow ask" },
+    me && { label: "Request access", href: "/me/requests?tab=access", keywords: "access role permission elevated temporary" },
+    can(viewer, P.WORKFLOW_MANAGE) && { label: "Workflows and automation", href: "/admin/workflows", keywords: "workflow approval route automation rule trigger escalation sla" },
+    can(viewer, P.SECURITY_GOVERN) && { label: "Security and access reviews", href: "/admin/security", keywords: "security access review certification ip allowlist mfa inactive accounts" },
+    can(viewer, P.COMPLIANCE_VIEW) && { label: "Compliance", href: "/admin/compliance", keywords: "compliance retention legal hold consent policy acknowledgement audit findings" },
     can(viewer, P.ORG_SETTINGS_MANAGE) && { label: "Custom fields", href: "/admin/settings?tab=fields", keywords: "custom field profile extra attribute dropdown" },
     can(viewer, P.DOCUMENT_MANAGE) && { label: "Document types", href: "/admin/settings?tab=documents", keywords: "document folder type mandatory request upload settings" },
     can(viewer, P.EXIT_MANAGE) && { label: "Notice periods and exit reasons", href: "/admin/settings?tab=exits", keywords: "notice period policy exit reason resignation settings" },

@@ -254,6 +254,26 @@ model Tenant {
   compBudgetScenarios   CompBudgetScenario[]
   minimumWageRates      MinimumWageRate[]
 
+  // --- Governance: workflow, IAM, compliance (31-governance) ---
+  workflowDefinitions   WorkflowDefinition[]
+  workflowRequests      WorkflowRequest[]
+  approverDelegations   ApproverDelegation[]
+  automationRules       AutomationRule[]
+  workTasks             WorkTask[]
+  governanceSetting     GovernanceSetting?
+  ipAllowRules          IpAllowRule[]
+  accessRequests        AccessRequest[]
+  accessReviewCampaigns AccessReviewCampaign[]
+  changeRequests        ChangeRequest[]
+  securityAlerts        SecurityAlert[]
+  retentionRules        RetentionRule[]
+  legalHolds            LegalHold[]
+  consentPurposes       ConsentPurpose[]
+  complianceItems       ComplianceItem[]
+  policyCampaigns       PolicyCampaign[]
+  auditFindings         AuditFinding[]
+  auditSeals            AuditSeal[]
+
   @@index([subdomain])
   @@map("tenants")
 }
@@ -486,6 +506,10 @@ model UserRoleAssignment {
 
   grantedAt DateTime @default(now())
   grantedBy String?
+  /// Time-bound grant: revoked by the nightly job once past; ignored from then on.
+  expiresAt DateTime?
+  /// Why it was granted, e.g. "Access request" or "Temporary elevation".
+  grantNote String?
 
   @@unique([userId, roleId])
   @@index([userId])

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@keka/db";
-import { discover, completeSso, emailAllowed, openSecret } from "@keka/services";
+import { discover, completeSso, emailAllowed, openSecret, signInIpAllowed } from "@keka/services";
 import { takeSsoState, createSession } from "@/lib/session";
 import { securityPolicy, logLogin } from "@/lib/auth-policy";
 import { originOf, type SsoError } from "../_lib";
@@ -30,6 +30,10 @@ export async function GET(req: NextRequest) {
   if (!emailAllowed(email, conn.allowedDomains)) return fail("domain", pending.tenantId, email);
   const user = await prisma.user.findUnique({ where: { tenantId_email: { tenantId: pending.tenantId, email } } });
   if (!user || user.loginDisabled || user.isDeactivated) return fail("nouser", pending.tenantId, email);
+  if (!(await signInIpAllowed(user.tenantId, ip))) {
+    await logLogin({ tenantId: user.tenantId, userId: user.id, email, ip, userAgent, success: false, outcome: "IP_BLOCKED" });
+    return NextResponse.redirect(new URL("/signin?sso=ipblocked", origin));
+  }
 
   const policy = await securityPolicy(user.tenantId);
   const now = new Date();

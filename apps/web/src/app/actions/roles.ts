@@ -3,6 +3,7 @@
 import { prisma } from "@keka/db";
 import { PERMISSIONS, ALL_PERMISSIONS, type Permission } from "@keka/rbac";
 import { requireAuth } from "@/lib/context";
+import { governanceSettings, requestChange } from "@keka/services";
 import { z, parseForm, formList, writeAudit, actionDone as done, zName, type ActionState } from "@/lib/forms";
 
 /**
@@ -65,6 +66,11 @@ export async function saveCustomRoleAction(_prev: ActionState, formData: FormDat
       return { ok: false, message: "Removing “Manage roles & permissions” here would take it away from you. Keep it, or have another administrator make the change." };
     }
     const before = role.permissions.map((p) => p.permission).sort();
+    // With role change approval on (Admin > Security), a second administrator applies it.
+    if ((await governanceSettings(viewer.tenantId)).roleChangeApproval) {
+      const res = await requestChange({ tenantId: viewer.tenantId, requestedBy: viewer.user.id, kind: "ROLE_PERMISSIONS", summary: `Change ${role.name}: ${permissions.length} permissions`, payload: { roleId: id, permissions, name, description: description || null } });
+      return res.ok ? done(["/admin/roles", "/admin/security"], res.message) : { ok: false, message: res.message };
+    }
     await prisma.$transaction([
       prisma.role.update({ where: { id }, data: { name, description: description || null } }),
       prisma.rolePermission.deleteMany({ where: { roleId: id } }),
@@ -157,6 +163,10 @@ export async function assignRoleAction(_prev: ActionState, formData: FormData): 
   if (!scopes) return { ok: false, message: "A department or location in the scope no longer exists. Reload and try again." };
 
   const existing = await prisma.userRoleAssignment.findUnique({ where: { userId_roleId: { userId: employee.userId, roleId: role.id } }, include: { scopes: true } });
+  if (!existing && (await governanceSettings(viewer.tenantId)).roleChangeApproval) {
+    const res = await requestChange({ tenantId: viewer.tenantId, requestedBy: viewer.user.id, kind: "ROLE_GRANT", summary: `Grant ${role.name} to ${employee.displayName}`, payload: { userId: employee.userId, roleId: role.id, scopes } });
+    return res.ok ? done(["/admin/roles", "/admin/security"], res.message) : { ok: false, message: res.message };
+  }
   if (existing && role.key === "GLOBAL_ADMIN" && existing.scopes.length === 0 && scopes.length > 0 && (await unscopedGlobalAdmins(viewer.tenantId)) <= 1) {
     return { ok: false, message: "This is the last unscoped Global Admin. Scoping it would leave nobody who can reach every employee." };
   }

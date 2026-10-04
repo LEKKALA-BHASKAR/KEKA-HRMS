@@ -22,5 +22,6 @@ export const SSO_ERRORS = {
   invalid: "The sign-in response could not be verified.",
   domain: "Your email domain is not allowed to sign in here.",
   nouser: "No active login matches your email address. Ask your administrator to invite you.",
+  ipblocked: "Your company only allows sign-in from approved networks. Connect from the office or VPN.",
 } as const;
 export type SsoError = keyof typeof SSO_ERRORS;
