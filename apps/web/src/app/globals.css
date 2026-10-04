@@ -689,7 +689,7 @@ table.data tr.subtotal td {
   display: flex; align-items: center; justify-content: center; gap: 1px;
   background: var(--k-top-deep); color: #fff; flex-shrink: 0;
 }
-.k-wordmark { font-size: 27px; font-weight: 800; letter-spacing: -0.045em; line-height: 1; }
+.k-wordmark { font-size: 16px; font-weight: 800; letter-spacing: -0.03em; white-space: nowrap; line-height: 1; }
 .k-spark { width: 13px; height: 13px; margin-top: -14px; color: #fff; opacity: .95; }
 .k-company { font-size: 17px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 360px; letter-spacing: -0.01em; }
 .k-topbar-spacer { flex: 1; }

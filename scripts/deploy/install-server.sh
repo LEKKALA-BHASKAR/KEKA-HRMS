@@ -134,7 +134,7 @@ log "Running the app as a service"
 # ---------------------------------------------------------------------------
 cat > /etc/systemd/system/keka-web.service <<EOF
 [Unit]
-Description=Keka HRMS web app
+Description=BooS-HR web app
 After=network.target postgresql.service
 Requires=postgresql.service
 

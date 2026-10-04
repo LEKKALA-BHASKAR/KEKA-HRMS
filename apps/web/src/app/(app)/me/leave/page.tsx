@@ -15,7 +15,7 @@ import { YearSelect } from "./_parts/year-select";
 import { PolicyExplanation, EncashmentInfo, CompOffInfo, BalanceDetails, type CatalogueType } from "./_parts/modals";
 import s from "./leave.module.css";
 
-export const metadata = { title: "My Leave — Keka" };
+export const metadata = { title: "My Leave — BooS-HR" };
 
 type Params = { year?: string; apply?: string; policy?: string; encash?: string; compoff?: string; details?: string; optional?: string };
 

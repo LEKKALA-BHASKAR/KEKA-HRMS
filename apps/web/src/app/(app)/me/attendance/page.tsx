@@ -20,7 +20,7 @@ import { RequestsPanel, type RequestRow } from "./_parts/requests";
 import { PolicyDetails } from "./_parts/policy";
 import s from "./attendance.module.css";
 
-export const metadata = { title: "My Attendance — Keka" };
+export const metadata = { title: "My Attendance — BooS-HR" };
 
 type Params = { view?: string; range?: string; month?: string; type?: string; request?: string; date?: string; policy?: string };
 

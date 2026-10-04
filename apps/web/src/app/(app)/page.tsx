@@ -23,7 +23,7 @@ import { WishForm } from "./home/_components/wish-form";
 import { IconInfo, IconChevronLeft, IconChevronRight } from "./home/_components/icons";
 import d from "./home/dash.module.css";
 
-export const metadata = { title: "Dashboard — Keka" };
+export const metadata = { title: "Dashboard — BooS-HR" };
 
 const P = PERMISSIONS;
 const MONTH = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEPT", "OCT", "NOV", "DEC"];
@@ -84,7 +84,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       <div className={d.grid}>
         <QuickAccess items={items} canEdit={canEdit} editing={editing} />
 
-        <section className={d.right} aria-label="Keka Wall">
+        <section className={d.right} aria-label="Company wall">
           <nav className={d.groups} aria-label="Wall groups">
             <Link href="/" aria-current={scope === "org" ? "page" : undefined} scroll={false}>Organization</Link>
             {group ? <Link href="/?feed=group" aria-current={scope === "group" ? "page" : undefined} scroll={false}>{group.label}</Link> : null}

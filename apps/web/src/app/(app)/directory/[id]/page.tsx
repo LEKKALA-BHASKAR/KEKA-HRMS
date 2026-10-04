@@ -25,7 +25,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const viewer = await requireViewer();
   const { id: personId } = await params;
   const e = await prisma.employee.findFirst({ where: { ...directoryWhere(viewer.tenantId), id: personId }, select: { displayName: true, firstName: true, lastName: true } });
-  return { title: e ? `${nameOf(e)} — Keka` : "Not found — Keka" };
+  return { title: e ? `${nameOf(e)} — BooS-HR` : "Not found — BooS-HR" };
 }
 
 export default async function DirectoryProfilePage({ params }: { params: Promise<{ id: string }> }) {

@@ -2,7 +2,7 @@ import { requireViewer } from "@/lib/context";
 import { securityPolicy, describePolicy } from "@/lib/auth-policy";
 import { ChangePasswordForm } from "../../signin/auth-forms";
 
-export const metadata = { title: "Change password — Keka" };
+export const metadata = { title: "Change password — BooS-HR" };
 
 export default async function ChangePasswordPage({ searchParams }: { searchParams: Promise<{ required?: string }> }) {
   const viewer = await requireViewer();

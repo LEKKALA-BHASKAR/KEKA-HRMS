@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Keka — HR & Payroll",
+  title: "BooS-HR — HR & Payroll",
   description: "Multi-tenant HR and payroll platform with Indian statutory compliance",
 };
 
