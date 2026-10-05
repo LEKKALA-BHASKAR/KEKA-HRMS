@@ -392,6 +392,9 @@ async function main() {
     // -------------------------------------------------------------------------
     section("Auto clock-out");
     const openIn = new Date(Date.now() - 20 * 3_600_000);
+    // Earlier sections punch at fixed local times; depending on the hour this runs, one of
+    // them can fall after openIn and become the last punch. Clear those so the open IN is last.
+    await prisma.attendanceLog.deleteMany({ where: { tenantId: tenant.id, employeeId: t1.id, timestamp: { gt: openIn, lte: new Date() } } });
     await prisma.attendanceLog.create({ data: { tenantId: tenant.id, employeeId: t1.id, timestamp: openIn, direction: 0, source: "MANUAL" } });
     const ac = await svc.runAutoClockOut(tenant.id);
     const out = await prisma.attendanceLog.findFirst({ where: { employeeId: t1.id, direction: 1, timestamp: { gt: openIn } } });
