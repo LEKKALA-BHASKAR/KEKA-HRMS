@@ -422,7 +422,7 @@ export async function holidayYear(viewer: Viewer, year: number, locationId: stri
 
 export async function feedbackReceivedCount(viewer: Viewer): Promise<number> {
   if (!viewer.employee) return 0;
-  return prisma.feedback.count({ where: { tenantId: viewer.tenantId, aboutEmployeeId: viewer.employee.id, kind: "FEEDBACK" } });
+  return prisma.feedback.count({ where: { tenantId: viewer.tenantId, aboutEmployeeId: viewer.employee.id, kind: "FEEDBACK", deletedAt: null } });
 }
 
 export interface ProjectTimeLine { id: string; label: string; minutes: number }

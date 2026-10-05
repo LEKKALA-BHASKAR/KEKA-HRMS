@@ -3,7 +3,7 @@
 import { unstable_rethrow } from "next/navigation";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
-import { notify } from "@keka/services";
+import { notify, processFeedback, parseTagList, templateMessage, feedbackQualityPrompts } from "@keka/services";
 import { requireViewer, can, type Viewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
 import { directoryWhere, nameOf } from "@/lib/directory";
@@ -114,10 +114,36 @@ export async function givePraiseAction(_prev: ActionState, formData: FormData): 
 export async function giveFeedbackAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const viewer = await requireViewer();
   if (!viewer.employee) return { ok: false, message: "No employee record is linked to this login." };
+  // A feedback template: its questions' answers become the message.
+  const templateId = String(formData.get("templateId") ?? "").trim() || null;
+  let template: { id: string; name: string } | null = null;
+  if (templateId) {
+    const t = await prisma.feedbackTemplate.findFirst({ where: { id: templateId, tenantId: viewer.tenantId, status: "APPROVED" } });
+    if (!t) return { ok: false, message: "Choose an approved feedback template.", errors: { templateId: "Not available" }, values: echo(formData) };
+    const built = templateMessage(t.questions, t.questions.map((_, i) => String(formData.get(`answer_${i}`) ?? "")));
+    if (!built.ok) return { ok: false, message: built.message, values: echo(formData) };
+    formData.set("message", built.message.slice(0, MESSAGE_MAX));
+    template = { id: t.id, name: t.name };
+  }
   const parsed = parseForm(feedbackSchema, formData);
   if (parsed.state) return parsed.state;
-  const { aboutEmployeeId, kind, topic, message: text } = parsed.data;
+  const { aboutEmployeeId, kind } = parsed.data;
+  let { topic } = parsed.data;
+  const text = parsed.data.message;
   const values = echo(formData);
+  // Topic taxonomy and tags.
+  const topicId = String(formData.get("topicId") ?? "").trim() || null;
+  if (topicId) {
+    const t = await prisma.insightFeedbackTopic.findFirst({ where: { id: topicId, tenantId: viewer.tenantId, isActive: true } });
+    if (!t) return { ok: false, message: "Choose a topic from the list.", errors: { topicId: "Not found" }, values };
+    topic = topic ?? t.name.slice(0, TOPIC_MAX);
+  }
+  const tags = parseTagList(String(formData.get("tags") ?? ""));
+  // Quality prompts: forms that ask for them get one chance to improve the wording first.
+  if (formData.get("qualityCheck") === "1" && formData.get("sendAnyway") !== "on" && !template) {
+    const prompts = feedbackQualityPrompts(text);
+    if (prompts.length) return { ok: false, message: `Before you send: ${prompts.join(" ")} Tick "Send as written" to send it anyway.`, errors: { message: prompts[0]! }, values };
+  }
 
   const found = await colleague(viewer, "aboutEmployeeId", aboutEmployeeId, values);
   if (found.error) return found.error;
@@ -136,13 +162,15 @@ export async function giveFeedbackAction(_prev: ActionState, formData: FormData)
 
   try {
     const row = await prisma.feedback.create({
-      data: { tenantId: viewer.tenantId, fromEmployeeId: viewer.employee.id, aboutEmployeeId: person.id, kind, topic, message: text, isAnonymous: anonymous },
+      data: { tenantId: viewer.tenantId, fromEmployeeId: viewer.employee.id, aboutEmployeeId: person.id, kind, topic, message: text, isAnonymous: anonymous, topicId, tags, templateId: template?.id ?? null },
       select: { id: true },
     });
+    // Sentiment, and any escalation rule the feedback trips.
+    await processFeedback(viewer.tenantId, row.id);
     // An internal note's words stay out of the audit trail and the subject's inbox.
     await writeAudit(viewer, {
       module: "EMPLOYEE", action: "CREATE", entityType: "Feedback", entityId: row.id,
-      summary: note ? `Internal note about ${person.name}` : `Feedback to ${person.name}${topic ? ` on ${topic}` : ""}`,
+      summary: note ? `Internal note about ${person.name}` : `Feedback to ${person.name}${topic ? ` on ${topic}` : ""}${template ? ` (template ${template.name})` : ""}`,
     });
     if (!note) {
       await notify({
@@ -152,7 +180,7 @@ export async function giveFeedbackAction(_prev: ActionState, formData: FormData)
         relatedType: "Feedback", relatedId: row.id,
       });
     }
-    return actionDone([PERF_PATH], note ? `Internal note about ${person.name} saved.` : `Feedback sent to ${person.name}.`);
+    return actionDone([PERF_PATH, "/performance/feedback-hub"], note ? `Internal note about ${person.name} saved.` : `Feedback sent to ${person.name}.`);
   } catch (err) {
     unstable_rethrow(err);
     return toErrorState(err, values);

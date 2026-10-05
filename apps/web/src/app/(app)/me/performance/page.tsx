@@ -78,13 +78,13 @@ async function feedbackItems(viewer: Viewer, tab: FeedbackTab): Promise<Item[]> 
         .map((p) => ({ id: p.id, person: p.toEmployee, direction: "To", badge: p.badge, message: p.message, at: p.createdAt, isPublic: p.isPublic }));
     case "feedback-received":
       // Only shared feedback: a note about the viewer is never theirs to read.
-      return (await prisma.feedback.findMany({ where: { tenantId, aboutEmployeeId: me, kind: "FEEDBACK" }, include: { fromEmployee: PERSON }, orderBy: { createdAt: "desc" }, take: LIST_LIMIT }))
+      return (await prisma.feedback.findMany({ where: { tenantId, aboutEmployeeId: me, kind: "FEEDBACK", deletedAt: null }, include: { fromEmployee: PERSON }, orderBy: { createdAt: "desc" }, take: LIST_LIMIT }))
         .map((f) => ({ id: f.id, person: f.isAnonymous ? ANONYMOUS : f.fromEmployee, direction: "From", topic: f.topic, message: f.message, at: f.createdAt }));
     case "feedback-given":
-      return (await prisma.feedback.findMany({ where: { tenantId, fromEmployeeId: me, kind: "FEEDBACK" }, include: { aboutEmployee: PERSON }, orderBy: { createdAt: "desc" }, take: LIST_LIMIT }))
+      return (await prisma.feedback.findMany({ where: { tenantId, fromEmployeeId: me, kind: "FEEDBACK", deletedAt: null }, include: { aboutEmployee: PERSON }, orderBy: { createdAt: "desc" }, take: LIST_LIMIT }))
         .map((f) => ({ id: f.id, person: f.aboutEmployee, direction: "To", topic: f.topic, message: f.message, at: f.createdAt }));
     case "internal-notes":
-      return (await prisma.feedback.findMany({ where: { tenantId, fromEmployeeId: me, kind: "INTERNAL_NOTE" }, include: { aboutEmployee: PERSON }, orderBy: { createdAt: "desc" }, take: LIST_LIMIT }))
+      return (await prisma.feedback.findMany({ where: { tenantId, fromEmployeeId: me, kind: "INTERNAL_NOTE", deletedAt: null }, include: { aboutEmployee: PERSON }, orderBy: { createdAt: "desc" }, take: LIST_LIMIT }))
         .map((f) => ({ id: f.id, person: f.aboutEmployee, direction: "About", topic: f.topic, message: f.message, at: f.createdAt }));
   }
 }

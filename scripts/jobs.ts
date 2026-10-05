@@ -22,6 +22,7 @@
  *   tsx scripts/jobs.ts governance            nightly; expires time-bound access, escalates workflows, runs automations, retention, audit sealing, security scan
  *   tsx scripts/jobs.ts engage                nightly (or hourly); recurring pulses, survey reminders/auto-close/retention, scheduled announcements, expiry, anniversary points, overdue action plans, ended programmes
  *   tsx scripts/jobs.ts automations           hourly; workflow SLA escalation/reminders and event-triggered automation rules
+ *   tsx scripts/jobs.ts insight               nightly; metrics and KPIs, dashboards, review exceptions and reminders, OKR check-in alerts, coaching reminders, digests, access expiry
  *   tsx scripts/jobs.ts cases-docs            nightly; helpdesk escalations, document expiry, e-sign reminders, template reviews, maintenance due, low stock
  *   tsx scripts/jobs.ts nightly               all of the nightly jobs (+ accrual on the 1st)
  *
@@ -150,6 +151,11 @@ async function main() {
       for (const t of tenants) for (const [k, v] of Object.entries(await svc.runCasesDocsJob(t.id))) totals[k] = (totals[k] ?? 0) + v;
       return { tenants: tenants.length, ...totals };
     },
+    insight: async () => {
+      const totals: Record<string, number> = {};
+      for (const t of tenants) for (const [k, v] of Object.entries(await svc.runInsightJobs(t.id))) if (typeof v === "number") totals[k] = (totals[k] ?? 0) + v;
+      return { tenants: tenants.length, ...totals };
+    },
     automations: async () => {
       let escalated = 0, reminded = 0, fired = 0, failed = 0;
       for (const t of tenants) {
@@ -170,7 +176,7 @@ async function main() {
 
   let ok = true;
   if (cmd === "nightly") {
-    for (const name of ["auto-clock-out", "process-attendance", "leave-auto-approve", "shift-allowance", "job-changes", "change-requests", "workforce", "journeys", "probation", "leave-year-end", "invoices", "timesheet-reminders", "ledger-check", "scheduled-reports", "governance", "engage", "cases-docs", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
+    for (const name of ["auto-clock-out", "process-attendance", "leave-auto-approve", "shift-allowance", "job-changes", "change-requests", "workforce", "journeys", "probation", "leave-year-end", "invoices", "timesheet-reminders", "ledger-check", "scheduled-reports", "governance", "engage", "cases-docs", "insight", "deliver-mail"]) ok = (await record(name, jobs[name])) && ok;
     if (new Date().getUTCDate() === 1) ok = (await record("accrue", jobs.accrue)) && ok;
   } else if (cmd && jobs[cmd]) {
     ok = await record(cmd, jobs[cmd]);

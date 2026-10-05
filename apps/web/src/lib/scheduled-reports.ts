@@ -70,7 +70,8 @@ function clip(csv: string): { body: string; clipped: boolean } {
  */
 export async function runScheduledReports(now: Date = new Date(), opts: { ids?: string[] } = {}) {
   const due = await prisma.scheduledReport.findMany({
-    where: { isActive: true, nextRunAt: { lte: now }, ...(opts.ids ? { id: { in: opts.ids } } : {}) },
+    // A schedule mailing outside the company runs only once it is approved.
+    where: { isActive: true, nextRunAt: { lte: now }, OR: [{ approvalStatus: null }, { approvalStatus: "APPROVED" }], ...(opts.ids ? { id: { in: opts.ids } } : {}) },
     orderBy: { nextRunAt: "asc" }, take: 200,
   });
   let sent = 0, emails = 0, failed = 0;
@@ -80,6 +81,8 @@ export async function runScheduledReports(now: Date = new Date(), opts: { ids?: 
     if (claimed.count === 0) continue;
     const recipients = (Array.isArray(s.recipients) ? s.recipients : []).filter((r): r is string => typeof r === "string" && r.includes("@"));
     let status: string;
+    const startedAt = Date.now();
+    let runRows = 0, runTitle = s.name;
     try {
       const out = recipients.length ? await scheduledReportCsv(s) : { error: "No recipients." };
       if ("error" in out) {
@@ -96,6 +99,7 @@ export async function runScheduledReports(now: Date = new Date(), opts: { ids?: 
             relatedType: "ScheduledReport", relatedId: s.id,
           })),
         });
+        runRows = out.rows; runTitle = out.title;
         status = `Sent ${out.rows} row(s) to ${recipients.length} recipient(s)${clipped ? " (cut short)" : ""}`;
         sent++;
         emails += recipients.length;
@@ -105,6 +109,10 @@ export async function runScheduledReports(now: Date = new Date(), opts: { ids?: 
       failed++;
     }
     await prisma.scheduledReport.update({ where: { id: s.id }, data: { lastRunAt: now, lastStatus: status } });
+    // Execution history (Insights › Reports › History).
+    await prisma.insightReportRun.create({
+      data: { tenantId: s.tenantId, reportKey: s.reportKey.slice(0, 120), title: runTitle.slice(0, 200), trigger: "SCHEDULE", format: "CSV", rows: runRows, durationMs: Date.now() - startedAt, status: status.startsWith("Failed") ? "FAILED" : "OK", error: status.startsWith("Failed") ? status.slice(8, 500) : null, userId: s.createdBy },
+    });
   }
   return { due: due.length, sent, emails, failed };
 }

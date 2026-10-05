@@ -111,6 +111,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         { label: "Work Log", href: "/me/work-log" },
         on("performance") && { label: "Performance", href: "/me/performance", paths: ["/me/performance"] },
         on("performance") && { label: "Career", href: "/me/career" },
+        on("performance") && { label: "My Insights", href: "/me/insights" },
         on("expenses") && { label: "Expenses & Travel", href: "/me/expenses" },
         on("helpdesk") && { label: "Helpdesk", href: "/me/helpdesk" },
         { label: "Apps", href: "/me/apps", paths: ["/me/apps", "/me/assets"] },
@@ -146,6 +147,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         isManager && can(viewer, P.ATTENDANCE_APPROVE) && { label: "Attendance", href: "/team/attendance", count: counts.attendance },
         isManager && { label: "Dashboard", href: "/team/dashboard" },
         isManager && { label: "Delegation", href: "/team/delegation" },
+        isManager && on("performance") && { label: "Insights", href: "/team/insights" },
       ]),
     });
     if (on("payroll")) sections.push({
@@ -174,6 +176,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
       orgAdmin
         ? { label: "Employees", href: "/employees", paths: ["/employees", "/directory"] }
         : { label: "Employees", href: "/directory" },
+      canAny(viewer, [P.ANALYTICS_VIEW, P.REPORT_VIEW]) && { label: "Insights", href: "/insights", paths: ["/insights"] },
       can(viewer, P.ORG_MANAGE) && { label: "Org Structure", href: "/org" },
       can(viewer, P.POSITION_VIEW) && { label: "Positions", href: "/positions" },
       can(viewer, P.WORKFORCE_PLAN_VIEW) && { label: "Workforce Planning", href: "/workforce-planning" },
@@ -257,6 +260,10 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         can(viewer, P.SUCCESSION_MANAGE) && { label: "Talent Reviews", href: "/performance/talent-reviews" },
         can(viewer, P.SUCCESSION_MANAGE) && { label: "Succession", href: "/performance/succession" },
         can(viewer, P.PERFORMANCE_MANAGE) && { label: "Feedback Templates", href: "/performance/feedback-templates" },
+        canAny(viewer, [P.PERFORMANCE_MANAGE, P.PERFORMANCE_CALIBRATE]) && { label: "Review Operations", href: "/performance/operations" },
+        { label: "OKRs", href: "/performance/okr" },
+        { label: "Feedback Hub", href: "/performance/feedback-hub" },
+        can(viewer, P.PIP_MANAGE) && { label: "PIP Operations", href: "/performance/pip-ops" },
       ]),
     });
   }

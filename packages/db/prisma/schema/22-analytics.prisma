@@ -153,6 +153,9 @@ model SavedReport {
   spec        Json
   /// Visible to everyone in the company who can read the dataset.
   shared      Boolean  @default(false)
+  /// Insight depth: sharing company-wide waits for approval (PENDING | APPROVED | REJECTED).
+  publishStatus    String?
+  publishRequestId String?
   createdBy   String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

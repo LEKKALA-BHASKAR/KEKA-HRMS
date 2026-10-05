@@ -1,0 +1,824 @@
+// ============================================================================
+//  BooS-HR — Insight depth: reporting & dashboards, people analytics, OKR &
+//  KPI, continuous feedback & 360, performance management, PIP & coaching
+// ============================================================================
+//  Approvals (metric definitions, KRAs, dashboards, report access, report
+//  publishing, external schedules, sensitive exports, goals, OKR close-out,
+//  review reopening and PIP requests) run on the generic workflow engine;
+//  insight-depth.ts names the default approvers and applies the outcomes.
+//  Ids of employees, users, goals, reviews and plans are plain columns: the
+//  services filter every read by tenant and clean up after themselves.
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+//  METRIC CATALOG, KRAs AND KPIs
+// ---------------------------------------------------------------------------
+
+/// A governed metric definition: what is counted, how, and when it alarms.
+/// Editing an approved metric starts a new draft version; approving it
+/// retires the one before.
+model InsightMetric {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key               String
+  name              String
+  /// HEADCOUNT | ATTRITION | ABSENCE | COMPENSATION | TALENT | PERFORMANCE | HIRING | ENGAGEMENT
+  category          String
+  /// The built-in calculator that computes it (INSIGHT_CALCULATORS).
+  calculator        String
+  /// Calculator parameters: { departmentId?, months?, minScore? }.
+  params            Json?
+  description       String?
+  /// Plain-language definition shown in the catalog.
+  formula           String?
+  /// COUNT | PERCENT | INR | DAYS | SCORE
+  unit              String    @default("COUNT")
+  /// UP_GOOD | DOWN_GOOD | NEUTRAL
+  direction         String    @default("UP_GOOD")
+  warnAt            Decimal?  @db.Decimal(18, 4)
+  alertAt           Decimal?  @db.Decimal(18, 4)
+  ownerUserId       String?
+  /// DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | RETIRED
+  status            String    @default("DRAFT")
+  version           Int       @default(1)
+  previousId        String?
+  workflowRequestId String?
+  decidedBy         String?
+  decidedAt         DateTime?
+  decisionNote      String?
+  lastValue         Decimal?  @db.Decimal(18, 4)
+  lastComputedAt    DateTime?
+  createdBy         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([tenantId, key, version])
+  @@index([tenantId, status])
+  @@map("insight_metrics")
+}
+
+/// A key result area: the outcome a role is accountable for. KPIs measure it.
+model InsightKra {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  /// The job title it applies to (blank = everyone).
+  jobTitle          String?
+  departmentId      String?
+  weight            Decimal   @default(0) @db.Decimal(9, 2)
+  /// DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | RETIRED
+  status            String    @default("DRAFT")
+  version           Int       @default(1)
+  previousId        String?
+  workflowRequestId String?
+  decidedBy         String?
+  decidedAt         DateTime?
+  decisionNote      String?
+  createdBy         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([tenantId, name, version])
+  @@index([tenantId, status])
+  @@map("insight_kras")
+}
+
+model InsightKpi {
+  id              String              @id @default(cuid())
+  tenantId        String
+  tenant          Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  description     String?
+  /// COUNT | PERCENT | INR | DAYS | SCORE
+  unit            String              @default("COUNT")
+  /// UP_GOOD | DOWN_GOOD
+  direction       String              @default("UP_GOOD")
+  /// MANUAL (readings entered) | METRIC (computed from an approved metric)
+  calcKind        String              @default("MANUAL")
+  metricKey       String?
+  kraId           String?
+  ownerEmployeeId String?
+  /// MONTHLY | QUARTERLY
+  frequency       String              @default("MONTHLY")
+  /// Share of target (percent) at or above which the reading is green / amber.
+  greenAt         Decimal             @default(100) @db.Decimal(9, 2)
+  amberAt         Decimal             @default(80) @db.Decimal(9, 2)
+  isActive        Boolean             @default(true)
+  createdBy       String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  targets         InsightKpiTarget[]
+  readings        InsightKpiReading[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, isActive])
+  @@map("insight_kpis")
+}
+
+/// Versioned KPI targets; a reading is judged against the version in force.
+model InsightKpiTarget {
+  id            String     @id @default(cuid())
+  tenantId      String
+  kpiId         String
+  kpi           InsightKpi @relation(fields: [kpiId], references: [id], onDelete: Cascade)
+  version       Int
+  target        Decimal    @db.Decimal(18, 4)
+  stretch       Decimal?   @db.Decimal(18, 4)
+  effectiveFrom DateTime
+  reason        String?
+  createdBy     String?
+  createdAt     DateTime   @default(now())
+
+  @@unique([kpiId, version])
+  @@map("insight_kpi_targets")
+}
+
+model InsightKpiReading {
+  id            String     @id @default(cuid())
+  tenantId      String
+  kpiId         String
+  kpi           InsightKpi @relation(fields: [kpiId], references: [id], onDelete: Cascade)
+  /// YYYY-MM (or the first month of the quarter).
+  period        String
+  value         Decimal    @db.Decimal(18, 4)
+  note          String?
+  /// GREEN | AMBER | RED
+  rag           String?
+  targetVersion Int?
+  alertedAt     DateTime?
+  recordedBy    String?
+  createdAt     DateTime   @default(now())
+
+  @@unique([kpiId, period])
+  @@index([tenantId, period])
+  @@map("insight_kpi_readings")
+}
+
+// ---------------------------------------------------------------------------
+//  DASHBOARD BUILDER
+// ---------------------------------------------------------------------------
+
+model InsightDashboard {
+  id                String                   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  /// CUSTOM | KPI
+  kind              String                   @default("CUSTOM")
+  ownerUserId       String
+  /// PRIVATE | SHARED (named people) | ORG (everyone with analytics; needs approval)
+  visibility        String                   @default("PRIVATE")
+  /// DRAFT | PENDING_APPROVAL | PUBLISHED | REJECTED
+  status            String                   @default("DRAFT")
+  workflowRequestId String?
+  refreshedAt       DateTime?
+  /// OK | PARTIAL | FAILED
+  refreshStatus     String?
+  refreshMs         Int?
+  refreshError      String?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  widgets           InsightDashboardWidget[]
+  shares            InsightDashboardShare[]
+  notes             InsightDashboardNote[]
+
+  @@index([tenantId, ownerUserId])
+  @@index([tenantId, status])
+  @@map("insight_dashboards")
+}
+
+model InsightDashboardWidget {
+  id          String           @id @default(cuid())
+  dashboardId String
+  dashboard   InsightDashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  title       String
+  /// METRIC | KPI
+  source      String
+  /// Metric key, or KPI id.
+  refKey      String
+  /// NUMBER | BAR | TREND
+  viz         String           @default("NUMBER")
+  /// Who sees it: role names, or MANAGER / EMPLOYEE. Empty = everyone who can open the dashboard.
+  roles       String[]         @default([])
+  position    Int              @default(0)
+  value       Decimal?         @db.Decimal(18, 4)
+  series      Json?
+  computedAt  DateTime?
+  error       String?
+
+  @@index([dashboardId, position])
+  @@map("insight_dashboard_widgets")
+}
+
+model InsightDashboardShare {
+  id          String           @id @default(cuid())
+  dashboardId String
+  dashboard   InsightDashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  userId      String
+  canEdit     Boolean          @default(false)
+  expiresAt   DateTime?
+  createdAt   DateTime         @default(now())
+
+  @@unique([dashboardId, userId])
+  @@index([userId])
+  @@map("insight_dashboard_shares")
+}
+
+/// An annotation on a dashboard or one of its widgets.
+model InsightDashboardNote {
+  id          String           @id @default(cuid())
+  dashboardId String
+  dashboard   InsightDashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  widgetId    String?
+  authorId    String
+  body        String
+  createdAt   DateTime         @default(now())
+  deletedAt   DateTime?
+
+  @@index([dashboardId, createdAt])
+  @@map("insight_dashboard_notes")
+}
+
+// ---------------------------------------------------------------------------
+//  REPORT OPERATIONS: RUNS, ACCESS, EXPORTS, PRESETS, SNAPSHOTS
+// ---------------------------------------------------------------------------
+
+/// Every report execution: on screen, exported, scheduled or snapshotted.
+model InsightReportRun {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reportKey  String
+  title      String
+  /// SCREEN | EXPORT | SCHEDULE | SNAPSHOT
+  trigger    String
+  /// CSV | XLSX | PDF
+  format     String?
+  rows       Int      @default(0)
+  durationMs Int      @default(0)
+  /// OK | FAILED
+  status     String   @default("OK")
+  error      String?
+  userId     String?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, reportKey])
+  @@map("insight_report_runs")
+}
+
+/// Time-limited access to a report the person's role does not cover.
+model InsightReportGrant {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reportKey         String
+  title             String
+  userId            String
+  reason            String
+  days              Int       @default(30)
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN | REVOKED
+  status            String    @default("PENDING")
+  expiresAt         DateTime?
+  workflowRequestId String?
+  decidedAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, userId, status])
+  @@map("insight_report_grants")
+}
+
+/// A configured export: which report, in which format, which columns.
+model InsightExportProfile {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  reportKey     String
+  /// CSV | XLSX | PDF
+  format        String   @default("CSV")
+  /// Column keys to keep (empty = all).
+  columns       String[] @default([])
+  includeTotals Boolean  @default(true)
+  /// Downloads need an approved export request.
+  sensitive     Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("insight_export_profiles")
+}
+
+model InsightExportRequest {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  profileId         String
+  reason            String
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN | DOWNLOADED
+  status            String    @default("PENDING")
+  requesterUserId   String
+  expiresAt         DateTime?
+  workflowRequestId String?
+  downloadedAt      DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, requesterUserId])
+  @@map("insight_export_requests")
+}
+
+model InsightFilterPreset {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  dataset   String
+  name      String
+  /// ReportFilter[]
+  filters   Json
+  shared    Boolean  @default(false)
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, createdBy, dataset, name])
+  @@index([tenantId, dataset])
+  @@map("insight_filter_presets")
+}
+
+/// A frozen copy of a report's rows, for historical comparison.
+model InsightReportSnapshot {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reportKey String
+  title     String
+  columns   Json
+  rows      Json
+  rowCount  Int
+  note      String?
+  takenBy   String
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, reportKey, createdAt])
+  @@map("insight_report_snapshots")
+}
+
+// ---------------------------------------------------------------------------
+//  PEOPLE ANALYTICS
+// ---------------------------------------------------------------------------
+
+/// A saved population: filters that pick a group of people to analyse.
+model InsightCohort {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  /// { departmentIds, locationIds, genders, joinedFrom, joinedTo, minTenureYears, maxTenureYears, includeExited }
+  filters     Json
+  shared      Boolean  @default(false)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, createdBy])
+  @@map("insight_cohorts")
+}
+
+/// Recruiting spend, for cost-per-hire.
+model InsightHiringCost {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// YYYY-MM
+  month         String
+  /// AGENCY | JOB_BOARD | REFERRAL_BONUS | ADVERTISING | ASSESSMENT | OTHER
+  category      String
+  amount        Decimal  @db.Decimal(18, 2)
+  requisitionId String?
+  note          String?
+  createdBy     String?
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, month])
+  @@map("insight_hiring_costs")
+}
+
+/// One alert or reminder sent, so jobs never send it twice and HR can see them.
+model InsightAlert {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// REVIEW_DUE | THREE_SIXTY | CHECKIN_OVERDUE | KPI_THRESHOLD | METRIC_THRESHOLD | COACHING_FOLLOWUP | FEEDBACK_DIGEST | FEEDBACK_REQUEST
+  kind       String
+  entityType String
+  entityId   String
+  userId     String?
+  title      String
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, kind, createdAt])
+  @@index([entityId, kind])
+  @@map("insight_alerts")
+}
+
+// ---------------------------------------------------------------------------
+//  PERFORMANCE MANAGEMENT
+// ---------------------------------------------------------------------------
+
+/// A reusable review cycle: reviewer weights, rating scale, bands and the form.
+model InsightCycleTemplate {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  /// { reviewerTypes, ratingScale, maxPeers, anonymousFeedback, bands, sections }
+  config      Json
+  isActive    Boolean  @default(true)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("insight_cycle_templates")
+}
+
+/// The rating description library: a named scale with a label and a
+/// description for every point.
+model InsightRatingScale {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  /// [{ value, label, description }]
+  points    Json
+  isActive  Boolean  @default(true)
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("insight_rating_scales")
+}
+
+model InsightCalibrationNote {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cycleId      String
+  employeeId   String?
+  body         String
+  tags         String[] @default([])
+  authorUserId String
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId, cycleId])
+  @@map("insight_calibration_notes")
+}
+
+model InsightReviewReopen {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reviewId          String
+  cycleId           String
+  employeeId        String
+  reason            String
+  previousStatus    String
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN
+  status            String    @default("PENDING")
+  requestedBy       String
+  workflowRequestId String?
+  decidedAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@index([reviewId])
+  @@map("insight_review_reopens")
+}
+
+/// The performance exception queue: reviews that need a human look.
+model InsightPerfException {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cycleId    String
+  reviewId   String
+  employeeId String
+  /// OVERDUE | SELF_GAP | NO_REASON | NO_GOALS | OUT_OF_BAND | MISSING_MANAGER
+  kind       String
+  detail     String
+  /// OPEN | RESOLVED | DISMISSED
+  status     String    @default("OPEN")
+  note       String?
+  resolvedBy String?
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@unique([reviewId, kind])
+  @@index([tenantId, status])
+  @@map("insight_perf_exceptions")
+}
+
+// ---------------------------------------------------------------------------
+//  OKRs
+// ---------------------------------------------------------------------------
+
+/// A link between two objectives that are not parent and child.
+model InsightGoalLink {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fromGoalId String
+  toGoalId   String
+  /// CONTRIBUTES_TO | DEPENDS_ON | BLOCKS | RELATED
+  kind       String
+  note       String?
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  @@unique([fromGoalId, toGoalId, kind])
+  @@index([tenantId])
+  @@index([toGoalId])
+  @@map("insight_goal_links")
+}
+
+model InsightOkrSetting {
+  id              String   @id @default(cuid())
+  tenantId        String   @unique
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// New goals wait for approval (manager for individual, goal admin otherwise).
+  requireApproval Boolean  @default(false)
+  /// WEEKLY | BIWEEKLY | MONTHLY
+  defaultCadence  String   @default("MONTHLY")
+  /// Days past the cadence before a check-in counts as overdue.
+  graceDays       Int      @default(3)
+  updatedAt       DateTime @updatedAt
+
+  @@map("insight_okr_settings")
+}
+
+/// Closing out a goal period: every goal is scored final and snapshotted.
+model InsightOkrCloseout {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  timeframe         String
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN
+  status            String    @default("PENDING")
+  requestedBy       String
+  workflowRequestId String?
+  /// { goals, completed, missed, averageProgress }
+  summary           Json?
+  closedAt          DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, timeframe])
+  @@map("insight_okr_closeouts")
+}
+
+model InsightGoalSnapshot {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  closeoutId   String?
+  label        String
+  goalId       String
+  title        String
+  level        String
+  ownerName    String?
+  progress     Decimal  @db.Decimal(9, 2)
+  status       String
+  targetValue  Decimal  @db.Decimal(18, 2)
+  currentValue Decimal  @db.Decimal(18, 2)
+  takenAt      DateTime @default(now())
+
+  @@index([tenantId, label])
+  @@index([goalId])
+  @@map("insight_goal_snapshots")
+}
+
+// ---------------------------------------------------------------------------
+//  CONTINUOUS FEEDBACK
+// ---------------------------------------------------------------------------
+
+model InsightFeedbackTopic {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  parentId    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("insight_feedback_topics")
+}
+
+model InsightFeedbackFollowUp {
+  id              String    @id @default(cuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  feedbackId      String
+  ownerEmployeeId String
+  title           String
+  dueDate         DateTime
+  /// OPEN | DONE | CANCELLED
+  status          String    @default("OPEN")
+  createdBy       String?
+  doneAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@index([feedbackId])
+  @@map("insight_feedback_followups")
+}
+
+/// When feedback is escalated, and to whom.
+model InsightFeedbackRule {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  /// NEGATIVE | KEYWORD | TOPIC
+  trigger   String
+  keyword   String?
+  topicId   String?
+  /// HR | MANAGER | SKIP_MANAGER
+  notify    String   @default("HR")
+  isActive  Boolean  @default(true)
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("insight_feedback_rules")
+}
+
+model InsightFeedbackEscalation {
+  id              String    @id @default(cuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ruleId          String
+  feedbackId      String
+  notifiedUserIds String[]  @default([])
+  /// OPEN | RESOLVED
+  status          String    @default("OPEN")
+  resolutionNote  String?
+  resolvedBy      String?
+  resolvedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@unique([ruleId, feedbackId])
+  @@index([tenantId, status])
+  @@map("insight_feedback_escalations")
+}
+
+// ---------------------------------------------------------------------------
+//  PIP & COACHING
+// ---------------------------------------------------------------------------
+
+model InsightPipTemplate {
+  id               String   @id @default(cuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// PIP | COACHING
+  kind             String   @default("PIP")
+  name             String
+  /// PIP: the reason; COACHING: the focus area.
+  reason           String?
+  /// PIP objectives / coaching goals, one per line.
+  objectives       String?
+  durationDays     Int      @default(60)
+  /// [{ title, offsetDays }]
+  milestones       Json?
+  checklist        String[] @default([])
+  /// Coaching: days between sessions.
+  sessionEveryDays Int?
+  isActive         Boolean  @default(true)
+  createdBy        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([tenantId, kind, name])
+  @@map("insight_pip_templates")
+}
+
+model InsightPipSetting {
+  id                   String   @id @default(cuid())
+  tenantId             String   @unique
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  minTenureDays        Int      @default(90)
+  /// Only when the last final rating is at most this (null = any rating).
+  maxRating            Decimal? @db.Decimal(9, 2)
+  blockProbation       Boolean  @default(true)
+  blockNotice          Boolean  @default(true)
+  /// A plan cannot close until its required checklist items are done.
+  requireChecklist     Boolean  @default(true)
+  defaultChecklist     String[] @default([])
+  /// Remind coaches when a coaching plan has had no session for this long.
+  coachingReminderDays Int      @default(14)
+  updatedAt            DateTime @updatedAt
+
+  @@map("insight_pip_settings")
+}
+
+model InsightPipObjective {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipId     String
+  title     String
+  measure   String?
+  target    String?
+  weight    Int      @default(1)
+  /// OPEN | MET | NOT_MET
+  status    String   @default("OPEN")
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([pipId])
+  @@map("insight_pip_objectives")
+}
+
+model InsightPipEvidence {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipId     String
+  title     String
+  note      String?
+  /// DOCUMENT | OBSERVATION | EMAIL | OTHER
+  kind      String   @default("DOCUMENT")
+  fileId    String?
+  addedBy   String?
+  createdAt DateTime @default(now())
+
+  @@index([pipId])
+  @@map("insight_pip_evidence")
+}
+
+model InsightPipChecklistItem {
+  id       String    @id @default(cuid())
+  tenantId String
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipId    String
+  label    String
+  required Boolean   @default(true)
+  position Int       @default(0)
+  doneAt   DateTime?
+  doneBy   String?
+  note     String?
+
+  @@index([pipId])
+  @@map("insight_pip_checklist_items")
+}
+
+/// An observed behaviour, rated 1-5, during a PIP or a coaching plan.
+model InsightBehaviorLog {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId     String
+  pipId          String?
+  coachingPlanId String?
+  behaviour      String
+  rating         Int
+  note           String?
+  observedOn     DateTime
+  observedBy     String?
+  createdAt      DateTime @default(now())
+
+  @@index([tenantId, employeeId])
+  @@map("insight_behavior_logs")
+}
+
+/// Extension, escalation or check-in sign-off of a PIP, decided through a workflow.
+model InsightPipRequest {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipId             String
+  /// EXTENSION | ESCALATION | CHECKIN_SIGNOFF
+  kind              String
+  days              Int?
+  checkInId         String?
+  reason            String
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN
+  status            String    @default("PENDING")
+  requestedBy       String
+  workflowRequestId String?
+  decidedAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@index([pipId])
+  @@map("insight_pip_requests")
+}

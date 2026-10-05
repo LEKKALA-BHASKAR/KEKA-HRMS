@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { ENGAGE_WORKFLOW_TYPES } from "./engage-depth-math";
+import { INSIGHT_WORKFLOW_TYPES } from "./insight-math";
 
 /**
  * Pure helpers for governance: workflow routing (definition matching, step
@@ -36,6 +37,8 @@ export const WORKFLOW_ENTITY_TYPES = {
   DOCUMENT_FOLDER_ACCESS: "Confidential document folder access",
   LETTER_TEMPLATE: "Letter template approval",
   ASSET_DISPOSAL: "Asset disposal",
+  // Insight depth (insight-depth.ts applies their outcomes).
+  ...INSIGHT_WORKFLOW_TYPES,
 } as const;
 export type WorkflowEntityType = keyof typeof WORKFLOW_ENTITY_TYPES;
 export const isWorkflowEntityType = (v: string): v is WorkflowEntityType => v in WORKFLOW_ENTITY_TYPES;

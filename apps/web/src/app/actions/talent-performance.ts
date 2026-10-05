@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import {
+  processFeedback,
   refreshGoal, notify, usersWithPermission, timeframeFor, bandFor, bandProblems, stageOrderProblem,
   parseGrowthItems, growthItemsOf, updateProposal, type BandRow,
 } from "@keka/services";
@@ -393,6 +394,7 @@ export async function answerFeedbackRequestAction(_prev: ActionState, f: FormDat
   if (why) return fail(why, f);
   const fb = await prisma.feedback.create({ data: { tenantId: viewer.tenantId, fromEmployeeId: viewer.employee.id, aboutEmployeeId: req.aboutEmployeeId, kind: "FEEDBACK", topic: str(f, "topic", 80) || "Requested feedback", message, isAnonymous: anonymous } });
   await prisma.feedbackRequest.update({ where: { id: req.id }, data: { status: "GIVEN", feedbackId: fb.id, respondedAt: new Date() } });
+  await processFeedback(viewer.tenantId, fb.id);
   const subject = await prisma.employee.findFirst({ where: { id: req.aboutEmployeeId, tenantId: viewer.tenantId }, select: { userId: true } });
   await notify({ tenantId: viewer.tenantId, userIds: [subject?.userId, req.requester.userId], kind: "FEEDBACK", title: anonymous ? "You received requested feedback" : `${viewer.employee.displayName} shared the feedback you asked for`, link: "/me/performance?tab=feedback-received" });
   await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Feedback", entityId: fb.id, summary: `Answered a feedback request${anonymous ? " anonymously" : ""}` });

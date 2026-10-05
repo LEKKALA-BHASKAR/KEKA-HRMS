@@ -104,3 +104,5 @@ export * from "./letter-ops";
 export * from "./asset-ops";
 export * from "./cases-docs-effects";
 export * from "./cases-docs-jobs";
+export * from "./insight-math";
+export * from "./insight-depth";
