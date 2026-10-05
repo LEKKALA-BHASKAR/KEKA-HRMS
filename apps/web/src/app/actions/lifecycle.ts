@@ -6,6 +6,7 @@ import {
   initiateExit, decideExit, withdrawExit, draftSettlement, finalizeSettlement,
   startJourney, setJourneyTask, runAutoChecks,
   updateTicket, parsePeriod,
+  lifecycleDependencyIssues,
 } from "@keka/services";
 import * as hd from "./helpdesk";
 import { foreignReference } from "@/lib/ownership";
@@ -57,6 +58,8 @@ export async function initiateExitAction(_prev: ActionState, formData: FormData)
   if (d.type !== "RESIGNATION" && !can(viewer, P.EXIT_MANAGE)) {
     return { ok: false, message: "Only HR can record a termination or other non-resignation exit.", errors: { type: "Needs exit management" } };
   }
+  const blocked = await lifecycleDependencyIssues(viewer.tenantId, d.employeeId, "EXIT");
+  if (blocked.length) return { ok: false, message: blocked.join(" ") };
   try {
     const res = await initiateExit({ ...d, initiatedByUserId: viewer.user.id });
     if (!res.ok) return { ok: false, message: res.message, values: Object.fromEntries([...formData.entries()].map(([k, v]) => [k, String(v)])) };

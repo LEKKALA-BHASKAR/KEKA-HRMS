@@ -413,6 +413,41 @@ model Tenant {
   assetReconciliations      AssetReconciliation[]
   assetReconciliationLines  AssetReconciliationLine[]
 
+  // --- Ops depth (39-ops-depth) ---
+  opsSetting                    OpsSetting?
+  opsApprovalRequests           OpsApprovalRequest[]
+  opsPolicyVersions             OpsPolicyVersion[]
+  opsReasonCodes                OpsReasonCode[]
+  opsPeriodLocks                OpsPeriodLock[]
+  opsAttendanceCertifications   OpsAttendanceCertification[]
+  opsAttendanceAnomalies        OpsAttendanceAnomaly[]
+  opsEarlyDepartureRules        OpsEarlyDepartureRule[]
+  opsDeviceStatuses             OpsDeviceStatus[]
+  opsBreakRules                 OpsBreakRule[]
+  opsBreakLogs                  OpsBreakLog[]
+  opsAlertLogs                  OpsAlertLog[]
+  opsTimeTemplates              OpsTimeTemplate[]
+  opsTimeCodes                  OpsTimeCode[]
+  opsWorkPackages               OpsWorkPackage[]
+  opsIdleLogs                   OpsIdleLog[]
+  opsTimeCertifications         OpsTimeCertification[]
+  opsExportProfiles             OpsExportProfile[]
+  opsProjectOvertimeAllocations OpsProjectOvertimeAllocation[]
+  opsLeaveBlackouts             OpsLeaveBlackout[]
+  opsAbsenceCases               OpsAbsenceCase[]
+  opsAssignments                OpsAssignment[]
+  opsStatusChanges              OpsStatusChange[]
+  opsConfirmationRules          OpsConfirmationRule[]
+  opsEmploymentStints           OpsEmploymentStint[]
+  opsFteConversions             OpsFteConversion[]
+  opsComponentGroups            OpsComponentGroup[]
+  opsRecurringComponentRules    OpsRecurringComponentRule[]
+  opsVarianceRules              OpsVarianceRule[]
+  opsVarianceReviews            OpsVarianceReview[]
+  opsPayrollCloseItems          OpsPayrollCloseItem[]
+  opsPayrollValidations         OpsPayrollValidation[]
+  opsStatutoryExceptions        OpsStatutoryException[]
+
   @@index([subdomain])
   @@map("tenants")
 }

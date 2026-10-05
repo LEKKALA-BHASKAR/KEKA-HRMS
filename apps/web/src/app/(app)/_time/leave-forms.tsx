@@ -145,10 +145,24 @@ export function DecisionForm({
   );
 }
 
-export function CancelLeaveButton({ requestId, label = "Cancel" }: { requestId: string; label?: string }) {
+export function CancelLeaveButton({ requestId, label = "Cancel", askReason }: { requestId: string; label?: string; askReason?: boolean }) {
+  if (askReason) return <CancelWithReason requestId={requestId} label={label} />;
   return (
     <DangerButton action={cancelLeaveAction} hidden={{ requestId }} label={label}
       confirmLabel="Cancel this leave? Any days already deducted return to the balance." />
+  );
+}
+
+/** Cancelling approved leave: the reason goes to the manager when the tenant needs their approval. */
+function CancelWithReason({ requestId, label }: { requestId: string; label: string }) {
+  const [state, formAction, pending] = useForm(cancelLeaveAction);
+  return (
+    <form action={formAction} className="stack gap-2" onSubmit={(e) => { if (!confirm("Cancel this leave? If your manager must approve, it stays booked until they do.")) e.preventDefault(); }}>
+      <input type="hidden" name="requestId" value={requestId} />
+      <input className="input" name="reason" placeholder="Why cancel" required />
+      <button className="btn sm danger" type="submit" disabled={pending}>{pending ? "…" : label}</button>
+      {state.message ? <div className="text-xs" style={{ color: state.ok ? "var(--success)" : "var(--danger)" }}>{state.message}</div> : null}
+    </form>
   );
 }
 

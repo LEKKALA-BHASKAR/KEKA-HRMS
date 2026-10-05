@@ -7,6 +7,7 @@ import {
   applyLeave, previewLeave, decideLeave, cancelLeave, adjustBalance, runAccrual,
   recordPunch, raiseAttendanceRequest, decideAttendanceRequest, processAttendance,
   notifyTimeRequest, lapseExpiredCompOffs, runLeaveYearEnd, parseSteps, actingForIds,
+  getOpsSettings, leaveCancelRoute, requestLeaveCancellation, requestBalanceAdjustment, opsChangeGate, snapshotOpsPolicy, opsLockMessage,
 } from "@keka/services";
 import { formatDate } from "@keka/shared";
 import { foreignReference } from "@/lib/ownership";
@@ -200,6 +201,17 @@ export async function cancelLeaveAction(_prev: ActionState, formData: FormData):
     return { ok: false, message: "This leave has already started. Ask HR to cancel it." };
   }
 
+  // Ops depth: the withdrawal window, and cancellation of approved leave through approval.
+  if (own && request.status === "APPROVED" && !can(viewer, P.LEAVE_MANAGE)) {
+    const route = await leaveCancelRoute(viewer.tenantId, request);
+    if (route === "CLOSED") return { ok: false, message: "The window for withdrawing this leave has closed. Ask HR to cancel it." };
+    if (route === "APPROVAL") {
+      const reason = String(formData.get("reason") ?? "").trim() || "Plans changed";
+      const r = await requestLeaveCancellation({ actor: { tenantId: viewer.tenantId, userId: viewer.user.id }, employeeId: request.employeeId, requestId, reason });
+      return r.ok ? done(["/me/leave", "/leave", "/inbox"], r.status === "APPLIED" ? "Cancelled." : "Cancellation sent to your manager for approval.") : { ok: false, message: r.message };
+    }
+  }
+
   try {
     const res = await cancelLeave({ requestId, byEmployeeId: viewer.employee?.id });
     if (!res.ok) return { ok: false, message: res.message };
@@ -229,6 +241,13 @@ export async function adjustBalanceAction(_prev: ActionState, formData: FormData
     return { ok: false, message: "This employee is outside your scope." };
   }
   if (await foreignReference(viewer.tenantId, { leaveType: d.leaveTypeId })) return { ok: false, message: "Leave type not found." };
+  // Ops depth: adjustments may need a second pair of eyes.
+  if ((await getOpsSettings(viewer.tenantId)).requireBalanceAdjustmentApproval) {
+    const r = await requestBalanceAdjustment({ actor: { tenantId: viewer.tenantId, userId: viewer.user.id }, employeeId: d.employeeId, leaveTypeId: d.leaveTypeId, days: d.days, note: d.note });
+    if (!r.ok) return { ok: false, message: r.message };
+    await writeAudit(viewer, { module: "LEAVE", action: "CREATE", entityType: "LeaveBalance", entityId: d.employeeId, summary: `Requested a balance adjustment of ${d.days > 0 ? "+" : ""}${d.days} day(s): ${d.note}` });
+    return done(["/leave", "/time/leave-controls", "/inbox"], r.status === "APPLIED" ? "Adjusted." : "Sent for approval; the balance changes once it is approved.");
+  }
   try {
     const after = await adjustBalance({ ...d, actorUserId: viewer.user.id });
     await writeAudit(viewer, {
@@ -331,13 +350,17 @@ export async function saveLeaveType(_prev: ActionState, formData: FormData): Pro
     sandwichConfig: sandwichConfig ?? Prisma.DbNull,
   };
 
+  // Ops depth: governed leave types change only through Time Attend › Controls › Change approvals.
+  if (id) { const gate = await opsChangeGate(viewer.tenantId, "LEAVE_TYPE"); if (gate) return { ok: false, message: gate }; }
   try {
+    let savedId = id;
     if (id) {
       const u = await prisma.leaveType.updateMany({ where: { id, tenantId: viewer.tenantId }, data: data as never });
       if (u.count === 0) return { ok: false, message: "Leave type not found." };
     } else {
-      await prisma.leaveType.create({ data: { ...data, tenantId: viewer.tenantId } as never });
+      savedId = (await prisma.leaveType.create({ data: { ...data, tenantId: viewer.tenantId } as never })).id;
     }
+    if (savedId) await snapshotOpsPolicy(viewer.tenantId, "LEAVE_TYPE", savedId, `${id ? "Updated" : "Created"} ${d.name}`, viewer.user.id);
     await writeAudit(viewer, {
       module: "LEAVE", action: id ? "UPDATE" : "CREATE", entityType: "LeaveType", entityId: id,
       summary: `${id ? "Updated" : "Created"} leave type ${d.code}`,
@@ -381,8 +404,9 @@ export async function saveLeavePlan(_prev: ActionState, formData: FormData): Pro
   if (typeIds.length && (await prisma.leaveType.count({ where: { id: { in: typeIds }, tenantId: viewer.tenantId } })) !== typeIds.length) {
     return { ok: false, message: "Some leave types were not found." };
   }
+  if (id) { const gate = await opsChangeGate(viewer.tenantId, "LEAVE_POLICY"); if (gate) return { ok: false, message: gate }; }
   try {
-    await prisma.$transaction(async (tx) => {
+    const planId = await prisma.$transaction(async (tx) => {
       if (d.isDefault) await tx.leavePlan.updateMany({ where: { tenantId: viewer.tenantId }, data: { isDefault: false } });
       const plan = id
         ? await tx.leavePlan.update({ where: { id }, data: d })
@@ -396,7 +420,10 @@ export async function saveLeavePlan(_prev: ActionState, formData: FormData): Pro
           });
         }
       }
+      return plan.id;
     });
+    await snapshotOpsPolicy(viewer.tenantId, "LEAVE_POLICY", planId, `${id ? "Updated" : "Created"} ${d.name}`, viewer.user.id);
+    await writeAudit(viewer, { module: "LEAVE", action: id ? "UPDATE" : "CREATE", entityType: "LeavePlan", entityId: planId, summary: `${id ? "Updated" : "Created"} leave plan ${d.name} (${typeIds.length} leave type(s))` });
     return done(["/leave"], `Saved ${d.name} with ${typeIds.length} leave type(s).`);
   } catch (err) {
     return toErrorState(err, parsed.data as never);
@@ -600,6 +627,11 @@ export async function raiseAttendanceRequestAction(_prev: ActionState, formData:
   if (proposedLogs && proposedLogs.length !== times.filter((t) => t).length) {
     return { ok: false, message: "Enter every time entry as HH:MM." };
   }
+  // Ops depth: a locked (frozen) attendance period takes no requests; regularisations carry a reason code when the catalogue has any.
+  const locked = await opsLockMessage(viewer.tenantId, "ATTENDANCE", d.fromDate, to);
+  if (locked) return { ok: false, message: locked };
+  const reasonCode = String(formData.get("reasonCode") ?? "").trim() || null;
+  if (reasonCode && !(await prisma.opsReasonCode.findFirst({ where: { tenantId: viewer.tenantId, kind: "REGULARISATION", code: reasonCode, isActive: true } }))) return { ok: false, message: "Choose a reason from the list." };
   const remoteWork = d.type === "WORK_FROM_HOME" || d.type === "ON_DUTY";
   const hourly = remoteWork && d.hourly;
   const copied = await copiedIds(viewer, formData, viewer.employee.id);
@@ -635,6 +667,7 @@ export async function raiseAttendanceRequestAction(_prev: ActionState, formData:
     if (attachment) await prisma.storedFile.delete({ where: { id: attachment.id } }).catch(() => undefined);
     return { ok: false, message: res.message };
   }
+  if (reasonCode && res.requestId) await prisma.attendanceRequest.update({ where: { id: res.requestId }, data: { reasonCode } });
   const label = { ADJUSTMENT: "an attendance adjustment", REGULARISATION: "regularization", PARTIAL_DAY: "a partial day", WORK_FROM_HOME: "work from home", ON_DUTY: "on duty" }[d.type];
   await writeAudit(viewer, {
     module: "ATTENDANCE", action: "CREATE", entityType: "AttendanceRequest", entityId: res.requestId,
@@ -659,6 +692,7 @@ export async function decideAttendanceRequestAction(_prev: ActionState, formData
   if (!(await reaches(viewer, req.employeeId, P.ATTENDANCE_APPROVE))) {
     return { ok: false, message: "This request is outside the employees your roles reach." };
   }
+  if (decision === "APPROVE") { const locked = await opsLockMessage(viewer.tenantId, "ATTENDANCE", req.fromDate, req.toDate); if (locked) return { ok: false, message: locked }; }
   const res = await decideAttendanceRequest({ requestId, decision, deciderEmployeeId: viewer.employee?.id, note });
   if (!res.ok) return { ok: false, message: res.message };
   await writeAudit(viewer, {
@@ -698,6 +732,8 @@ export async function processAttendanceAction(_prev: ActionState, formData: Form
   if ((parsed.data.toDate.getTime() - parsed.data.fromDate.getTime()) / 86_400_000 > 62) {
     return { ok: false, message: "Process at most two months at a time." };
   }
+  const frozen = await opsLockMessage(viewer.tenantId, "ATTENDANCE", parsed.data.fromDate, parsed.data.toDate);
+  if (frozen) return { ok: false, message: `${frozen} Reopen it under Time Attend › Controls first.` };
   const s = await processAttendance({ tenantId: viewer.tenantId, from: parsed.data.fromDate, to: parsed.data.toDate });
   await writeAudit(viewer, {
     module: "ATTENDANCE", action: "UPDATE", entityType: "AttendanceRecord",
@@ -809,13 +845,15 @@ export async function saveAttendancePolicy(_prev: ActionState, formData: FormDat
   if (bad.length > 0) {
     return { ok: false, message: `Not IP addresses: ${bad.join(", ")}`, errors: { ipAllowList: "Invalid entries" } };
   }
+  if (id) { const gate = await opsChangeGate(viewer.tenantId, "ATTENDANCE_POLICY"); if (gate) return { ok: false, message: gate }; }
   try {
-    await prisma.$transaction(async (tx) => {
+    const policyId = await prisma.$transaction(async (tx) => {
       if (d.isDefault) await tx.attendancePolicy.updateMany({ where: { tenantId: viewer.tenantId }, data: { isDefault: false } });
       const data = { ...d, ipAllowList: ips };
-      if (id) await tx.attendancePolicy.updateMany({ where: { id, tenantId: viewer.tenantId }, data });
-      else await tx.attendancePolicy.create({ data: { ...data, tenantId: viewer.tenantId } });
+      if (id) { await tx.attendancePolicy.updateMany({ where: { id, tenantId: viewer.tenantId }, data }); return id; }
+      return (await tx.attendancePolicy.create({ data: { ...data, tenantId: viewer.tenantId } })).id;
     });
+    await snapshotOpsPolicy(viewer.tenantId, "ATTENDANCE_POLICY", policyId, `${id ? "Updated" : "Created"} ${d.name}`, viewer.user.id);
     await writeAudit(viewer, {
       module: "ATTENDANCE", action: id ? "UPDATE" : "CREATE", entityType: "AttendancePolicy", entityId: id,
       summary: `${id ? "Updated" : "Created"} attendance policy ${d.name}`,

@@ -19,6 +19,8 @@ import { MonthCalendar } from "./_parts/calendar";
 import { RequestsPanel, type RequestRow } from "./_parts/requests";
 import { PolicyDetails } from "./_parts/policy";
 import { KioskPinForm } from "../../_time/depth-forms";
+import { BreaksPanel } from "./_parts/breaks";
+import { reasonCodes } from "@keka/services";
 import s from "./attendance.module.css";
 
 export const metadata = { title: "My Attendance — BooS-HR" };
@@ -382,10 +384,12 @@ export default async function MyAttendancePage({ searchParams }: { searchParams:
             closeHref={href({ request: null, date: null })}
             width={560}
           >
-            <AttendanceRequestForm key={`${requestType}:${requestDate}`} defaultType={requestType} defaultDate={requestDate} />
+            <AttendanceRequestForm key={`${requestType}:${requestDate}`} defaultType={requestType} defaultDate={requestDate} reasons={(await reasonCodes(tenantId, "REGULARISATION", true)).map((c) => ({ value: c.code, label: c.label }))} />
           </UrlModal>
         ) : null}
       </HourFormatScope>
+
+      <BreaksPanel tenantId={tenantId} employeeId={employeeId} />
 
       {sp.policy ? (
         <UrlModal title="Attendance Policy" subtitle="The rules your attendance is judged against" closeHref={href({ policy: null })} width={760}>

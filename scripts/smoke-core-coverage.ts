@@ -207,7 +207,8 @@ async function main() {
 
     // -----------------------------------------------------------------
     section("5. Attendance requests: raise, list for the manager, withdraw");
-    const day = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()) + 5 * DAY);
+    let day = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()) + 5 * DAY);
+    while ([0, 6].includes(day.getUTCDay())) day = new Date(day.getTime() + DAY); // a working day
     r = await time.raiseAttendanceRequestAction({}, fd({ type: "WORK_FROM_HOME", fromDate: iso(day), toDate: iso(day), portion: "FULL_DAY", reason: `Plumber visit ${TAG}` }));
     const req = await prisma.attendanceRequest.findFirst({ where: { tenantId: t, employeeId: meera.id, reason: { contains: TAG } } });
     if (req) made.attendanceIds.push(req.id);

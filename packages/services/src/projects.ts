@@ -27,9 +27,9 @@ export function stateCode(s: string | null | undefined): string | null {
   return t.length === 2 ? t.toUpperCase() : STATES[t.toLowerCase()] ?? t.toUpperCase();
 }
 
-export interface SheetEntry { projectId: string; taskId?: string | null; date: Date; hours: number; description?: string | null }
+export interface SheetEntry { projectId: string; taskId?: string | null; date: Date; hours: number; description?: string | null; timeCode?: string | null; workPackageId?: string | null; milestoneId?: string | null }
 
-export async function saveTimesheet(input: { employeeId: string; week: Date; entries: SheetEntry[]; submit: boolean }): Promise<Result & { timesheetId?: string }> {
+export async function saveTimesheet(input: { employeeId: string; week: Date; entries: SheetEntry[]; submit: boolean; attested?: boolean; actorUserId?: string | null }): Promise<Result & { timesheetId?: string; warnings?: string[] }> {
   const week = weekStart(input.week);
   const emp = await prisma.employee.findUniqueOrThrow({ where: { id: input.employeeId }, select: { tenantId: true, displayName: true, reportingManagerId: true } });
   const existing = await prisma.timesheet.findUnique({ where: { employeeId_periodStart: { employeeId: input.employeeId, periodStart: week } } });
@@ -52,6 +52,12 @@ export async function saveTimesheet(input: { employeeId: string; week: Date; ent
   const tasks = new Map((await prisma.task.findMany({ where: { id: { in: taskIds }, tenantId: emp.tenantId }, select: { id: true, projectId: true } })).map((t) => [t.id, t.projectId]));
   if (input.entries.some((e) => e.taskId && tasks.get(e.taskId) !== e.projectId)) return { ok: false, message: "A task does not belong to the project it is logged against." };
   const rateOf = (e: SheetEntry) => allocations.find((x) => x.projectId === e.projectId && x.startDate <= e.date && (!x.endDate || x.endDate >= e.date))!;
+  // Ops depth: period locks and cut-off, comment and time-code standards, work packages, milestones, task budgets, attestation.
+  const { opsTimesheetGate, recordWeekAttestation } = await import("./ops-time");
+  const { opsAudit } = await import("./ops-core");
+  const gate = await opsTimesheetGate({ tenantId: emp.tenantId, employeeId: input.employeeId, week, sheetId: existing?.id ?? null, entries: input.entries.map((e) => ({ ...e, isBillable: rateOf(e).isBillable })), submit: input.submit, attested: input.attested });
+  if (gate.issues.length) return { ok: false, message: gate.issues.join(" ") };
+  const clientOf = new Map((await prisma.project.findMany({ where: { id: { in: [...new Set(input.entries.map((e) => e.projectId))] } }, select: { id: true, clientId: true } })).map((p) => [p.id, p.clientId]));
   const total = r2(input.entries.reduce((s, e) => s + e.hours, 0));
   const billable = r2(input.entries.filter((e) => rateOf(e).isBillable).reduce((s, e) => s + e.hours, 0));
   const projectIds = [...new Set(input.entries.map((e) => e.projectId))];
@@ -72,16 +78,18 @@ export async function saveTimesheet(input: { employeeId: string; week: Date; ent
     await tx.timeEntry.deleteMany({ where: { timesheetId: s.id } });
     for (const e of input.entries) {
       const a = rateOf(e);
-      await tx.timeEntry.create({ data: { tenantId: emp.tenantId, timesheetId: s.id, employeeId: input.employeeId, projectId: e.projectId, taskId: e.taskId ?? null, date: e.date, hours: e.hours, description: e.description ?? null, isBillable: a.isBillable, billRate: a.billRate, costRate: a.costRate } });
+      await tx.timeEntry.create({ data: { tenantId: emp.tenantId, timesheetId: s.id, employeeId: input.employeeId, projectId: e.projectId, taskId: e.taskId ?? null, date: e.date, hours: e.hours, description: e.description ?? null, isBillable: a.isBillable, billRate: a.billRate, costRate: a.costRate, clientId: clientOf.get(e.projectId) ?? null, timeCode: e.timeCode || null, workPackageId: e.workPackageId || null, milestoneId: e.milestoneId || null } });
     }
     return s;
   });
   await recomputeTaskHours(input.entries.map((e) => e.taskId).filter((t): t is string => !!t));
+  if (input.submit && input.attested && input.actorUserId) await recordWeekAttestation({ tenantId: emp.tenantId, employeeId: input.employeeId, userId: input.actorUserId, timesheetId: sheet.id, week, hours: total });
+  await opsAudit(emp.tenantId, input.actorUserId ?? null, { module: "PROJECTS", action: existing ? "UPDATE" : "CREATE", entityType: "Timesheet", entityId: sheet.id, summary: `${emp.displayName}: week of ${week.toISOString().slice(0, 10)} ${input.submit ? (auto ? "submitted and auto-approved" : "submitted") : "saved"}, ${total} h (${billable} billable)`, newValue: { entries: input.entries.length, total, billable } });
   if (input.submit && !auto) {
     // Whoever the chain says can approve it first: the line manager, each project's manager, or both.
     await notify({ tenantId: emp.tenantId, userIds: await approverUserIds(sheet.id, awaiting), kind: "TIMESHEET", title: `${emp.displayName} submitted ${total} h for the week of ${week.toISOString().slice(0, 10)}`, link: "/projects?tab=approvals" });
   }
-  return { ok: true, message: `${total} h ${auto ? "submitted and approved automatically" : input.submit ? "submitted for approval" : "saved"} (${billable} billable).`, timesheetId: sheet.id };
+  return { ok: true, message: `${total} h ${auto ? "submitted and approved automatically" : input.submit ? "submitted for approval" : "saved"} (${billable} billable).${gate.warnings.length ? ` Note: ${gate.warnings.join(" ")}` : ""}`, timesheetId: sheet.id, warnings: gate.warnings };
 }
 
 /** Who can act on a sheet waiting at `awaiting`: the line manager, each project's manager, or both. */
@@ -128,6 +136,8 @@ export async function decideTimesheet(opts: { timesheetId: string; approve: bool
       : { status: "REJECTED", rejectReason: opts.reason, rejectedBy: opts.byUserId, rejectedAt: new Date(), approvalStep: 0, firstApprovedBy: null },
   });
   await notify({ tenantId: s.tenantId, userIds: [s.employee.userId], kind: "TIMESHEET", title: opts.approve ? "Your timesheet was approved" : "Your timesheet needs changes", body: opts.reason ?? undefined, link: "/projects" });
+  const { opsAudit } = await import("./ops-core");
+  await opsAudit(s.tenantId, opts.byUserId, { module: "PROJECTS", action: opts.approve ? "APPROVE" : "REJECT", entityType: "Timesheet", entityId: s.id, summary: `${s.employee.displayName}'s week of ${s.periodStart.toISOString().slice(0, 10)} ${opts.approve ? "approved" : `sent back: ${opts.reason}`}` });
   return { ok: true, message: opts.approve ? "Approved." : "Sent back for changes." };
 }
 

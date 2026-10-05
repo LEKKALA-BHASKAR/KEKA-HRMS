@@ -9,6 +9,8 @@ import {
   runRetention, govAudit,
 } from "./governance-core";
 import { CASES_DOCS_ROUTES, applyCasesDocsEffect } from "./cases-docs-effects";
+import { opsBuiltInRoute, applyOpsEffect } from "./ops-effects";
+import { isOpsWorkflowType } from "./ops-math";
 import {
   WORKFLOW_ENTITY_TYPES, dueAtFor, finalApprovers, nextApplicableStep, pickDefinition, stepOutcome, validateWorkflowSubmission,
   type RouteContext, type StepSpec, type ValidationRule, type WorkflowEntityType,
@@ -54,7 +56,8 @@ export function builtInRoute(entityType: WorkflowEntityType, opts: { reviewerUse
     case "CONSENT_PURPOSE": return [perm("Compliance manager", "admin.compliance.manage")];
     default: {
       const r = CASES_DOCS_ROUTES[entityType as keyof typeof CASES_DOCS_ROUTES];
-      return r ? [perm(r.name, r.permission)] : engageBuiltInRoute(entityType, opts);
+      if (r) return [perm(r.name, r.permission)];
+      return isOpsWorkflowType(entityType) ? opsBuiltInRoute(entityType, opts) : engageBuiltInRoute(entityType, opts);
     }
   }
 }
@@ -240,6 +243,7 @@ async function applyEffect(req: { id: string; tenantId: string; entityType: stri
       return;
     default:
       if (isEngageWorkflowType(req.entityType)) await applyEngageEffect(req, outcome, actorUserId);
+      else if (isOpsWorkflowType(req.entityType)) await applyOpsEffect(req, outcome, actorUserId);
       else if (id) await applyCasesDocsEffect(req, outcome, actorUserId);
       return;
   }

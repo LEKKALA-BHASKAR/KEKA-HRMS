@@ -4,7 +4,11 @@ import { PERMISSIONS, employeeScopeFilter } from "@keka/rbac";
 import { formatDate } from "@keka/shared";
 import { requireAuth, can } from "@/lib/context";
 import { PageHead, Card, Badge, Empty, Person, Stat, Callout } from "@/components/ui";
+import { searchHrActivities } from "@keka/services";
 import { recordHrActivity } from "@/app/actions/workplace";
+import { editHrActivityAction } from "@/app/actions/ops-lifecycle";
+import { SpecForm } from "@/components/gov-forms";
+import { Pill } from "@/components/gov-ui";
 
 const P = PERMISSIONS;
 
@@ -22,32 +26,21 @@ const TYPES = [
 
 export default async function ActivitiesPage({
   searchParams,
-}: { searchParams: Promise<{ type?: string }> }) {
+}: { searchParams: Promise<{ type?: string; q?: string; status?: string; from?: string; to?: string; edit?: string }> }) {
   const viewer = await requireAuth(P.HR_ACTIVITY_VIEW);
   const sp = await searchParams;
   const canManage = can(viewer, P.HR_ACTIVITY_MANAGE);
 
   const scopeFilter = employeeScopeFilter(viewer, P.HR_ACTIVITY_VIEW);
-  const where: Prisma.HrActivityWhereInput = {
-    tenantId: viewer.tenantId,
-    ...(sp.type ? { type: sp.type as never } : {}),
-    ...(scopeFilter ? { employee: scopeFilter as never } : {}),
-  };
+  const scopedIds = scopeFilter
+    ? (await prisma.employee.findMany({ where: { ...(scopeFilter as Prisma.EmployeeWhereInput), tenantId: viewer.tenantId }, select: { id: true } })).map((e) => e.id)
+    : null;
+  const isDay = (x?: string) => !!x && /^\d{4}-\d{2}-\d{2}$/.test(x);
+  const filters = { q: sp.q?.trim() || null, type: sp.type || null, status: sp.status || null, from: isDay(sp.from) ? new Date(`${sp.from}T00:00:00Z`) : null, to: isDay(sp.to) ? new Date(`${sp.to}T00:00:00Z`) : null, employeeIds: scopedIds, take: 120 };
+  const qs = new URLSearchParams(Object.entries({ q: sp.q, type: sp.type, status: sp.status, from: sp.from, to: sp.to }).filter((e): e is [string, string] => !!e[1])).toString();
 
   const [activities, byType, employees] = await Promise.all([
-    prisma.hrActivity.findMany({
-      where,
-      orderBy: { occurredOn: "desc" },
-      take: 120,
-      include: {
-        employee: {
-          select: {
-            id: true, displayName: true, employeeNumber: true, jobTitleName: true,
-            department: { select: { name: true } },
-          },
-        },
-      },
-    }),
+    searchHrActivities(viewer.tenantId, filters),
     prisma.hrActivity.groupBy({
       by: ["type"],
       where: { tenantId: viewer.tenantId },
@@ -130,27 +123,36 @@ export default async function ActivitiesPage({
 
       <div style={{ height: 16 }} />
 
+      <form className="row gap-2 wrap" style={{ marginBottom: 12, alignItems: "center" }}>
+        <input className="input" name="q" defaultValue={sp.q ?? ""} placeholder="Search title, detail, employee…" style={{ width: 260 }} />
+        <select className="select" name="type" defaultValue={sp.type ?? ""} style={{ maxWidth: 180 }}>
+          <option value="">All types</option>
+          {TYPES.map((t) => (
+            <option key={t} value={t}>{t.replace(/_/g, " ").toLowerCase()}</option>
+          ))}
+        </select>
+        <select className="select" name="status" defaultValue={sp.status ?? ""} style={{ maxWidth: 170 }}>
+          <option value="">Any status</option>
+          <option value="RECORDED">Recorded</option>
+          <option value="PENDING">Pending approval</option>
+          <option value="REJECTED">Rejected</option>
+        </select>
+        <input className="input" type="date" name="from" defaultValue={sp.from ?? ""} style={{ width: 150 }} />
+        <input className="input" type="date" name="to" defaultValue={sp.to ?? ""} style={{ width: 150 }} />
+        <button className="btn sm" type="submit">Filter</button>
+        {qs ? <Link className="btn ghost sm" href="/activities">Clear</Link> : null}
+      </form>
+
       <Card
         title={`Timeline (${activities.length})`}
-        action={
-          <form className="row gap-2">
-            <select className="select" name="type" defaultValue={sp.type ?? ""} style={{ maxWidth: 180 }}>
-              <option value="">All types</option>
-              {TYPES.map((t) => (
-                <option key={t} value={t}>{t.replace(/_/g, " ").toLowerCase()}</option>
-              ))}
-            </select>
-            <button className="btn sm" type="submit">Filter</button>
-            {sp.type ? <Link className="btn ghost sm" href="/activities">Clear</Link> : null}
-          </form>
-        }
+        action={<a className="btn sm" href={`/activities/export${qs ? `?${qs}` : ""}`}>Download CSV</a>}
         tight
       >
         {activities.length === 0 ? <Empty title="No activities recorded" /> : (
           <div className="table-wrap">
             <table className="data">
               <thead>
-                <tr><th>Date</th><th>Employee</th><th>Type</th><th>Activity</th><th>Change</th></tr>
+                <tr><th>Date</th><th>Employee</th><th>Type</th><th>Activity</th><th>Change</th>{canManage ? <th></th> : null}</tr>
               </thead>
               <tbody>
                 {activities.map((a) => (
@@ -169,11 +171,25 @@ export default async function ActivitiesPage({
                         {a.type.replace(/_/g, " ").toLowerCase()}
                       </Badge>
                       {a.severity ? <Badge tone="danger">{a.severity.toLowerCase()}</Badge> : null}
+                      {a.approvalStatus && a.approvalStatus !== "APPROVED" ? <div><Pill s={a.approvalStatus} /></div> : null}
                     </td>
                     <td>
                       <span className="strong">{a.title}</span>
                       {a.description ? (
                         <div className="text-xs subtle" style={{ maxWidth: 420 }}>{a.description}</div>
+                      ) : null}
+                      {a.editedAt ? <div className="text-xs muted">Edited {formatDate(a.editedAt)}</div> : null}
+                      {canManage && sp.edit === a.id ? (
+                        <div style={{ marginTop: 8, maxWidth: 520 }}>
+                          <SpecForm action={editHrActivityAction} hidden={{ id: a.id }} submitLabel="Save changes" fields={[
+                            { name: "title", label: "Title", required: true, defaultValue: a.title, wide: true },
+                            { name: "occurredOn", label: "Date", type: "date", required: true, defaultValue: a.occurredOn.toISOString().slice(0, 10) },
+                            { name: "severity", label: "Severity", type: "select", defaultValue: a.severity ?? "", options: [{ value: "MINOR", label: "Minor" }, { value: "MAJOR", label: "Major" }, { value: "FINAL", label: "Final" }] },
+                            { name: "fromValue", label: "From", defaultValue: a.fromValue ?? "" }, { name: "toValue", label: "To", defaultValue: a.toValue ?? "" },
+                            { name: "destination", label: "Destination", defaultValue: a.destination ?? "" },
+                            { name: "description", label: "Detail", type: "textarea", defaultValue: a.description ?? "", wide: true },
+                          ]} />
+                        </div>
                       ) : null}
                     </td>
                     <td className="text-sm">
@@ -194,6 +210,9 @@ export default async function ActivitiesPage({
                         </span>
                       ) : <span className="subtle">—</span>}
                     </td>
+                    {canManage ? (
+                      <td>{a.approvalStatus !== "REJECTED" && sp.edit !== a.id ? <Link className="btn ghost sm" href={`/activities?${qs ? `${qs}&` : ""}edit=${a.id}`}>Edit</Link> : null}</td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>

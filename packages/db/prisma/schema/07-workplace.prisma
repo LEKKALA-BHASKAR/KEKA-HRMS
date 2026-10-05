@@ -763,6 +763,11 @@ model HrActivity {
   /// Links to the effective-dated job record where one was created.
   jobRecordId   String?
 
+  /// Ops depth: PENDING while an activity type that needs approval waits; APPROVED | REJECTED.
+  approvalStatus String?
+  editedBy       String?
+  editedAt       DateTime?
+
   recordedBy String?
   createdAt  DateTime @default(now())
 

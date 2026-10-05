@@ -453,6 +453,14 @@ model TimeEntry {
   invoiceId  String?
   isInvoiced Boolean @default(false)
 
+  // --- Ops depth (39-ops-depth) ---
+  /// The client the time is for, as it stood when logged.
+  clientId      String?
+  /// Activity code (OpsTimeCode), work package and milestone the time is captured against.
+  timeCode      String?
+  workPackageId String?
+  milestoneId   String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

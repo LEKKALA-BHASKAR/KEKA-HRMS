@@ -4,6 +4,7 @@ import { prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import {
   startProbation, changeProbationPolicy, openProbationReview, decideProbation, submitProbationEvaluation,
+  confirmationEligibility, lifecycleDependencyIssues,
 } from "@keka/services";
 import { requireAuth, requireViewer, type Viewer } from "@/lib/context";
 import {
@@ -150,6 +151,13 @@ export async function decideProbationAction(_prev: ActionState, formData: FormDa
   const p = await probationFor(viewer, d.probationId);
   if (!p) return { ok: false, message: "Probation not found." };
   if (d.decision === "NOT_CONFIRM" && !d.note) return { ok: false, message: "Record why the employee is not being confirmed.", errors: { note: "Required" } };
+  // Ops depth: confirmation rules (service, LOP, late marks, warnings, evaluation) and lifecycle dependencies.
+  if (d.decision === "CONFIRM") {
+    const blocked = await lifecycleDependencyIssues(viewer.tenantId, p.employeeId, "CONFIRMATION");
+    const elig = await confirmationEligibility(viewer.tenantId, p.employeeId);
+    const reasons = [...blocked, ...(elig && !elig.eligible ? elig.reasons : [])];
+    if (reasons.length) return { ok: false, message: `Not yet eligible for confirmation: ${reasons.join(" ")}` };
+  }
   try {
     const r = await decideProbation({ probationId: p.id, decision: d.decision, extendDays: d.extendDays ?? null, note: d.note ?? null, byUserId: viewer.user.id });
     if (!r.ok) return { ok: false, message: r.message };
