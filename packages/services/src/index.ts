@@ -129,3 +129,7 @@ export * from "./ops-payroll";
 export * from "./ops-lifecycle";
 export * from "./ops-effects";
 export * from "./ops-jobs";
+// Core HR depth, second pass: config snapshots, org/entity depth, master data, preferences, HR ops.
+export * from "./core2-math";
+export * from "./core2";
+export * from "./core2-qr";

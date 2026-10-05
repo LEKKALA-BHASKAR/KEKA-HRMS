@@ -8,6 +8,7 @@ import { loadStatutoryTables, ageAtFyEnd, slabsFor } from "./payroll-run";
 import { recomputeBalance, leaveYearStart, trueUpExitAccrual } from "./time";
 import type { FnfEffects } from "./fnf-math";
 import { planEmail } from "./core-hr-workflows-math";
+import { notificationAudience } from "./core2-math";
 import { notificationEvent, OFF_BY_DEFAULT } from "./notification-events";
 
 /**
@@ -57,14 +58,21 @@ export interface NotifyInput {
 export async function notify(input: NotifyInput, tx: Prisma.TransactionClient = prisma): Promise<number> {
   const ids = [...new Set(input.userIds.filter((u): u is string => !!u))];
   if (ids.length === 0) return 0;
-  await tx.notification.createMany({
-    data: ids.map((userId) => ({
+  // People may mute a category, in the app or by email (Me › Preferences).
+  const prefs = await tx.userPreference.findMany({ where: { userId: { in: ids } }, select: { userId: true, inAppMuted: true, emailMuted: true, preferredChannel: true } });
+  const audience = notificationAudience(input.kind, ids, prefs);
+  if (audience.inApp.length) await tx.notification.createMany({
+    data: audience.inApp.map((userId) => ({
       tenantId: input.tenantId, userId, kind: input.kind, title: input.title,
       body: input.body ?? null, link: input.link ?? null,
     })),
   });
   if (input.email) {
-    const addresses = await emailAddressesFor(input, ids, tx);
+    let addresses = await emailAddressesFor(input, ids, tx);
+    if (audience.emailBlocked.size) {
+      const blocked = new Set((await tx.user.findMany({ where: { id: { in: [...audience.emailBlocked] } }, select: { email: true } })).map((u) => u.email.toLowerCase()));
+      addresses = addresses.filter((a) => !blocked.has(a.toLowerCase()));
+    }
     if (addresses.length) {
       await tx.emailOutbox.createMany({
         data: addresses.map((toAddress) => ({

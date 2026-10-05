@@ -2,7 +2,7 @@
 
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
-import { deliverOutbox, governanceSettings, requestChange } from "@keka/services";
+import { deliverOutbox, governanceSettings, requestChange, approvalRequired, raiseChangeRequest } from "@keka/services";
 import { requireAuth } from "@/lib/context";
 import { fileTransport } from "@/lib/mail";
 import { z, parseForm, toErrorState, writeAudit, actionDone as done, zName, zRequiredNumber, zNumber, zBool, type ActionState } from "@/lib/forms";
@@ -25,6 +25,19 @@ export async function saveTenantProfile(_prev: ActionState, formData: FormData):
   // Moving the financial year under finalised payroll would split a tax year.
   if (parsed.data.fyStartMonth !== before.fyStartMonth && await prisma.payrollRun.count({ where: { tenantId: viewer.tenantId, status: "FINALIZED" } }) > 0) {
     return { ok: false, message: "The financial year cannot move once payroll has been finalised in it.", errors: { fyStartMonth: "Payroll already finalised" } };
+  }
+  // When the company asked for organisation settings to be approved (or the
+  // administrator chose to), raise a change request for a second administrator.
+  if (formData.get("propose") === "on" || await approvalRequired(viewer.tenantId, "ORGANISATION")) {
+    const previous = { name: before.name, timezone: before.timezone, fyStartMonth: before.fyStartMonth };
+    const res = await raiseChangeRequest({
+      tenantId: viewer.tenantId, targetType: "ORGANISATION", targetId: viewer.tenantId, operation: "UPDATE", title: "Update the organisation settings",
+      changes: parsed.data, previous, reason: String(formData.get("reason") ?? "").trim() || null, effectiveDate: null,
+      requestedBy: viewer.user.id, requestedByEmployeeId: viewer.employee?.id ?? null,
+    });
+    if (!res.ok) return { ok: false, message: res.message };
+    await writeAudit(viewer, { module: "SYSTEM", action: "CREATE", entityType: "ChangeRequest", entityId: res.id, summary: "Asked for approval: Update the organisation settings", oldValue: previous, newValue: parsed.data });
+    return done(["/admin/settings", "/admin/change-requests"], `${res.message} It takes effect once another administrator approves it.`);
   }
   await prisma.tenant.update({ where: { id: viewer.tenantId }, data: parsed.data });
   await writeAudit(viewer, { module: "SYSTEM", action: "UPDATE", entityType: "Tenant", entityId: viewer.tenantId, summary: "Updated organisation settings", oldValue: { name: before.name, timezone: before.timezone, fyStartMonth: before.fyStartMonth }, newValue: parsed.data });

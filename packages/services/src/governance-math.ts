@@ -5,6 +5,7 @@ import { MONEY_WORKFLOW_ENTITY_TYPES } from "./money-math";
 import { JOIN_WORKFLOW_TYPES } from "./join-depth-math";
 import { INSIGHT_WORKFLOW_TYPES } from "./insight-math";
 import { OPS_WORKFLOW_TYPES } from "./ops-math";
+import { CORE2_WORKFLOW_ENTITY_TYPES } from "./core2-math";
 
 /**
  * Pure helpers for governance: workflow routing (definition matching, step
@@ -48,6 +49,7 @@ export const WORKFLOW_ENTITY_TYPES = {
   ...INSIGHT_WORKFLOW_TYPES,
   // Ops depth (ops-effects.ts applies their outcomes).
   ...OPS_WORKFLOW_TYPES,
+  ...CORE2_WORKFLOW_ENTITY_TYPES,
 } as const;
 export type WorkflowEntityType = keyof typeof WORKFLOW_ENTITY_TYPES;
 export const isWorkflowEntityType = (v: string): v is WorkflowEntityType => v in WORKFLOW_ENTITY_TYPES;

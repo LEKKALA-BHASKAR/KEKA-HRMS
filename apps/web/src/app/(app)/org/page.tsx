@@ -127,6 +127,11 @@ export default async function OrgPage({
       <PageHead
         title="Organisation"
         subtitle="Legal entity → business unit → department, with location as a parallel dimension that drives state statutory rules"
+        actions={<>
+          <Link className="btn" href="/org/structure">Hierarchy &amp; reorganisation</Link>
+          {canManageEntity ? <Link className="btn" href="/org/entities">Entity operations</Link> : null}
+          <a className="btn" href="/exports/core2/locations">Export locations</a>
+        </>}
       />
 
       <div className="tabs">

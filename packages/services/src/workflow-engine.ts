@@ -22,6 +22,8 @@ import {
 } from "./governance-math";
 import { moneyBuiltInRoute, isMoneyWorkflowEntityType } from "./money-math";
 import { applyMoneyEffect } from "./money-workflow";
+import { core2BuiltInRoute, isCore2WorkflowEntityType } from "./core2-math";
+import { applyCore2Effect } from "./core2";
 
 /**
  * The generic workflow engine.
@@ -73,7 +75,9 @@ export function builtInRoute(entityType: WorkflowEntityType, opts: { reviewerUse
       if (insight) return insight;
       if (isJoinWorkflowType(entityType)) return joinBuiltInRoute(entityType, opts);
       const money = moneyBuiltInRoute(entityType);
-      return money ? (money as StepSpec[]) : engageBuiltInRoute(entityType, opts);
+      if (money) return money as StepSpec[];
+      const core2 = core2BuiltInRoute(entityType);
+      return core2 ? (core2 as StepSpec[]) : engageBuiltInRoute(entityType, opts);
     }
   }
 }
@@ -265,6 +269,7 @@ async function applyEffect(req: { id: string; tenantId: string; entityType: stri
       else if (isMoneyWorkflowEntityType(req.entityType)) await applyMoneyEffect(req, outcome, actorUserId);
       else if (isInsightWorkflowType(req.entityType)) await applyInsightEffect(req, outcome, actorUserId);
       else if (isOpsWorkflowType(req.entityType)) await applyOpsEffect(req, outcome, actorUserId);
+      else if (isCore2WorkflowEntityType(req.entityType)) await applyCore2Effect(req, outcome, actorUserId);
       else if (id) await applyCasesDocsEffect(req, outcome, actorUserId);
       return;
   }

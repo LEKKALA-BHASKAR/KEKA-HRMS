@@ -5,10 +5,14 @@ import { tenure } from "@keka/services";
 import { requireViewer } from "@/lib/context";
 import { managedTeam, teamTime, decidableChangeRequests } from "@/lib/core-hr";
 import { PageHead, Card, Badge, Empty, Callout } from "@/components/ui";
+import { SpecForm, SpecDisclosure, ActionButton, DecideForm } from "@/components/spec-form";
+import { decideTimeRequestAction } from "@/app/actions/time-requests";
+import { saveDashboardLayoutAction, sendManagerDigestAction } from "@/app/actions/core2-people";
 
 export const metadata = { title: "Manager dashboard — BooS-HR" };
 
 const DAY = 86_400_000;
+const WIDGETS = [{ value: "approvals", label: "Waiting for your decision" }, { value: "team-today", label: "Away today" }, { value: "upcoming", label: "Coming up" }, { value: "profiles", label: "Profiles that need attention" }, { value: "team", label: "Your team" }];
 const LINK_LABEL = { DIRECT: "Direct", INDIRECT: "Indirect", DOTTED: "Dotted line", ACTING: "Acting for" } as const;
 
 /**
@@ -27,14 +31,22 @@ export default async function ManagerDashboardPage() {
   const t = viewer.tenantId;
   const today = new Date(); today.setUTCHours(0, 0, 0, 0);
   const soon = new Date(today.getTime() + 30 * DAY);
-  const [people, time, changes, rules, delegations, docs] = await Promise.all([
+  const [people, time, changes, rules, delegations, docs, pref] = await Promise.all([
     prisma.employee.findMany({ where: { tenantId: t, id: { in: ids } }, select: { id: true, displayName: true, employeeNumber: true, status: true, dateOfJoining: true, probation: { select: { endDate: true } }, profileCompletion: true, jobTitleName: true }, orderBy: { firstName: "asc" } }),
     teamTime(t, ids, today, today),
     decidableChangeRequests(viewer, { take: 50 }),
     prisma.workingRules.findUnique({ where: { tenantId: t } }),
     prisma.managerDelegation.findMany({ where: { tenantId: t, revokedAt: null, endDate: { gte: today }, OR: [{ delegatorId: viewer.employee.id }, { delegateId: viewer.employee.id }] } }),
     prisma.hrChecklistItem.count({ where: { owner: "MANAGER", done: false, checklist: { tenantId: t, employeeId: { in: ids }, status: { in: ["OPEN", "REOPENED"] } } } }),
+    prisma.userPreference.findUnique({ where: { userId: viewer.user.id }, select: { dashboardHidden: true } }),
   ]);
+  // Decide straight from the dashboard: the oldest few leave and attendance requests from the team.
+  const [quickLeave, quickAtt] = await Promise.all([
+    prisma.leaveRequest.findMany({ where: { tenantId: t, employeeId: { in: ids }, status: "PENDING" }, select: { id: true, employeeId: true, fromDate: true, toDate: true, leaveType: { select: { name: true } } }, orderBy: { createdAt: "asc" }, take: 5 }),
+    prisma.attendanceRequest.findMany({ where: { tenantId: t, employeeId: { in: ids }, status: "PENDING" }, select: { id: true, employeeId: true, type: true, fromDate: true, toDate: true }, orderBy: { createdAt: "asc" }, take: 5 }),
+  ]);
+  const hidden = new Set(pref?.dashboardHidden ?? []);
+  const show = (w: string) => !hidden.has(w);
   const direct = [...team.values()].filter((v) => v === "DIRECT").length;
   const max = rules?.maxSpanOfControl ?? 12;
   const away = time.leave.filter((l) => l.status === "APPROVED");
@@ -53,7 +65,13 @@ export default async function ManagerDashboardPage() {
   return (
     <>
       <PageHead title="Manager dashboard" subtitle={`Your team on ${formatDate(today)}`}
-        actions={<><Link className="btn" href="/team/delegation">Delegation</Link><Link className="btn primary" href="/inbox">Inbox</Link></>} />
+        actions={<><a className="btn" href="/exports/core2/manager-dashboard">Export CSV</a><Link className="btn" href="/team/compare">Compare</Link><Link className="btn" href="/team/delegation">Delegation</Link><Link className="btn primary" href="/inbox">Inbox</Link></>} />
+      <div className="row gap-2" style={{ marginBottom: 10 }}>
+        <SpecDisclosure label="Customise dashboard">
+          <SpecForm action={saveDashboardLayoutAction} submitLabel="Save layout" fields={[{ name: "show", label: "Show these panels", kind: "checks", options: WIDGETS, defaultValues: WIDGETS.map((w) => w.value).filter(show) }]} />
+        </SpecDisclosure>
+        <ActionButton action={sendManagerDigestAction} hidden={{}} label="Email me a digest now" />
+      </div>
       {delegations.length ? <Callout title="Delegation in force">{delegations.map((d) => d.delegatorId === viewer.employee!.id ? `Your approvals go to ${name.get(d.delegateId) ?? "a colleague"} until ${formatDate(d.endDate)}.` : `You are ${d.kind === "ACTING" ? "acting manager" : "approving"} for a colleague's team until ${formatDate(d.endDate)}.`).join(" ")}</Callout> : null}
       <div className="grid grid-4" style={{ margin: "14px 0" }}>
         <div className="stat"><div className="stat-label">People you look after</div><div className="stat-value">{ids.length}</div><div className="stat-meta text-xs muted">{byLink("DIRECT")} direct · {byLink("INDIRECT")} indirect · {byLink("DOTTED")} dotted · {byLink("ACTING")} acting</div></div>
@@ -63,35 +81,42 @@ export default async function ManagerDashboardPage() {
       </div>
       {direct > max ? <Callout tone="warning" title="Over the span-of-control limit">You have {direct} direct reports; the company guideline is {max}. Talk to HR about a team lead or a split.</Callout> : null}
       <div className="grid grid-2" style={{ alignItems: "start", marginTop: 14 }}>
-        <Card title="Waiting for your decision" tight>
+        {show("approvals") ? <Card title="Waiting for your decision" tight>
           <ul className="stack" style={{ listStyle: "none", padding: 14, margin: 0, gap: 8 }}>
             <li><Link href="/team/leave">Leave requests</Link> <Badge tone={time.pendingLeave ? "warning" : "neutral"}>{time.pendingLeave}</Badge></li>
             <li><Link href="/team/attendance">Attendance requests</Link> <Badge tone={time.pendingAttendance ? "warning" : "neutral"}>{time.pendingAttendance}</Badge></li>
             <li><Link href="/admin/change-requests">Profile change requests</Link> <Badge tone={teamChanges.length ? "warning" : "neutral"}>{teamChanges.length}</Badge></li>
             <li>Checklist items for you <Badge tone={docs ? "warning" : "neutral"}>{docs}</Badge></li>
           </ul>
-        </Card>
-        <Card title="Away today" tight>
+          {quickLeave.length + quickAtt.length ? (
+            <div style={{ padding: "0 14px 14px" }} data-quick-decide>
+              <div className="text-xs muted" style={{ marginBottom: 6 }}>Decide now</div>
+              {quickLeave.map((l) => <div key={l.id} style={{ marginBottom: 8 }}><div className="text-sm">{name.get(l.employeeId)} — {l.leaveType.name}, {formatDate(l.fromDate)} to {formatDate(l.toDate)}</div><DecideForm action={decideTimeRequestAction} hidden={{ entity: "LeaveRequest", requestId: l.id }} /></div>)}
+              {quickAtt.map((a) => <div key={a.id} style={{ marginBottom: 8 }}><div className="text-sm">{name.get(a.employeeId)} — {a.type.toLowerCase().replace(/_/g, " ")}, {formatDate(a.fromDate)}{a.toDate.getTime() !== a.fromDate.getTime() ? ` to ${formatDate(a.toDate)}` : ""}</div><DecideForm action={decideTimeRequestAction} hidden={{ entity: "AttendanceRequest", requestId: a.id }} /></div>)}
+            </div>
+          ) : null}
+        </Card> : null}
+        {show("team-today") ? <Card title="Away today" tight>
           {away.length === 0 ? <Empty title="Everyone is in" /> : (
             <ul className="stack" style={{ listStyle: "none", padding: 14, margin: 0 }}>{away.map((l) => <li key={l.id}>{name.get(l.employeeId)} — {l.leaveType.name} until {formatDate(l.toDate)}</li>)}</ul>
           )}
-        </Card>
-        <Card title="Coming up in 30 days" tight>
+        </Card> : null}
+        {show("upcoming") ? <Card title="Coming up in 30 days" tight>
           {probation.length + anniversaries.length === 0 ? <Empty title="Nothing coming up" /> : (
             <ul className="stack" style={{ listStyle: "none", padding: 14, margin: 0 }}>
               {probation.map((p) => <li key={`p${p.id}`}><Badge tone="warning">Probation ends</Badge> {name.get(p.id)} on {formatDate(p.probation?.endDate)}</li>)}
               {anniversaries.map((p) => <li key={`a${p.id}`}><Badge tone="brand">Anniversary</Badge> {name.get(p.id)} — {tenure(p.dateOfJoining!, soon).years} year(s)</li>)}
             </ul>
           )}
-        </Card>
-        <Card title="Profiles that need attention" description="Less than 70% complete." tight>
+        </Card> : null}
+        {show("profiles") ? <Card title="Profiles that need attention" description="Less than 70% complete." tight>
           {incomplete.length === 0 ? <Empty title="All profiles look complete" /> : (
             <ul className="stack" style={{ listStyle: "none", padding: 14, margin: 0 }}>{incomplete.map((p) => <li key={p.id}><Link href={`/employees/${p.id}`}>{name.get(p.id)}</Link> — {p.profileCompletion ?? 0}%</li>)}</ul>
           )}
-        </Card>
+        </Card> : null}
       </div>
       <div style={{ height: 14 }} />
-      <Card title="Your team" tight>
+      {show("team") ? <Card title="Your team" tight>
         <div className="table-wrap"><table className="data">
           <thead><tr><th>Employee</th><th>Role</th><th>Link to you</th><th>Status</th><th>With us</th></tr></thead>
           <tbody>{people.map((p) => (
@@ -99,7 +124,7 @@ export default async function ManagerDashboardPage() {
               <td><Badge>{p.status.toLowerCase().replace(/_/g, " ")}</Badge></td><td className="text-sm">{p.dateOfJoining ? tenure(p.dateOfJoining).label : "—"}</td></tr>
           ))}</tbody>
         </table></div>
-      </Card>
+      </Card> : null}
     </>
   );
 }

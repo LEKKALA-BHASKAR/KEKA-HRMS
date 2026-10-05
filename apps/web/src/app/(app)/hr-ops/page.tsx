@@ -39,7 +39,7 @@ export default async function HrOpsPage({ searchParams }: { searchParams: Promis
   const tab: Tab = tabs.includes(sp.tab as Tab) ? (sp.tab as Tab) : tabs[0]!;
   return (
     <>
-      <PageHead title="HR operations" subtitle="Bulk changes, checklists, letters on request and data fixes" />
+      <PageHead title="HR operations" subtitle="Bulk changes, checklists, letters on request and data fixes" actions={can(viewer, P.EMPLOYEE_UPDATE) ? <><Link className="btn" href="/hr-ops/desk">HR desk</Link><Link className="btn" href="/hr-ops/quality">Data quality</Link><Link className="btn" href="/hr-ops/movements">Movements</Link><a className="btn" href="/exports/core2/personal-info">Export personal info</a><a className="btn" href="/exports/core2/id-cards">Export ID cards</a></> : null} />
       <div className="tabs">
         {tabs.map((k) => <Link key={k} href={`/hr-ops?tab=${k}`} className={`tab${tab === k ? " active" : ""}`}>{TABS[k]}</Link>)}
       </div>

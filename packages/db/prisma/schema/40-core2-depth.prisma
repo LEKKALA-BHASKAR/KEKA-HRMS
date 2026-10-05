@@ -1,0 +1,724 @@
+// ============================================================================
+//  BooS-HR — Core HR depth, second pass: configuration snapshots (export,
+//  import, checkpoints and rollback), branding profiles, country
+//  availability, status catalog and master dictionaries; org hierarchy
+//  extras (business functions, unit metadata, policy packs, org snapshots,
+//  reorganisation scenarios); legal-entity depth (tax registrations,
+//  calendars, intercompany assignments, documents, compliance deadlines,
+//  merger / spin-off / acquisition transitions, cross-entity transfer
+//  rules); employee master extras (salutation, pronouns, work address,
+//  identifiers, nationality history, nominee shares, completeness rules);
+//  employee preferences, privacy and ID-card requests; HR operations SLAs,
+//  alerts and quality-control samples.
+//
+//  Every model carries tenantId with a cascading Tenant relation. Employee,
+//  user and org-unit references are plain id columns (like the other
+//  cross-area logs) and are always read through a tenant-filtered query.
+// ============================================================================
+
+/// A saved copy of the company's configuration: an export, an import, a
+/// named checkpoint to roll back to, or the automatic copy taken before a
+/// restore. Environment sets label which environment a copy belongs to.
+model ConfigSnapshot {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  /// PRODUCTION | SANDBOX | UAT | TEMPLATE
+  environment String    @default("PRODUCTION")
+  /// CHECKPOINT | EXPORT | IMPORT | AUTO
+  kind        String    @default("CHECKPOINT")
+  /// { version, sections: { company, organisation, workingRules, ... } }
+  payload     Json
+  /// Section → number of settings captured.
+  summary     Json?
+  note        String?
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+  restoredAt  DateTime?
+  restoredBy  String?
+
+  @@index([tenantId, createdAt])
+  @@map("config_snapshots")
+}
+
+/// A brand the employee portal and printed documents can carry. Assigned to
+/// a legal entity or business unit, it brands that unit's people.
+model BrandingProfile {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  portalTitle    String
+  primaryColor   String   @default("#1266a8")
+  accentColor    String   @default("#0f8a5f")
+  logoText       String?
+  welcomeMessage String?
+  legalEntityId  String?
+  businessUnitId String?
+  isDefault      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("branding_profiles")
+}
+
+/// Which modules the company runs in which country.
+model CountryAvailability {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  countryCode String
+  countryName String
+  /// Module keys available there (core, leave, attendance, payroll, ...).
+  modules     String[] @default([])
+  currency    String?
+  isActive    Boolean  @default(true)
+  note        String?
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, countryCode])
+  @@map("country_availability")
+}
+
+/// A company-defined list of values (e.g. "Uniform sizes", "Shift sites").
+model MasterDictionary {
+  id          String                  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key         String
+  name        String
+  description String?
+  isActive    Boolean                 @default(true)
+  createdAt   DateTime                @default(now())
+  entries     MasterDictionaryEntry[]
+
+  @@unique([tenantId, key])
+  @@map("master_dictionaries")
+}
+
+model MasterDictionaryEntry {
+  id           String           @id @default(cuid())
+  dictionaryId String
+  dictionary   MasterDictionary @relation(fields: [dictionaryId], references: [id], onDelete: Cascade)
+  code         String
+  label        String
+  sortOrder    Int              @default(0)
+  isActive     Boolean          @default(true)
+
+  @@unique([dictionaryId, code])
+  @@map("master_dictionary_entries")
+}
+
+/// A company's own employee statuses ("Sabbatical", "Garden leave"), each
+/// mapped to one of the system statuses that drive payroll and access.
+model EmployeeStatusCatalog {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code        String
+  label       String
+  /// The EmployeeStatus this sub-status sits under.
+  baseStatus  String
+  description String?
+  color       String   @default("#6b7280")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, code])
+  @@map("employee_status_catalog")
+}
+
+/// The catalog status an employee currently carries (one per employee).
+model EmployeeStatusTag {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String   @unique
+  catalogId  String
+  since      DateTime @default(now())
+  note       String?
+  setBy      String?
+
+  @@index([tenantId, catalogId])
+  @@map("employee_status_tags")
+}
+
+// ---------------------------------------------------------------------------
+//  Organisation structure extras
+// ---------------------------------------------------------------------------
+
+/// Business-function taxonomy (Finance › Payables), mapped onto departments.
+model BusinessFunction {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  code          String?
+  parentId      String?
+  description   String?
+  /// Departments that perform this function.
+  departmentIds String[] @default([])
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("business_functions")
+}
+
+/// A field every org unit of a type may carry (a template), e.g. "Budget
+/// owner" on departments. Inheritable fields flow down to child units.
+model OrgUnitMetadataField {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// LEGAL_ENTITY | BUSINESS_UNIT | DIVISION | DEPARTMENT | LOCATION | COST_CENTRE
+  unitType    String
+  key         String
+  label       String
+  /// TEXT | NUMBER | DATE | SELECT
+  fieldType   String   @default("TEXT")
+  options     String[] @default([])
+  required    Boolean  @default(false)
+  inheritable Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, unitType, key])
+  @@map("org_unit_metadata_fields")
+}
+
+model OrgUnitMetadataValue {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  unitType  String
+  unitId    String
+  key       String
+  value     String
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, unitType, unitId, key])
+  @@map("org_unit_metadata_values")
+}
+
+/// A frozen copy of the organisation: units, heads and reporting lines.
+model OrgSnapshot {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  /// The date the structure is as of (job history is replayed for it).
+  asOf      DateTime
+  payload   Json
+  headcount Int      @default(0)
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, asOf])
+  @@map("org_snapshots")
+}
+
+/// A what-if reorganisation: moves (employee → department / manager) that
+/// can be compared against today and, once approved, applied.
+model ReorgScenario {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  /// [{ employeeId, departmentId?, reportingManagerId? }]
+  moves             Json      @default("[]")
+  /// DRAFT | PENDING_APPROVAL | APPROVED | APPLIED | REJECTED
+  status            String    @default("DRAFT")
+  workflowRequestId String?
+  createdBy         String?
+  createdAt         DateTime  @default(now())
+  appliedAt         DateTime?
+  appliedBy         String?
+
+  @@index([tenantId, status])
+  @@map("reorg_scenarios")
+}
+
+/// A set of policies (documents and rules) that applies to a unit and,
+/// unless a child unit has its own, to everything beneath it.
+model PolicyPack {
+  id          String                 @id @default(cuid())
+  tenantId    String
+  tenant      Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  /// [{ title, summary }]
+  items       Json                   @default("[]")
+  isActive    Boolean                @default(true)
+  createdAt   DateTime               @default(now())
+  assignments PolicyPackAssignment[]
+
+  @@unique([tenantId, name])
+  @@map("policy_packs")
+}
+
+model PolicyPackAssignment {
+  id        String     @id @default(cuid())
+  packId    String
+  pack      PolicyPack @relation(fields: [packId], references: [id], onDelete: Cascade)
+  /// LEGAL_ENTITY | BUSINESS_UNIT | DIVISION | DEPARTMENT
+  unitType  String
+  unitId    String
+  createdAt DateTime   @default(now())
+
+  @@unique([packId, unitType, unitId])
+  @@index([unitType, unitId])
+  @@map("policy_pack_assignments")
+}
+
+// ---------------------------------------------------------------------------
+//  Legal entity depth
+// ---------------------------------------------------------------------------
+
+/// A tax registration held by a legal entity (PAN, TAN, GSTIN per state...).
+model EntityTaxRegistration {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  legalEntityId String
+  /// PAN | TAN | GSTIN | PT | LWF | PF | ESI | OTHER
+  type          String
+  number        String
+  stateCode     String?
+  validFrom     DateTime?
+  validTo       DateTime?
+  note          String?
+  createdAt     DateTime  @default(now())
+
+  @@unique([tenantId, type, number])
+  @@index([tenantId, legalEntityId])
+  @@map("entity_tax_registrations")
+}
+
+/// The holiday calendars an entity's people follow.
+model EntityHolidayCalendar {
+  id                String @id @default(cuid())
+  tenantId          String
+  tenant            Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  legalEntityId     String
+  holidayCalendarId String
+
+  @@unique([legalEntityId, holidayCalendarId])
+  @@index([tenantId])
+  @@map("entity_holiday_calendars")
+}
+
+/// One month of an entity's payroll calendar: inputs cut-off and pay date.
+model EntityPayrollCalendar {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  legalEntityId String
+  year          Int
+  month         Int
+  inputCutoff   DateTime
+  payDate       DateTime
+  /// PLANNED | LOCKED | PAID
+  status        String   @default("PLANNED")
+  note          String?
+
+  @@unique([legalEntityId, year, month])
+  @@index([tenantId])
+  @@map("entity_payroll_calendars")
+}
+
+/// An employee of one entity working for another for a period, with the
+/// share of cost the host carries.
+model IntercompanyAssignment {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId        String
+  homeEntityId      String
+  hostEntityId      String
+  startDate         DateTime
+  endDate           DateTime?
+  allocationPct     Int       @default(100)
+  purpose           String?
+  /// PENDING_APPROVAL | ACTIVE | REJECTED | ENDED
+  status            String    @default("PENDING_APPROVAL")
+  workflowRequestId String?
+  createdBy         String?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("intercompany_assignments")
+}
+
+/// The tax jurisdictions (states) a business unit operates and files in.
+model BusinessUnitJurisdiction {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  businessUnitId String
+  stateCode      String
+  /// PT | LWF | GST | INCOME_TAX
+  taxType        String
+  registrationNo String?
+  createdAt      DateTime @default(now())
+
+  @@unique([businessUnitId, stateCode, taxType])
+  @@index([tenantId])
+  @@map("business_unit_jurisdictions")
+}
+
+/// A document held for a legal entity (incorporation certificate, licence).
+model EntityDocument {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  legalEntityId String
+  title         String
+  /// INCORPORATION | LICENCE | REGISTRATION | POLICY | CONTRACT | OTHER
+  category      String    @default("OTHER")
+  fileId        String?
+  reference     String?
+  validUntil    DateTime?
+  uploadedBy    String?
+  createdAt     DateTime  @default(now())
+
+  @@index([tenantId, legalEntityId])
+  @@map("entity_documents")
+}
+
+/// A statutory or compliance deadline an entity must meet.
+model EntityComplianceDeadline {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  legalEntityId String
+  title         String
+  category      String    @default("STATUTORY")
+  dueDate       DateTime
+  /// NONE | MONTHLY | QUARTERLY | ANNUAL
+  recurrence    String    @default("NONE")
+  /// OPEN | DONE
+  status        String    @default("OPEN")
+  ownerUserId   String?
+  completedAt   DateTime?
+  completedBy   String?
+  createdAt     DateTime  @default(now())
+
+  @@index([tenantId, status, dueDate])
+  @@map("entity_compliance_deadlines")
+}
+
+/// Moving people between entities as a block: a merger (source folds into
+/// target), a spin-off (some people move to a new or existing entity) or an
+/// acquisition (people of an acquired company join an entity).
+model EntityTransition {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// MERGER | SPINOFF | ACQUISITION
+  kind              String
+  name              String
+  sourceEntityId    String?
+  targetEntityId    String
+  effectiveDate     DateTime
+  /// [{ employeeId, businessUnitId?, departmentId? }]
+  mapping           Json      @default("[]")
+  /// After a merger, mark the source entity inactive.
+  deactivateSource  Boolean   @default(false)
+  /// DRAFT | PENDING_APPROVAL | APPROVED | APPLIED | REJECTED
+  status            String    @default("DRAFT")
+  workflowRequestId String?
+  createdBy         String?
+  createdAt         DateTime  @default(now())
+  appliedAt         DateTime?
+  /// Acquisition onboarding steps done: [key].
+  stepsDone         String[]  @default([])
+
+  @@index([tenantId, status])
+  @@map("entity_transitions")
+}
+
+/// What moving someone from one entity to another requires. A null side
+/// matches any entity; the most specific rule wins.
+model EntityTransferRule {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fromEntityId      String?
+  toEntityId        String?
+  requiresApproval  Boolean  @default(true)
+  minNoticeDays     Int      @default(0)
+  carryForwardLeave Boolean  @default(true)
+  restartProbation  Boolean  @default(false)
+  newEmployeeNumber Boolean  @default(false)
+  note              String?
+  createdAt         DateTime @default(now())
+
+  @@index([tenantId])
+  @@map("entity_transfer_rules")
+}
+
+// ---------------------------------------------------------------------------
+//  Employee master extras
+// ---------------------------------------------------------------------------
+
+/// Profile fields beyond the core record: how to address someone, where
+/// they actually work from, which languages they speak, what they let
+/// colleagues see, and the verification of their personal email.
+model EmployeeProfileExtra {
+  id                      String    @id @default(cuid())
+  tenantId                String
+  tenant                  Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId              String    @unique
+  /// Mr | Ms | Mx | Dr | Prof
+  salutation              String?
+  pronouns                String?
+  languages               String[]  @default([])
+  workAddressLine1        String?
+  workAddressLine2        String?
+  workCity                String?
+  workState               String?
+  workPostalCode          String?
+  workAddressNote         String?
+  /// Colleagues (not HR or managers) do not see these.
+  hideMobile              Boolean   @default(false)
+  hideBirthday            Boolean   @default(false)
+  hidePersonalEmail       Boolean   @default(false)
+  /// Taken out of the directory — approved by HR.
+  hideFromDirectory       Boolean   @default(false)
+  personalEmailVerifiedAt DateTime?
+  verifiedEmail           String?
+  emailCodeHash           String?
+  emailCodeExpires        DateTime?
+  emailCodeAttempts       Int       @default(0)
+  updatedAt               DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@map("employee_profile_extras")
+}
+
+model NationalityHistory {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String
+  nationality String
+  validFrom   DateTime
+  validTo     DateTime?
+  note        String?
+  changedBy   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId, employeeId])
+  @@map("nationality_history")
+}
+
+/// Another identifier for an employee: an alias number (legacy HRIS, badge)
+/// or an id in an external workforce system.
+model EmployeeIdentifier {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  /// ALIAS | EXTERNAL
+  kind       String
+  /// The issuing system ("Legacy HRIS", "Vendor portal", "Badge").
+  system     String
+  value      String
+  validFrom  DateTime?
+  validTo    DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+
+  @@unique([tenantId, system, value])
+  @@index([employeeId])
+  @@map("employee_identifiers")
+}
+
+/// A master-data completeness rule: this field must be filled for these
+/// people.
+model FieldCompletenessRule {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  field        String
+  /// Only for this worker type; null = everyone.
+  workerTypeId String?
+  /// ERROR | WARNING
+  severity     String   @default("ERROR")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId])
+  @@map("field_completeness_rules")
+}
+
+/// A nominee's share of a benefit (PF, gratuity, insurance).
+model NomineeAllocation {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String
+  dependentId String
+  /// PF | EPS | GRATUITY | INSURANCE
+  benefit     String
+  sharePct    Int
+  updatedAt   DateTime @updatedAt
+
+  @@unique([dependentId, benefit])
+  @@index([tenantId, employeeId])
+  @@map("nominee_allocations")
+}
+
+// ---------------------------------------------------------------------------
+//  Employee self-service: preferences, privacy, ID cards
+// ---------------------------------------------------------------------------
+
+/// A person's own preferences: how they want to hear from BooS-HR, which
+/// categories they mute, manager digests, accessibility, and their own
+/// dashboard choices.
+model UserPreference {
+  id               String   @id @default(cuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId           String   @unique
+  /// EMAIL | IN_APP | BOTH
+  preferredChannel String   @default("BOTH")
+  /// Notification kinds they get no email for.
+  emailMuted       String[] @default([])
+  /// Notification kinds they do not want in the app at all.
+  inAppMuted       String[] @default([])
+  /// NONE | DAILY | WEEKLY — a manager's summary of their team.
+  digestFrequency  String   @default("NONE")
+  digestSections   String[] @default([])
+  /// 100 | 115 | 130
+  fontScale        Int      @default(100)
+  highContrast     Boolean  @default(false)
+  reducedMotion    Boolean  @default(false)
+  underlineLinks   Boolean  @default(false)
+  /// en-IN | en-US | en-GB — dates in the portal for this person.
+  locale           String?
+  /// Manager dashboard panels they hide.
+  dashboardHidden  String[] @default([])
+  updatedAt        DateTime @updatedAt
+
+  @@index([tenantId])
+  @@map("user_preferences")
+}
+
+/// A data-privacy request from an employee about their own data: a copy of
+/// it, correcting it, erasing what may be erased, or restricting its use.
+model PrivacyRequest {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId        String
+  requesterUserId   String
+  /// ACCESS | RECTIFICATION | ERASURE | RESTRICTION | DIRECTORY_HIDE
+  kind              String
+  details           String
+  /// PENDING | APPROVED | REJECTED | WITHDRAWN | COMPLETED
+  status            String    @default("PENDING")
+  workflowRequestId String?
+  response          String?
+  dueDate           DateTime
+  closedAt          DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("privacy_requests")
+}
+
+/// An employee asks for an ID card (first card, lost, damaged, details changed).
+model IdCardRequest {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId        String
+  /// NEW | LOST | DAMAGED | DETAILS_CHANGED
+  reason            String
+  note              String?
+  /// PENDING | ISSUED | REJECTED | WITHDRAWN
+  status            String    @default("PENDING")
+  workflowRequestId String?
+  cardId            String?
+  createdAt         DateTime  @default(now())
+  decidedAt         DateTime?
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("id_card_requests")
+}
+
+// ---------------------------------------------------------------------------
+//  HR operations
+// ---------------------------------------------------------------------------
+
+/// How long HR has to finish a kind of transaction.
+model HrSlaPolicy {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// CHANGE_REQUEST | LETTER_REQUEST | CHECKLIST | JOB_CHANGE | ID_CARD | PRIVACY
+  transactionType String
+  targetHours     Int
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenantId, transactionType])
+  @@map("hr_sla_policies")
+}
+
+/// An exception the HR operations checks found (no manager, inactive unit
+/// with people, an overdue transaction...).
+model HrOpsAlert {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// A stable key so a re-run does not duplicate an open alert.
+  fingerprint String
+  kind        String
+  /// HIGH | MEDIUM | LOW
+  severity    String    @default("MEDIUM")
+  message     String
+  link        String?
+  employeeId  String?
+  /// OPEN | RESOLVED
+  status      String    @default("OPEN")
+  createdAt   DateTime  @default(now())
+  resolvedAt  DateTime?
+  resolvedBy  String?
+
+  @@unique([tenantId, fingerprint])
+  @@index([tenantId, status])
+  @@map("hr_ops_alerts")
+}
+
+/// A transaction picked for a quality-control second look.
+model HrQcSample {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// CHANGE_REQUEST | MASS_UPDATE_ITEM | JOB_CHANGE
+  sourceType String
+  sourceId   String
+  summary    String
+  /// The person who made the change (they may not review it).
+  actorId    String?
+  /// PENDING | PASS | FAIL
+  result     String    @default("PENDING")
+  note       String?
+  reviewedBy String?
+  reviewedAt DateTime?
+  sampledBy  String?
+  createdAt  DateTime  @default(now())
+
+  @@unique([tenantId, sourceType, sourceId])
+  @@index([tenantId, result])
+  @@map("hr_qc_samples")
+}

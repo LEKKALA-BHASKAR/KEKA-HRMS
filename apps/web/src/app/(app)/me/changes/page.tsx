@@ -18,6 +18,7 @@ const iso = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : 
 const RELS = ["SPOUSE", "CHILD", "FATHER", "MOTHER", "SIBLING", "PARTNER", "GUARDIAN", "OTHER"].map((r) => ({ value: r, label: r.charAt(0) + r.slice(1).toLowerCase() }));
 const TONE: Record<string, "success" | "warning" | "danger" | "neutral" | "brand"> = { APPLIED: "success", PENDING: "warning", SCHEDULED: "brand", REJECTED: "danger", FAILED: "danger", WITHDRAWN: "neutral", ISSUED: "success" };
 const reason: FieldSpec = { name: "reason", label: "Note for the reviewer", wide: true };
+const effective: FieldSpec = { name: "effectiveDate", label: "Takes effect on (optional)", kind: "date", hint: "Leave blank to apply as soon as it is approved." };
 
 /**
  * Me › Requests: ask for a change to my own details (my manager or HR
@@ -37,7 +38,7 @@ export default async function MyRequestsPage({ searchParams }: { searchParams: P
   return (
     <>
       <PageHead title="My requests" subtitle="Changes to your details, letters, and corrections"
-        actions={<><Link className="btn" href="/me/id-card">My ID card</Link><a className="btn" href="/me/requests/export">Download my data</a></>} />
+        actions={<><Link className="btn" href="/me/profile-wizard">Complete my profile</Link><Link className="btn" href="/me/nominees">Nominees</Link><Link className="btn" href="/me/timeline">My timeline</Link><Link className="btn" href="/me/activity">My activity</Link><Link className="btn" href="/me/privacy">Privacy</Link><Link className="btn" href="/me/preferences">Preferences</Link><Link className="btn" href="/me/id-card">My ID card</Link><a className="btn" href="/me/requests/export">Download my data</a></>} />
       <div className="tabs">
         {(Object.keys(TABS) as Tab[]).map((k) => <Link key={k} href={`/me/changes?tab=${k}`} className={`tab${tab === k ? " active" : ""}`}>{TABS[k]}{k === "requests" && openCount ? ` (${openCount})` : ""}</Link>)}
       </div>
@@ -61,7 +62,7 @@ async function Profile({ tenantId, employeeId, edit }: { tenantId: string; emplo
   const bank = e.bankAccounts[0];
   const fresh = freshness(e.updatedAt);
   const form = (target: string, fields: FieldSpec[]) => (
-    waiting(target) ? <Badge tone="warning">A change is waiting for approval</Badge> : <SpecForm action={requestProfileChangeAction} hidden={{ targetType: target }} fields={[...fields, reason]} submitLabel="Send for approval" />
+    waiting(target) ? <Badge tone="warning">A change is waiting for approval</Badge> : <SpecForm action={requestProfileChangeAction} hidden={{ targetType: target }} fields={[...fields, effective, reason]} submitLabel="Send for approval" />
   );
   const editing = (id: string) => edit === id;
   return (
@@ -183,7 +184,7 @@ function SubRecords({ title, target, rows, newFields, waiting, editing }: {
                 </div>
               )}
             </div>
-            {editing(r.id) && !waiting(target, r.id) ? <div style={{ marginTop: 10 }}><SpecForm action={requestProfileChangeAction} hidden={{ targetType: target, operation: "UPDATE", targetId: r.id }} fields={[...r.fields, reason]} submitLabel="Send for approval" /></div> : null}
+            {editing(r.id) && !waiting(target, r.id) ? <div style={{ marginTop: 10 }}><SpecForm action={requestProfileChangeAction} hidden={{ targetType: target, operation: "UPDATE", targetId: r.id }} fields={[...r.fields, effective, reason]} submitLabel="Send for approval" /></div> : null}
           </li>
         ))}</ul>
       )}
