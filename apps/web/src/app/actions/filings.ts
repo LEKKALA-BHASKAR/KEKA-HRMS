@@ -2,7 +2,7 @@
 
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
-import { buildPfEcr, buildEsiFile, buildBankAdvice, buildForm24q, form16Pdf, type BuiltFile } from "@keka/services";
+import { buildPfEcr, buildEsiFile, buildBankAdvice, buildForm24q, form16Pdf, opsFilingGate, type BuiltFile } from "@keka/services";
 import { requireAuth } from "@/lib/context";
 import { saveFile } from "@/lib/storage";
 import { writeAudit, actionDone as done, toErrorState, type ActionState } from "@/lib/forms";
@@ -70,6 +70,8 @@ export async function markFiled(_prev: ActionState, formData: FormData): Promise
   const f = await prisma.statutoryFiling.findFirst({ where: { id, tenantId: viewer.tenantId } });
   if (!f) return { ok: false, message: "Filing not found." };
   if (f.status !== "GENERATED") return { ok: false, message: "Generate the file before marking it filed." };
+  const gate = await opsFilingGate(viewer.tenantId, id);
+  if (gate) return { ok: false, message: gate };
   await prisma.statutoryFiling.update({ where: { id }, data: { status: "FILED", receiptNumber: receipt, filedAt: new Date() } });
   await writeAudit(viewer, { module: "PAYROLL", action: "UPDATE", entityType: "StatutoryFiling", entityId: id, summary: `Marked ${f.type.replace("_", " ")} filed: ${receipt}` });
   return done(["/payroll/filings", "/reports", "/"], "Marked as filed.");

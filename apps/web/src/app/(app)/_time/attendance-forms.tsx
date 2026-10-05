@@ -100,8 +100,10 @@ const REQUEST_TYPES: Array<Option & { hint: string }> = [
   { value: "ON_DUTY", label: "On duty", hint: "Client visit, travel or event away from the office" },
 ];
 
-export function AttendanceRequestForm({ defaultDate, defaultType }: {
+export function AttendanceRequestForm({ defaultDate, defaultType, reasons }: {
   defaultDate: string;
+  /** The tenant's regularisation reason catalogue; when set, adjustments and regularisations pick a reason code. */
+  reasons?: Option[];
   /** Preselects the request type (e.g. "WORK_FROM_HOME"); adjustment otherwise. */
   defaultType?: string;
 }) {
@@ -144,6 +146,14 @@ export function AttendanceRequestForm({ defaultDate, defaultType }: {
               </Field>
             ) : null}
           </div>
+          {reasons?.length && (type === "ADJUSTMENT" || type === "REGULARISATION") ? (
+            <Field label="Reason code" name="reasonCode" state={state} required>
+              <select name="reasonCode" className="select" required defaultValue="">
+                <option value="">Choose…</option>
+                {reasons.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+            </Field>
+          ) : null}
           <Field label="Reason" name="reason" state={state} required>
             <TextArea name="reason" state={state} rows={2} required />
           </Field>

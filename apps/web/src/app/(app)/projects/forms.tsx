@@ -8,7 +8,7 @@ import {
 } from "@/app/actions/projects";
 
 export interface Option { value: string; label: string }
-export interface SheetRow { projectId: string; taskId: string; hours: number[]; note: string }
+export interface SheetRow { projectId: string; taskId: string; hours: number[]; note: string; timeCode?: string; workPackageId?: string; milestoneId?: string }
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -16,9 +16,12 @@ const today = () => new Date().toISOString().slice(0, 10);
  * A week of time, one row per project and task. Hours are quarter-hour
  * precise; days after today are closed; totals update as you type.
  */
-export function TimesheetGrid({ week, dates, rows: initial, projects, tasks, editable }: {
+export function TimesheetGrid({ week, dates, rows: initial, projects, tasks, editable, codes = [], workPackages = [], milestones = [], templates = [], attest = false }: {
   week: string; dates: string[]; rows: SheetRow[];
   projects: Option[]; tasks: Array<Option & { projectId: string }>; editable: boolean;
+  /** Ops depth: activity codes, work packages and milestones to tag rows with; saved templates; attestation on submit. */
+  codes?: Option[]; workPackages?: Array<Option & { projectId: string }>; milestones?: Array<Option & { projectId: string }>;
+  templates?: Array<{ id: string; name: string; rows: SheetRow[] }>; attest?: boolean;
 }) {
   const [state, action, pending] = useForm(saveTimesheetAction);
   const blank = (): SheetRow => ({ projectId: projects.length === 1 ? projects[0].value : "", taskId: "", hours: [0, 0, 0, 0, 0, 0, 0], note: "" });
@@ -27,17 +30,28 @@ export function TimesheetGrid({ week, dates, rows: initial, projects, tasks, edi
   const dayTotal = (d: number) => rows.reduce((s, r) => s + (r.hours[d] || 0), 0);
   const total = rows.reduce((s, r) => s + r.hours.reduce((a, b) => a + (b || 0), 0), 0);
   const future = (d: number) => dates[d] > today();
+  const tagged = codes.length > 0 || workPackages.length > 0 || milestones.length > 0;
   return (
     <form action={action}>
       <input type="hidden" name="week" value={week} />
       <FormBanner state={state} />
+      {editable && templates.length ? (
+        <div className="row gap-2" style={{ marginBottom: 8, alignItems: "center" }}>
+          <span className="text-sm subtle">Start from a template:</span>
+          <select className="select" aria-label="Template" defaultValue="" style={{ width: 220 }}
+            onChange={(e) => { const t = templates.find((x) => x.id === e.target.value); if (t) setRows(t.rows.map((r) => ({ ...r, hours: r.hours.map((h, k) => (future(k) ? 0 : h)) }))); }}>
+            <option value="">Choose…</option>
+            {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </div>
+      ) : null}
       <div className="table-wrap">
         <table className="data timesheet">
           <thead>
             <tr>
               <th style={{ minWidth: 180 }}>Project</th><th style={{ minWidth: 150 }}>Task</th>
               {DAYS.map((d, i) => <th key={d} className="num" style={{ minWidth: 58 }}>{d}<div className="text-xs subtle">{dates[i].slice(8)}</div></th>)}
-              <th className="num">Total</th><th style={{ minWidth: 140 }}>Note</th><th />
+              <th className="num">Total</th>{tagged ? <th style={{ minWidth: 150 }}>Code · package · milestone</th> : null}<th style={{ minWidth: 140 }}>Note</th><th />
             </tr>
           </thead>
           <tbody>
@@ -65,6 +79,30 @@ export function TimesheetGrid({ week, dates, rows: initial, projects, tasks, edi
                   </td>
                 ))}
                 <td className="num strong">{r.hours.reduce((a, b) => a + (b || 0), 0) || ""}</td>
+                {tagged ? (
+                  <td>
+                    <div className="stack gap-1">
+                      {codes.length ? (
+                        <select className="select" name={`code_${i}`} value={r.timeCode ?? ""} disabled={!editable} aria-label="Activity code" onChange={(e) => set(i, { timeCode: e.target.value })}>
+                          <option value="">Code…</option>
+                          {codes.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                        </select>
+                      ) : null}
+                      {workPackages.some((w) => w.projectId === r.projectId) ? (
+                        <select className="select" name={`wp_${i}`} value={r.workPackageId ?? ""} disabled={!editable} aria-label="Work package" onChange={(e) => set(i, { workPackageId: e.target.value })}>
+                          <option value="">Work package…</option>
+                          {workPackages.filter((w) => w.projectId === r.projectId).map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
+                        </select>
+                      ) : null}
+                      {milestones.some((m) => m.projectId === r.projectId) ? (
+                        <select className="select" name={`ms_${i}`} value={r.milestoneId ?? ""} disabled={!editable} aria-label="Milestone" onChange={(e) => set(i, { milestoneId: e.target.value })}>
+                          <option value="">Milestone…</option>
+                          {milestones.filter((m) => m.projectId === r.projectId).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                        </select>
+                      ) : null}
+                    </div>
+                  </td>
+                ) : null}
                 <td><input className="input" name={`note_${i}`} value={r.note} disabled={!editable} aria-label="Note" onChange={(e) => set(i, { note: e.target.value })} /></td>
                 <td>{editable && rows.length > 1 ? <button type="button" className="btn sm ghost" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label="Remove row">×</button> : null}</td>
               </tr>
@@ -74,7 +112,7 @@ export function TimesheetGrid({ week, dates, rows: initial, projects, tasks, edi
             <tr>
               <td colSpan={2} className="strong">Day total</td>
               {DAYS.map((d, k) => <td key={d} className="num" style={{ color: dayTotal(k) > 12 ? "var(--warning)" : undefined }}>{dayTotal(k) || ""}</td>)}
-              <td className="num strong">{total}</td><td colSpan={2} />
+              <td className="num strong">{total}</td><td colSpan={tagged ? 3 : 2} />
             </tr>
           </tfoot>
         </table>
@@ -82,7 +120,8 @@ export function TimesheetGrid({ week, dates, rows: initial, projects, tasks, edi
       {editable ? (
         <div className="row gap-2 wrap" style={{ marginTop: 12, justifyContent: "space-between" }}>
           <button type="button" className="btn sm" onClick={() => setRows([...rows, blank()])} disabled={projects.length === 0}>+ Add a row</button>
-          <div className="row gap-2">
+          <div className="row gap-2" style={{ alignItems: "center" }}>
+            {attest ? <label className="row gap-2 text-sm"><input type="checkbox" name="attest" /> These hours are a true record of my work</label> : null}
             <button className="btn" name="intent" value="save" disabled={pending}>Save draft</button>
             <button className="btn primary" name="intent" value="submit" disabled={pending || total === 0}>{pending ? "Saving…" : `Submit ${total} h`}</button>
           </div>

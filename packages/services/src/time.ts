@@ -509,6 +509,12 @@ export async function previewLeave(input: ApplyLeaveInput) {
     issues.push(...await usageIssuesFor({ employeeId: input.employeeId, type, count, from, to, calendar: policy.calendar }));
   }
 
+  // Ops depth: blackout and peak periods bind employees (an administrator applying on someone's behalf may override).
+  if (!input.onBehalf && !count.empty) {
+    const { opsLeaveBlackoutIssues } = await import("./ops-leave");
+    for (const message of await opsLeaveBlackoutIssues({ tenantId: emp.tenantId, employeeId: input.employeeId, leaveTypeId: type.id, from, to })) issues.push({ field: "fromDate", message });
+  }
+
   // Hidden types are admin-only.
   if (type.isHiddenFromEmployee && !input.onBehalf) {
     issues.push({ field: "leaveTypeId", message: `${type.name} can only be applied by an administrator.` });

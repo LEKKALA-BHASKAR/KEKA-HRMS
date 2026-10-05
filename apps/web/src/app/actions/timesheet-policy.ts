@@ -1,7 +1,7 @@
 "use server";
 
 import { PERMISSIONS as P } from "@keka/rbac";
-import { saveTimesheetPolicy, getTimesheetPolicy } from "@keka/services";
+import { saveTimesheetPolicy, getTimesheetPolicy, opsChangeGate, snapshotOpsPolicy } from "@keka/services";
 import { requireAuth } from "@/lib/context";
 import { z, parseForm, writeAudit, actionDone as done, zNumber, zRequiredNumber, zBool, type ActionState } from "@/lib/forms";
 
@@ -23,9 +23,12 @@ export async function saveTimesheetPolicyAction(_prev: ActionState, formData: Fo
   const d = parsed.data;
   // A zero floor is no floor.
   const policy = { ...d, minHoursPerDay: d.minHoursPerDay || null, minHoursPerWeek: d.minHoursPerWeek || null, maxHoursPerWeek: d.maxHoursPerWeek || null, autoApproveMaxHours: d.autoApproveMaxHours || null };
+  const gate = await opsChangeGate(viewer.tenantId, "WORK_HOUR_POLICY");
+  if (gate) return { ok: false, message: gate };
   const before = await getTimesheetPolicy(viewer.tenantId);
   const res = await saveTimesheetPolicy(viewer.tenantId, policy);
   if (!res.ok) return { ok: false, message: res.message };
+  await snapshotOpsPolicy(viewer.tenantId, "WORK_HOUR_POLICY", viewer.tenantId, res.message, viewer.user.id);
   await writeAudit(viewer, { module: "PROJECTS", action: "UPDATE", entityType: "TimesheetPolicy", entityId: viewer.tenantId, summary: res.message, oldValue: before, newValue: policy });
   return done(["/projects/settings/timesheets", "/projects"], res.message);
 }

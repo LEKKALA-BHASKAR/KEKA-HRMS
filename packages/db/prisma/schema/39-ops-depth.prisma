@@ -1,0 +1,818 @@
+// ============================================================================
+//  BooS-HR — Ops depth: time tracking, project time, attendance, leave,
+//  payroll core, India statutory and employee lifecycle controls
+// ============================================================================
+//  Approvals (configuration changes, balance adjustments, leave cancellation,
+//  payslip release, statutory sign-off, task sign-off, HR events, attendance
+//  certification, break exceptions, time corrections, project time
+//  certification, long absences, secondments, FTE conversions) run on the
+//  generic workflow engine (31-governance) through OpsApprovalRequest, which
+//  keeps the id of its WorkflowRequest and the status the engine's effect
+//  sets.
+//
+//  Employee and user ids are plain columns so these tables add no
+//  back-relations to Employee; every top-level table carries tenantId with a
+//  cascading Tenant relation.
+// ============================================================================
+
+/// Per-tenant switches and thresholds for the ops controls.
+model OpsSetting {
+  id       String @id @default(cuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Configuration kinds (ATTENDANCE_POLICY, LEAVE_TYPE, …) whose changes need approval.
+  approvalKinds String[] @default([])
+
+  // --- Attendance ---
+  /// Day of the month on which payroll takes attendance (the cut-off).
+  attendanceCutoffDay   Int     @default(25)
+  /// Remind people with open items this many days before the cut-off.
+  cutoffAlertDaysBefore Int     @default(3)
+  /// A device with no punch for this long is stale; this long, offline.
+  deviceStaleMinutes    Int     @default(240)
+  deviceOfflineMinutes  Int     @default(1440)
+  /// Tell employees and their managers about new attendance anomalies.
+  anomalyNotify         Boolean @default(true)
+  /// First-in times from two sources further apart than this disagree.
+  sourceMismatchMinutes Int     @default(15)
+
+  // --- Time tracking & project time ---
+  requireEntryComment     Boolean @default(false)
+  entryCommentMinLength   Int     @default(0)
+  requireTimeCode         Boolean @default(false)
+  /// Employees attest their hours when they submit a week.
+  requireAttestation      Boolean @default(false)
+  /// A week closes to edits this many days after it ends (null = never).
+  timesheetCutoffDays     Int?
+  /// OFF | WARN | BLOCK — hours on a task beyond its estimate.
+  taskBudgetMode          String  @default("OFF")
+  taskBudgetTolerancePct  Int     @default(0)
+  projectVarianceAlertPct Int     @default(10)
+  standardDailyHours      Decimal @default(8) @db.Decimal(4, 2)
+
+  // --- Leave ---
+  /// Approved leave can be withdrawn by the employee until this many days before it starts.
+  leaveWithdrawalWindowDays        Int?
+  /// Cancelling approved leave goes to the manager for approval.
+  requireLeaveCancellationApproval Boolean @default(false)
+  /// Leave waiting longer than this is escalated to the approver's manager.
+  leaveEscalationHours             Int?
+  /// TEAM | DEPARTMENT | ORGANISATION | MANAGERS — whose leave employees see on the calendar.
+  leaveCalendarVisibility          String  @default("TEAM")
+  /// Show "On leave" rather than the leave type to colleagues.
+  leaveCalendarHideType            Boolean @default(false)
+  /// Manual balance adjustments need approval.
+  requireBalanceAdjustmentApproval Boolean @default(false)
+
+  // --- Payroll ---
+  /// Net pay is rounded to a multiple of this (1 = to the rupee).
+  netPayRoundTo          Int     @default(1)
+  /// NEAREST | UP | DOWN
+  netPayRoundingMode     String  @default("NEAREST")
+  /// WARN | BLOCK — a run with negative net pay can or cannot be locked.
+  negativeNetPayAction   String  @default("WARN")
+  requirePayslipApproval Boolean @default(false)
+  requireFilingApproval  Boolean @default(false)
+  /// Every close-checklist item must be done before a run is finalised.
+  requireCloseChecklist  Boolean @default(false)
+
+  // --- Lifecycle ---
+  /// HR activity types recorded only once approved.
+  eventTypesNeedingApproval String[] @default([])
+  /// Days before a contract ends at which HR and the manager are alerted.
+  contractAlertDays         Int[]    @default([60, 30, 7])
+
+  updatedAt DateTime @updatedAt
+
+  @@map("ops_settings")
+}
+
+/// A request that goes through the generic workflow engine and, when
+/// approved, is applied: a configuration change, a balance adjustment, a
+/// cancellation, a release, a sign-off…
+model OpsApprovalRequest {
+  id                String    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind              String
+  /// The record it is about (policy, leave request, run, filing, task…).
+  targetId          String?
+  targetLabel       String
+  employeeId        String?
+  /// What is asked for — proposed field values, or the request's data.
+  payload           Json?
+  /// The values it replaces, for the change history.
+  previous          Json?
+  /// A configuration change waits for this date once approved.
+  effectiveFrom     DateTime?
+  reason            String?
+  /// PENDING | SCHEDULED | APPLIED | REJECTED | WITHDRAWN | FAILED
+  status            String    @default("PENDING")
+  workflowRequestId String?
+  requestedBy       String
+  decidedAt         DateTime?
+  appliedAt         DateTime?
+  error             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([tenantId, kind, status])
+  @@index([targetId])
+  @@map("ops_approval_requests")
+}
+
+/// A numbered snapshot of a policy, written each time it changes.
+model OpsPolicyVersion {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind          String
+  targetId      String
+  version       Int
+  snapshot      Json
+  effectiveFrom DateTime
+  summary       String
+  approvalId    String?
+  createdBy     String?
+  createdAt     DateTime @default(now())
+
+  @@unique([kind, targetId, version])
+  @@index([tenantId, kind, targetId])
+  @@map("ops_policy_versions")
+}
+
+/// Catalogues of reasons: regularisation reasons, the absence taxonomy,
+/// employee status reason codes and idle-time categories.
+model OpsReasonCode {
+  id          String          @id @default(cuid())
+  tenantId    String
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// REGULARISATION | ABSENCE | STATUS | IDLE
+  kind        String
+  code        String
+  label       String
+  description String?
+  parentId    String?
+  parent      OpsReasonCode?  @relation("OpsReasonTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    OpsReasonCode[] @relation("OpsReasonTree")
+  /// STATUS codes: the employee status they explain.
+  appliesTo   String?
+  sortOrder   Int             @default(0)
+  isActive    Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+
+  @@unique([tenantId, kind, code])
+  @@map("ops_reason_codes")
+}
+
+/// A frozen stretch of attendance or timesheets: nothing in it changes
+/// until it is reopened.
+model OpsPeriodLock {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// ATTENDANCE | TIMESHEET
+  domain       String
+  periodStart  DateTime
+  periodEnd    DateTime
+  /// LOCKED | REOPENED
+  status       String    @default("LOCKED")
+  reason       String?
+  lockedBy     String
+  lockedAt     DateTime  @default(now())
+  reopenedBy   String?
+  reopenedAt   DateTime?
+  reopenReason String?
+
+  @@index([tenantId, domain, status])
+  @@map("ops_period_locks")
+}
+
+/// A manager's certification of a day, or HR's of a month's summary.
+model OpsAttendanceCertification {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// DAY | MONTH
+  scope         String
+  periodStart   DateTime
+  periodEnd     DateTime
+  /// "ALL" or a department id.
+  departmentKey String    @default("ALL")
+  summary       Json
+  /// CERTIFIED (day) | PENDING_APPROVAL | APPROVED | REJECTED (month)
+  status        String
+  note          String?
+  certifiedBy   String
+  certifiedAt   DateTime  @default(now())
+  approvalId    String?
+  decidedAt     DateTime?
+
+  @@unique([tenantId, scope, periodStart, departmentKey])
+  @@map("ops_attendance_certifications")
+}
+
+/// One classified exception on an employee's day.
+model OpsAttendanceAnomaly {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  date       DateTime
+  kind       String
+  /// LOW | MEDIUM | HIGH
+  severity   String
+  detail     String
+  /// OPEN | RESOLVED | WAIVED
+  status     String    @default("OPEN")
+  notifiedAt DateTime?
+  resolvedBy String?
+  resolvedAt DateTime?
+  resolution String?
+  createdAt  DateTime  @default(now())
+
+  @@unique([employeeId, date, kind])
+  @@index([tenantId, status, date])
+  @@map("ops_attendance_anomalies")
+}
+
+/// Early departure penalties: per attendance policy, or for every policy.
+model OpsEarlyDepartureRule {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// An attendance policy id, or "ALL".
+  policyKey      String   @default("ALL")
+  graceMinutes   Int      @default(15)
+  exemptPerMonth Int      @default(2)
+  penaltyDays    Decimal  @default(0.5) @db.Decimal(4, 2)
+  isActive       Boolean  @default(true)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenantId, policyKey])
+  @@map("ops_early_departure_rules")
+}
+
+/// The last health check of a biometric device or kiosk.
+model OpsDeviceStatus {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// "DEVICE:<id>" or "KIOSK:<id>"
+  deviceKey   String
+  name        String
+  /// HEALTHY | STALE | OFFLINE | INACTIVE | NEVER_USED
+  status      String
+  lastPunchAt DateTime?
+  punches24h  Int       @default(0)
+  since       DateTime  @default(now())
+  checkedAt   DateTime  @default(now())
+
+  @@unique([tenantId, deviceKey])
+  @@map("ops_device_statuses")
+}
+
+/// A kind of break and its limits.
+model OpsBreakRule {
+  id         String        @id @default(cuid())
+  tenantId   String
+  tenant     Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  code       String
+  maxMinutes Int
+  maxPerDay  Int           @default(1)
+  isPaid     Boolean       @default(false)
+  isActive   Boolean       @default(true)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  logs       OpsBreakLog[]
+
+  @@unique([tenantId, code])
+  @@map("ops_break_rules")
+}
+
+/// A break taken: started and ended by the employee, or entered by an admin.
+model OpsBreakLog {
+  id         String       @id @default(cuid())
+  tenantId   String
+  tenant     Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  date       DateTime
+  ruleId     String
+  rule       OpsBreakRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  startAt    DateTime
+  endAt      DateTime?
+  minutes    Int?
+  /// OPEN | OK | EXCEEDED | EXCEPTION_PENDING | EXCEPTION_APPROVED | EXCEPTION_REJECTED
+  status     String       @default("OPEN")
+  note       String?
+  editedBy   String?
+  createdAt  DateTime     @default(now())
+
+  @@index([tenantId, date])
+  @@index([employeeId, date])
+  @@map("ops_break_logs")
+}
+
+/// An alert sent once: cut-off reminders, exception alerts, contract
+/// milestones, variance alerts, escalations.
+model OpsAlertLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind      String
+  dedupeKey String
+  userIds   String[] @default([])
+  title     String
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, kind, dedupeKey])
+  @@index([tenantId, kind, createdAt])
+  @@map("ops_alert_logs")
+}
+
+// ---------------------------------------------------------------------------
+//  Project time
+// ---------------------------------------------------------------------------
+
+/// A saved set of timesheet rows: an employee's own, or shared by the PMO.
+model OpsTimeTemplate {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  /// Null: shared with everyone.
+  employeeId String?
+  /// [{ projectId, taskId, workPackageId, timeCode, hours: [7 numbers], note }]
+  rows       Json
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, employeeId])
+  @@map("ops_time_templates")
+}
+
+/// The activity codes time is coded against.
+model OpsTimeCode {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code            String
+  label           String
+  /// Null: either; true/false: only on billable / non-billable allocations.
+  billable        Boolean?
+  requiresTask    Boolean  @default(false)
+  requiresComment Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  @@unique([tenantId, code])
+  @@map("ops_time_codes")
+}
+
+/// A work package within a project that time is captured against.
+model OpsWorkPackage {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId   String
+  code        String
+  name        String
+  budgetHours Decimal? @db.Decimal(10, 2)
+  /// OPEN | CLOSED
+  status      String   @default("OPEN")
+  createdAt   DateTime @default(now())
+
+  @@unique([projectId, code])
+  @@index([tenantId])
+  @@map("ops_work_packages")
+}
+
+/// Idle time: captured by the employee or a manager, or computed from
+/// attendance minus logged time.
+model OpsIdleLog {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId String
+  date       DateTime
+  minutes    Int
+  /// An IDLE reason code.
+  category   String
+  /// MANUAL | COMPUTED
+  source     String   @default("MANUAL")
+  note       String?
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, date])
+  @@index([employeeId, date])
+  @@map("ops_idle_logs")
+}
+
+/// An employee's attestation of a week, or a project manager's
+/// certification of a project's hours for a period (approved through the
+/// workflow engine).
+model OpsTimeCertification {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// EMPLOYEE_WEEK | PROJECT_PERIOD
+  scope       String
+  timesheetId String?
+  projectId   String?
+  employeeId  String?
+  periodStart DateTime
+  periodEnd   DateTime
+  hours       Decimal   @db.Decimal(10, 2)
+  statement   String
+  /// CERTIFIED | PENDING_APPROVAL | APPROVED | REJECTED
+  status      String
+  certifiedBy String
+  certifiedAt DateTime  @default(now())
+  approvalId  String?
+  decidedAt   DateTime?
+
+  @@index([tenantId, scope, status])
+  @@index([timesheetId])
+  @@map("ops_time_certifications")
+}
+
+/// A saved timesheet export: which columns, which client or project.
+model OpsExportProfile {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  columns      String[]
+  clientId     String?
+  projectId    String?
+  billableOnly Boolean  @default(false)
+  /// Only approved (or locked) timesheets.
+  approvedOnly Boolean  @default(true)
+  createdBy    String
+  createdAt    DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("ops_export_profiles")
+}
+
+/// Approved overtime hours shared out to the projects worked that day.
+model OpsProjectOvertimeAllocation {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  overtimeEntryId String
+  employeeId      String
+  projectId       String
+  date            DateTime
+  hours           Decimal  @db.Decimal(9, 2)
+  amount          Decimal  @default(0) @db.Decimal(18, 2)
+  createdAt       DateTime @default(now())
+
+  @@unique([overtimeEntryId, projectId])
+  @@index([tenantId, projectId])
+  @@map("ops_project_overtime_allocations")
+}
+
+// ---------------------------------------------------------------------------
+//  Leave
+// ---------------------------------------------------------------------------
+
+/// Dates when leave is closed (BLACKOUT) or capped (PEAK).
+model OpsLeaveBlackout {
+  id               String   @id @default(cuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name             String
+  /// BLACKOUT | PEAK
+  kind             String
+  startDate        DateTime
+  endDate          DateTime
+  departmentId     String?
+  locationId       String?
+  /// Empty: every leave type.
+  leaveTypeIds     String[] @default([])
+  /// PEAK: at most this many people (or this share of the group) away on a day.
+  maxConcurrent    Int?
+  maxConcurrentPct Int?
+  reason           String?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  @@index([tenantId, startDate])
+  @@map("ops_leave_blackouts")
+}
+
+/// A long absence (sabbatical, medical, parental…): requested, approved,
+/// on leave, back with a return-to-work certificate and checklist.
+model OpsAbsenceCase {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId     String
+  /// SABBATICAL | MEDICAL | PARENTAL | PERSONAL | OTHER
+  kind           String
+  reasonCode     String?
+  startDate      DateTime
+  expectedReturn DateTime
+  actualReturn   DateTime?
+  /// REQUESTED | APPROVED | ON_LEAVE | RETURNED | REJECTED | CANCELLED
+  status         String    @default("REQUESTED")
+  previousStatus String?
+  approvalId     String?
+  /// [{ item, done, by, at }]
+  checklist      Json?
+  rtwRequired    Boolean   @default(true)
+  fitForWork     Boolean?
+  restrictions   String?
+  rtwNote        String?
+  rtwFileId      String?
+  rtwCertifiedBy String?
+  rtwCertifiedAt DateTime?
+  note           String?
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("ops_absence_cases")
+}
+
+// ---------------------------------------------------------------------------
+//  Lifecycle
+// ---------------------------------------------------------------------------
+
+/// A temporary assignment or a secondment to another team or organisation.
+model OpsAssignment {
+  id               String    @id @default(cuid())
+  tenantId         String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// TEMPORARY | SECONDMENT
+  kind             String
+  employeeId       String
+  hostDepartmentId String?
+  hostLocationId   String?
+  /// SECONDMENT: the host organisation.
+  hostOrganisation String?
+  role             String?
+  hostManagerId    String?
+  startDate        DateTime
+  endDate          DateTime
+  originalEndDate  DateTime
+  /// REQUESTED | APPROVED | ACTIVE | COMPLETED | CANCELLED | REJECTED
+  status           String    @default("REQUESTED")
+  extensions       Int       @default(0)
+  costSharePct     Int?
+  approvalId       String?
+  note             String?
+  returnNote       String?
+  completedAt      DateTime?
+  createdBy        String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("ops_assignments")
+}
+
+/// Every change of an employee's status with its reason code.
+model OpsStatusChange {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId  String
+  fromStatus  String
+  toStatus    String
+  reasonCode  String
+  reasonLabel String
+  effectiveOn DateTime
+  note        String?
+  createdBy   String
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, employeeId])
+  @@map("ops_status_changes")
+}
+
+/// What an employee must meet before confirmation.
+model OpsConfirmationRule {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name              String
+  /// A probation policy id, or null for every policy.
+  probationPolicyId String?
+  minServiceDays    Int      @default(0)
+  maxLopDays        Decimal? @db.Decimal(6, 2)
+  maxLateMarks      Int?
+  /// No warning recorded in this many months.
+  noWarningsMonths  Int?
+  requireEvaluation Boolean  @default(false)
+  minRating         Decimal? @db.Decimal(4, 2)
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("ops_confirmation_rules")
+}
+
+/// One period of employment; a rehire opens the next.
+model OpsEmploymentStint {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId     String
+  stintNo        Int
+  startDate      DateTime
+  endDate        DateTime?
+  employeeNumber String?
+  exitType       String?
+  exitReason     String?
+  rehireEligible Boolean?
+  /// For a rehire: the eligibility override reason, when not eligible.
+  override       String?
+  note           String?
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+
+  @@unique([employeeId, stintNo])
+  @@index([tenantId])
+  @@map("ops_employment_stints")
+}
+
+/// Full-time to part-time (or back): hours, FTE and pay pro-rated.
+model OpsFteConversion {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId      String
+  /// FT_TO_PT | PT_TO_FT
+  direction       String
+  fromFte         Decimal  @db.Decimal(4, 2)
+  toFte           Decimal  @db.Decimal(4, 2)
+  fromWeeklyHours Decimal  @db.Decimal(5, 2)
+  toWeeklyHours   Decimal  @db.Decimal(5, 2)
+  fromCtc         Decimal  @db.Decimal(18, 2)
+  toCtc           Decimal  @db.Decimal(18, 2)
+  workerTypeId    String?
+  effectiveFrom   DateTime
+  /// PENDING | APPLIED | REJECTED | WITHDRAWN
+  status          String   @default("PENDING")
+  approvalId      String?
+  jobChangeId     String?
+  revisionId      String?
+  reason          String?
+  createdBy       String
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId, status])
+  @@map("ops_fte_conversions")
+}
+
+// ---------------------------------------------------------------------------
+//  Payroll
+// ---------------------------------------------------------------------------
+
+/// A group in the earnings or deductions hierarchy.
+model OpsComponentGroup {
+  id             String              @id @default(cuid())
+  tenantId       String
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// EARNING | DEDUCTION
+  kind           String
+  name           String
+  parentId       String?
+  parent         OpsComponentGroup?  @relation("OpsComponentTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children       OpsComponentGroup[] @relation("OpsComponentTree")
+  sortOrder      Int                 @default(0)
+  componentCodes String[]            @default([])
+  createdAt      DateTime            @default(now())
+
+  @@unique([tenantId, kind, name])
+  @@map("ops_component_groups")
+}
+
+/// A one-time payment or deduction that recurs on a schedule, added to
+/// each matching run.
+model OpsRecurringComponentRule {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  /// PAYMENT | DEDUCTION
+  type         String
+  amount       Decimal   @db.Decimal(18, 2)
+  /// MONTHLY | QUARTERLY | HALF_YEARLY | ANNUAL
+  frequency    String
+  /// Calendar months it falls in (empty for MONTHLY).
+  months       Int[]     @default([])
+  payGroupId   String?
+  departmentId String?
+  locationId   String?
+  startDate    DateTime
+  endDate      DateTime?
+  isActive     Boolean   @default(true)
+  createdBy    String
+  createdAt    DateTime  @default(now())
+
+  @@unique([tenantId, name])
+  @@map("ops_recurring_component_rules")
+}
+
+/// A configurable month-on-month tolerance.
+model OpsVarianceRule {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  /// NET | GROSS | DEDUCTIONS | COMPONENT
+  metric          String
+  componentCode   String?
+  thresholdPct    Decimal? @db.Decimal(6, 2)
+  thresholdAmount Decimal? @db.Decimal(18, 2)
+  /// WARN | BLOCK — a BLOCK breach must be reviewed before the run is locked.
+  severity        String   @default("WARN")
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  @@unique([tenantId, name])
+  @@map("ops_variance_rules")
+}
+
+/// A reviewed variance breach.
+model OpsVarianceReview {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  runId      String
+  employeeId String
+  ruleId     String
+  note       String
+  reviewedBy String
+  createdAt  DateTime @default(now())
+
+  @@unique([runId, employeeId, ruleId])
+  @@map("ops_variance_reviews")
+}
+
+/// One item of a run's close checklist.
+model OpsPayrollCloseItem {
+  id       String    @id @default(cuid())
+  tenantId String
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  runId    String
+  key      String
+  label    String
+  done     Boolean   @default(false)
+  doneBy   String?
+  doneAt   DateTime?
+  note     String?
+
+  @@unique([runId, key])
+  @@map("ops_payroll_close_items")
+}
+
+/// The result of validating a run's inputs.
+model OpsPayrollValidation {
+  id       String   @id @default(cuid())
+  tenantId String
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  runId    String
+  errors   Int
+  warnings Int
+  /// [{ severity, code, employeeId, employee, message }]
+  issues   Json
+  ranBy    String
+  ranAt    DateTime @default(now())
+
+  @@index([runId, ranAt])
+  @@map("ops_payroll_validations")
+}
+
+/// A statutory problem to resolve: missing UAN, ESI IP number, PT state…
+model OpsStatutoryException {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind       String
+  employeeId String?
+  dedupeKey  String
+  detail     String
+  /// HIGH | MEDIUM | LOW
+  severity   String    @default("MEDIUM")
+  /// OPEN | RESOLVED | IGNORED
+  status     String    @default("OPEN")
+  resolvedBy String?
+  resolvedAt DateTime?
+  note       String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([tenantId, dedupeKey])
+  @@index([tenantId, status])
+  @@map("ops_statutory_exceptions")
+}

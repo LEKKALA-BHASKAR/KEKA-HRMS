@@ -133,7 +133,7 @@ export function LeaveHistory({
                     <Popover label={`Actions for ${r.typeName}, ${r.dates}`} trigger={<MoreIcon />} width={210}>
                       {r.cancel ? (
                         <div style={{ padding: "2px 2px 4px" }}>
-                          <CancelLeaveButton requestId={r.id} label={r.cancel === "Withdraw" ? "Withdraw request" : "Cancel leave"} />
+                          <CancelLeaveButton requestId={r.id} label={r.cancel === "Withdraw" ? "Withdraw request" : "Cancel leave"} askReason={r.cancel !== "Withdraw"} />
                         </div>
                       ) : (
                         <div className={ps.menuText}>

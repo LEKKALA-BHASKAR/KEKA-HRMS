@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { selectStructureForCtc } from "@keka/payroll";
-import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision, requestJobChange, jobChangeLabel, jobChangeDue, beyondPlanWarning, employeeOnHold, fireLetterTriggers } from "@keka/services";
+import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision, requestJobChange, jobChangeLabel, jobChangeDue, beyondPlanWarning, employeeOnHold, fireLetterTriggers, lifecycleDependencyIssues } from "@keka/services";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
 import {
@@ -455,6 +455,9 @@ export async function recordJobChange(_prev: ActionState, formData: FormData): P
   if (await prisma.jobChange.count({ where: { employeeId: d.employeeId, status: "PENDING_APPROVAL" } })) {
     return { ok: false, message: "A job change for this employee is already waiting for approval. Approve, reject or withdraw it first." };
   }
+  // Ops depth: lifecycle dependencies (an exit in progress, a leave of absence, an active assignment…).
+  const blocked = await lifecycleDependencyIssues(viewer.tenantId, d.employeeId, d.reason === "PROMOTION" ? "PROMOTION" : "JOB_CHANGE");
+  if (blocked.length) return { ok: false, message: blocked.join(" ") };
 
   const before = await prisma.employee.findUniqueOrThrow({
     where: { id: d.employeeId },

@@ -3,6 +3,7 @@
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { validateFormula, resolveStructure, topologicalOrder } from "@keka/payroll";
+import { opsChangeGate, snapshotOpsPolicy } from "@keka/services";
 import { requireAuth } from "@/lib/context";
 import {
   z, parseForm, toErrorState, writeAudit, actionDone as done, formList,
@@ -74,6 +75,8 @@ export async function savePayGroup(_prev: ActionState, formData: FormData): Prom
     newJoinerWindowDays: raw.newJoinerWindowDays ?? 30,
   };
 
+  // Ops depth: a governed pay cycle changes only through Time Attend › Controls › Change approvals.
+  if (id) { const gate = await opsChangeGate(viewer.tenantId, "PAY_CYCLE"); if (gate) return { ok: false, message: gate }; }
   try {
     if (id) {
       const before = await prisma.payGroup.findFirst({ where: { id, tenantId: viewer.tenantId } });
@@ -90,6 +93,7 @@ export async function savePayGroup(_prev: ActionState, formData: FormData): Prom
         }
       });
 
+      await snapshotOpsPolicy(viewer.tenantId, "PAY_CYCLE", id, `Updated ${data.name}`, viewer.user.id);
       await writeAudit(viewer, {
         module: "PAYROLL", action: "UPDATE", entityType: "PayGroup", entityId: id,
         summary: `Updated pay group ${data.name}${entityChanged ? " — legal entity changed, members synchronised" : ""}`,
@@ -505,6 +509,7 @@ export async function saveComponent(_prev: ActionState, formData: FormData): Pro
     };
   }
 
+  if (id) { const gate = await opsChangeGate(viewer.tenantId, "PAY_COMPONENT"); if (gate) return { ok: false, message: gate }; }
   try {
     if (id) {
       const before = await prisma.salaryComponent.findFirst({
@@ -517,6 +522,7 @@ export async function saveComponent(_prev: ActionState, formData: FormData): Pro
       await prisma.salaryComponent.update({
         where: { id }, data: { ...data, displayOrder: displayOrder ?? before.displayOrder },
       });
+      await snapshotOpsPolicy(viewer.tenantId, "PAY_COMPONENT", id, `Updated ${data.code}`, viewer.user.id);
       await writeAudit(viewer, {
         module: "PAYROLL", action: "UPDATE", entityType: "SalaryComponent", entityId: id,
         summary: `Updated component ${data.code}`,
@@ -628,6 +634,7 @@ export async function saveStructure(_prev: ActionState, formData: FormData): Pro
     }
   }
 
+  if (id) { const gate = await opsChangeGate(viewer.tenantId, "SALARY_STRUCTURE"); if (gate) return { ok: false, message: gate }; }
   try {
     const saved = await prisma.$transaction(async (tx) => {
       if (data.isDefault) {
@@ -645,6 +652,7 @@ export async function saveStructure(_prev: ActionState, formData: FormData): Pro
       const c = await tx.salaryStructure.create({ data });
       return c.id;
     });
+    await snapshotOpsPolicy(viewer.tenantId, "SALARY_STRUCTURE", saved, `${id ? "Updated" : "Created"} ${data.name}`, viewer.user.id);
     await writeAudit(viewer, {
       module: "PAYROLL", action: id ? "UPDATE" : "CREATE", entityType: "SalaryStructure",
       entityId: saved, summary: `${id ? "Updated" : "Created"} structure ${data.name}`,

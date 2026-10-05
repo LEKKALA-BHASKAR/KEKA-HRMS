@@ -6,7 +6,7 @@ import { safeRevalidate } from "@/lib/forms";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatPeriod } from "@keka/shared";
 import { requireAuth } from "@/lib/context";
-import { calculateRun, createRun, decideApproval, finalizePayrollRun, openApproval, releasePayslipsForRun, rollbackPayrollRun, withdrawApprovalRequest } from "@keka/services";
+import { calculateRun, createRun, decideApproval, finalizePayrollRun, openApproval, releasePayslipsForRun, rollbackPayrollRun, withdrawApprovalRequest, opsLockGate, opsFinalizeGate, opsPayslipGate, requestPayslipRelease } from "@keka/services";
 
 const P = PERMISSIONS;
 
@@ -234,6 +234,9 @@ export async function lockRun(formData: FormData): Promise<void> {
   const run = await prisma.payrollRun.findFirst({ where: { id: runId, tenantId: viewer.tenantId } });
   if (!run) throw new Error("Payroll run not found");
   if (run.status === "FINALIZED" || run.status === "LOCKED" || run.status === "PENDING_APPROVAL") return;
+  // Ops depth: negative net pay (when blocking) and unreviewed blocking variances stop the lock.
+  const gate = await opsLockGate(viewer.tenantId, runId);
+  if (gate) throw new Error(gate);
 
   const approval = await openApproval({
     tenantId: viewer.tenantId, payGroupId: run.payGroupId, action: "LOCK_PAYROLL", requestedBy: viewer.user.id, runId,
@@ -319,6 +322,8 @@ export async function finalizeRun(formData: FormData): Promise<void> {
   const runId = String(formData.get("runId"));
   const run = await prisma.payrollRun.findFirst({ where: { id: runId, tenantId: viewer.tenantId }, include: { _count: { select: { lines: true } } } });
   if (!run) throw new Error("Payroll run not found");
+  const gate = await opsFinalizeGate(viewer.tenantId, runId);
+  if (gate) throw new Error(gate);
   const res = await finalizePayrollRun(runId, viewer.user.id);
   if (!res.ok) throw new Error(res.message);
 
@@ -336,6 +341,13 @@ export async function releasePayslips(formData: FormData): Promise<void> {
   const runId = String(formData.get("runId"));
   const run = await prisma.payrollRun.findFirst({ where: { id: runId, tenantId: viewer.tenantId } });
   if (!run) throw new Error("Payroll run not found");
+  // Ops depth: when payslips need sign-off, raise the request instead (released on approval).
+  if (await opsPayslipGate(viewer.tenantId)) {
+    const r = await requestPayslipRelease({ actor: { tenantId: viewer.tenantId, userId: viewer.user.id }, runId });
+    if (!r.ok) throw new Error(r.message);
+    safeRevalidate(`/payroll/runs/${runId}`, "/payroll/controls");
+    return;
+  }
   const res = await releasePayslipsForRun(runId, viewer.user.id);
   if (!res.ok) throw new Error(res.message);
 

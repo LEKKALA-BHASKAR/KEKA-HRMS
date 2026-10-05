@@ -2,7 +2,7 @@ import Link from "next/link";
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { formatDate, formatINR } from "@keka/shared";
-import { weekStart, getTimesheetPolicy } from "@keka/services";
+import { weekStart, getTimesheetPolicy, getOpsSettings, timeTemplatesFor, templateRowsFor } from "@keka/services";
 import { requireViewer, can, canAny, type Viewer } from "@/lib/context";
 import { timesheetsToApproveWhere } from "@/lib/scope";
 import { PageHead, Card, Badge, Empty, Person, Stat, Progress } from "@/components/ui";
@@ -76,11 +76,21 @@ async function MyTime({ viewer, weekRaw }: { viewer: Viewer; weekRaw?: string })
   const rows = new Map<string, SheetRow>();
   for (const e of sheet?.entries ?? []) {
     const k = `${e.projectId}:${e.taskId ?? ""}`;
-    const r = rows.get(k) ?? { projectId: e.projectId, taskId: e.taskId ?? "", hours: [0, 0, 0, 0, 0, 0, 0], note: e.description ?? "" };
+    const r = rows.get(k) ?? { projectId: e.projectId, taskId: e.taskId ?? "", hours: [0, 0, 0, 0, 0, 0, 0], note: e.description ?? "", timeCode: e.timeCode ?? "", workPackageId: e.workPackageId ?? "", milestoneId: e.milestoneId ?? "" };
     r.hours[Math.round((e.date.getTime() - week.getTime()) / DAY)] += Number(e.hours);
     rows.set(k, r);
   }
   const editable = !sheet || ["DRAFT", "REJECTED"].includes(sheet.status);
+  // Ops depth: activity codes, work packages, milestones, saved templates and attestation.
+  const [opsSet, codes, wps, mss, tpls] = await Promise.all([
+    getOpsSettings(viewer.tenantId),
+    prisma.opsTimeCode.findMany({ where: { tenantId: viewer.tenantId, isActive: true }, orderBy: { code: "asc" } }),
+    prisma.opsWorkPackage.findMany({ where: { tenantId: viewer.tenantId, projectId: { in: projectIds }, status: "OPEN" }, orderBy: { code: "asc" } }),
+    prisma.milestone.findMany({ where: { projectId: { in: projectIds }, status: { notIn: ["COMPLETED", "INVOICED"] } }, select: { id: true, name: true, projectId: true }, orderBy: { dueDate: "asc" } }),
+    timeTemplatesFor(viewer.tenantId, me.id),
+  ]);
+  const allowedTasks = new Set(projectTasks.map((t) => t.id));
+  const templates = tpls.map((t) => ({ id: t.id, name: t.name, rows: templateRowsFor(t.rows, new Set(projectIds), allowedTasks).map((r) => ({ projectId: r.projectId, taskId: r.taskId, hours: r.hours, note: r.note, timeCode: r.timeCode, workPackageId: r.workPackageId })) })).filter((t) => t.rows.length > 0);
   const prev = iso(new Date(week.getTime() - 7 * DAY)), next = iso(new Date(week.getTime() + 7 * DAY));
   const thisMonth = recent.filter((s) => s.periodStart.getUTCMonth() === new Date().getUTCMonth());
 
@@ -101,7 +111,9 @@ async function MyTime({ viewer, weekRaw }: { viewer: Viewer; weekRaw?: string })
         ) : (
           <TimesheetGrid key={`${iso(week)}:${sheet?.updatedAt.getTime() ?? 0}`} week={iso(week)} dates={dates} rows={[...rows.values()]} editable={editable}
             projects={allocations.map((a) => ({ value: a.project.id, label: a.project.code ? `${a.project.code} · ${a.project.name}` : a.project.name })).filter((p, i, all) => all.findIndex((x) => x.value === p.value) === i)}
-            tasks={projectTasks.map((t) => ({ value: t.id, label: t.title, projectId: t.projectId }))} />
+            tasks={projectTasks.map((t) => ({ value: t.id, label: t.title, projectId: t.projectId }))}
+            codes={codes.map((c) => ({ value: c.code, label: `${c.code} · ${c.label}` }))} workPackages={wps.map((w) => ({ value: w.id, label: `${w.code} · ${w.name}`, projectId: w.projectId }))}
+            milestones={mss.map((m) => ({ value: m.id, label: m.name, projectId: m.projectId }))} templates={templates} attest={opsSet.requireAttestation} />
         )}
       </Card>
       <div className="grid grid-2">

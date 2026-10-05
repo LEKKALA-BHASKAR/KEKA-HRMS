@@ -5,7 +5,7 @@ import { safeRevalidate, writeAudit } from "@/lib/forms";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
-import { creditPraisePoints, creditPoints } from "@keka/services";
+import { creditPraisePoints, creditPoints, hrEventNeedsApproval, requestHrEventApproval } from "@keka/services";
 import { assignAssetAction, acknowledgeAssetAction, recoverAssetAction, decideAssetRequestAction, requestAssetAction } from "./assets";
 
 const P = PERMISSIONS;
@@ -626,6 +626,11 @@ export async function recordHrActivity(formData: FormData): Promise<void> {
     entityId: activity.id,
     summary: `Recorded ${type.replace(/_/g, " ").toLowerCase()} for ${employee.displayName}: ${title}`,
   });
+  // Ops depth: event types the tenant governs wait for approval (OPS_HR_EVENT).
+  if (await hrEventNeedsApproval(viewer.tenantId, type)) {
+    const r = await requestHrEventApproval({ tenantId: viewer.tenantId, userId: viewer.user.id }, activity.id);
+    if (!r.ok) throw new Error(r.message);
+  }
 
   safeRevalidate("/activities");
   safeRevalidate(`/employees/${employeeId}`);

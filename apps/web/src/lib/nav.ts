@@ -192,6 +192,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
       can(viewer, P.PROBATION_MANAGE) && { label: "Probation", href: "/probation", count: counts.probation },
       canAny(viewer, [P.EXIT_MANAGE, P.EXIT_APPROVE, P.FNF_MANAGE]) && { label: "Exits", href: "/exits", count: counts.exits },
       can(viewer, P.HR_ACTIVITY_MANAGE) && { label: "HR Activities", href: "/activities" },
+      canAny(viewer, [P.EMPLOYEE_UPDATE, P.PROBATION_MANAGE]) && { label: "Lifecycle", href: "/lifecycle" },
       canAny(viewer, [P.EXPENSE_MANAGE, P.TRAVEL_MANAGE, P.ADVANCE_APPROVE]) && { label: "Expenses & Travel", href: "/expenses" },
       can(viewer, P.DOCUMENT_VIEW) && { label: "Documents", href: "/documents", count: counts.documents },
       canAny(viewer, [P.ASSET_MANAGE, P.ASSET_ASSIGN]) && { label: "Assets", href: "/assets", count: counts.assets },
@@ -290,6 +291,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
       (opts.managesProject || can(viewer, P.RESOURCE_VIEW)) && { label: "Resources", href: "/projects/resources" },
       (opts.managesProject || canAny(viewer, [P.TIMESHEET_APPROVE, P.PROJECT_MANAGE])) && { label: "Approvals", href: "/projects/approvals", count: counts.sheets + (counts.projectRequests ?? 0) },
       can(viewer, P.PROJECT_MANAGE) && { label: "Policies & Settings", href: "/projects/settings" },
+      (opts.managesProject || canAny(viewer, [P.PROJECT_MANAGE, P.TIMESHEET_APPROVE])) && { label: "Time Controls", href: "/projects/time-controls" },
       can(viewer, P.PROJECT_MANAGE) && { label: "Bulk Import", href: "/projects/import" },
       hub && can(viewer, P.REPORT_VIEW) && { label: "Analytics", href: "/projects/analytics" },
     ]);
@@ -310,6 +312,9 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
         (hrAttendance || can(viewer, P.PAYROLL_RUN)) && { label: "Overtime", href: "/time/overtime" },
         can(viewer, P.REPORT_VIEW) && { label: "Reports", href: "/time/reports" },
         canAny(viewer, [P.LEAVE_MANAGE, P.ATTENDANCE_MANAGE, P.SHIFT_MANAGE]) && { label: "Settings", href: "/time/settings" },
+        canAny(viewer, [P.ATTENDANCE_MANAGE, P.LEAVE_MANAGE, P.WORKFLOW_MANAGE]) && { label: "Controls", href: "/time/controls" },
+        canAny(viewer, [P.ATTENDANCE_MANAGE, P.ATTENDANCE_APPROVE]) && { label: "Insights", href: "/time/insights" },
+        canAny(viewer, [P.LEAVE_MANAGE, P.LEAVE_APPROVE]) && { label: "Leave Controls", href: "/time/leave-controls" },
       ]),
     });
   }
@@ -334,6 +339,7 @@ export function buildNav(viewer: Viewer, counts: NavCounts, opts: NavOptions): N
     can(viewer, P.PAYROLL_VIEW) && { label: "Variance", href: "/payroll/variance" },
     can(viewer, P.PAYROLL_VIEW) && { label: "Budget", href: "/payroll/budget" },
     can(viewer, P.STATUTORY_MANAGE) && { label: "Compliance", href: "/payroll/compliance", paths: ["/payroll/compliance", "/payroll/statutory-bonus"] },
+    canAny(viewer, [P.PAYROLL_RUN, P.PAYROLL_LOCK, P.STATUTORY_MANAGE, P.PAYROLL_SETTINGS]) && { label: "Controls", href: "/payroll/controls" },
     can(viewer, P.PAYROLL_SETTINGS) && { label: "Payroll Settings", href: "/payroll/settings" },
     can(viewer, P.LEDGER_VIEW) && { label: "Accounting", href: "/accounting" },
   ]);

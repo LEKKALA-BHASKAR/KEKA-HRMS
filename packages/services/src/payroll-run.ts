@@ -796,6 +796,11 @@ export async function calculateRun(runId: string): Promise<{
     });
   }, { timeout: 60_000 });
 
+  // Ops depth: net-pay rounding to the tenant's step (off at the default of 1).
+  const { opsApplyNetRounding } = await import("./ops-payroll");
+  const rounded = await opsApplyNetRounding(runId);
+  if (rounded) { totalGross = rounded.totalGross; totalNet = rounded.totalNetPay; totalDed = rounded.totalDeductions; }
+
   return {
     employeeCount: counted,
     totalGross, totalNetPay: totalNet,

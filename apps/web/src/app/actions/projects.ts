@@ -38,12 +38,15 @@ export async function saveTimesheetAction(_prev: ActionState, formData: FormData
     if (!projectId) continue;
     for (let d = 0; d < 7; d++) {
       const h = Number(formData.get(`h_${r}_${d}`) ?? "");
-      if (h > 0) entries.push({ projectId, taskId: String(formData.get(`task_${r}`) ?? "") || null, date: new Date(week.getTime() + d * DAY), hours: h, description: String(formData.get(`note_${r}`) ?? "") || null });
+      if (h > 0) entries.push({
+        projectId, taskId: String(formData.get(`task_${r}`) ?? "") || null, date: new Date(week.getTime() + d * DAY), hours: h, description: String(formData.get(`note_${r}`) ?? "") || null,
+        timeCode: String(formData.get(`code_${r}`) ?? "") || null, workPackageId: String(formData.get(`wp_${r}`) ?? "") || null, milestoneId: String(formData.get(`ms_${r}`) ?? "") || null,
+      });
     }
   }
   if (entries.length === 0) return { ok: false, message: "Log some time first." };
   try {
-    const res = await saveTimesheet({ employeeId: viewer.employee.id, week, entries, submit: formData.get("intent") === "submit" });
+    const res = await saveTimesheet({ employeeId: viewer.employee.id, week, entries, submit: formData.get("intent") === "submit", attested: formData.get("attest") === "on", actorUserId: viewer.user.id });
     if (res.ok) for (const p of new Set(entries.map((e) => e.projectId))) await refreshProjectHealth(p);
     return res.ok ? done(["/projects"], res.message) : { ok: false, message: res.message };
   } catch (err) {
