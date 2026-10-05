@@ -68,7 +68,7 @@ export default async function PlansPage({ searchParams }: { searchParams: Promis
           const daysLeft = Math.ceil((p.endDate.getTime() - Date.now()) / 86_400_000);
           const risk = riskOf(p);
           return (
-            <Panel key={p.id} title={<Person name={p.employee.displayName ?? ""} meta={`${p.employee.employeeNumber} · ${formatDate(p.startDate)} – ${formatDate(p.endDate)}`} />} action={<span className="row gap-1 wrap">
+            <Panel key={p.id} title={<Person name={p.employee.displayName ?? ""} meta={`${p.employee.employeeNumber} · ${formatDate(p.startDate)} – ${formatDate(p.endDate)}`} />} action={<span className="row gap-1 wrap"><Link className="btn sm" href={`/performance/plans/${p.id}`}>Open plan</Link>
               {p.status === "ACTIVE" ? <Badge tone={daysLeft < 0 ? "danger" : "warning"} dot>{daysLeft >= 0 ? `active · ${daysLeft} days left` : `${-daysLeft} days past the end`}</Badge> : <Badge tone={p.outcome === "SUCCESSFUL" ? "success" : "danger"} dot>{(p.outcome ?? p.status).toLowerCase()}</Badge>}
               {p.status === "ACTIVE" ? <Badge tone={RISK_TONE[risk]}>risk {risk.toLowerCase()}</Badge> : null}
               {p.acknowledgedAt ? <Badge tone="info">acknowledged {formatDate(p.acknowledgedAt)}</Badge> : p.status === "ACTIVE" ? <Badge tone="neutral">not yet acknowledged</Badge> : null}

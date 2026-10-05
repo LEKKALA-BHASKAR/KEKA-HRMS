@@ -8,6 +8,8 @@ import {
 } from "@keka/services";
 import { aiForViewer, aiJson, aiEnabled, AI_UNAVAILABLE } from "@/lib/ai";
 import { foreignReference } from "@/lib/ownership";
+import { goalNeedsApproval, submitGoalForApproval } from "@/lib/insight/goals";
+import { pipEligibilityProblems, pipClosingProblems, seedPipChecklist } from "@/lib/insight/pips";
 import { requireAuth, requireViewer, can, type Viewer } from "@/lib/context";
 import {
   z, parseForm, toErrorState, writeAudit, actionDone as done,
@@ -90,10 +92,16 @@ export async function saveGoalAction(_prev: ActionState, formData: FormData): Pr
       if (!existing) return { ok: false, message: "Goal not found." };
       if (existing.employeeId && !(await mayEditGoalsOf(viewer, existing.employeeId))) return { ok: false, message: "You cannot edit this goal." };
       await prisma.goal.update({ where: { id }, data });
+      await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "Goal", entityId: id, summary: `Edited goal ${d.title.slice(0, 80)}` });
     } else {
       goalId = (await prisma.goal.create({ data: { ...data, tenantId: viewer.tenantId, status: "ON_TRACK", createdBy: viewer.user.id, currentValue: start } })).id;
+      await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "Goal", entityId: goalId, summary: `Created ${d.level.toLowerCase()} goal ${d.title.slice(0, 80)}` });
     }
     await refreshGoal(goalId!);
+    if (!id && (await goalNeedsApproval(viewer, { level: d.level, employeeId: d.employeeId ?? null }))) {
+      const a = await submitGoalForApproval(viewer, goalId!);
+      return done([...PERF, "/performance/okr"], a.message);
+    }
     if (d.employeeId && d.employeeId !== viewer.employee?.id) {
       const t = await targetOf(viewer, d.employeeId);
       await notify({ tenantId: viewer.tenantId, userIds: [t?.userId], kind: "PERFORMANCE", title: `New goal: ${d.title}`, body: `Set by ${viewer.employee?.displayName ?? viewer.user.email}`, link: "/me/performance" });
@@ -113,8 +121,12 @@ export async function checkInAction(_prev: ActionState, formData: FormData): Pro
   if (!goal) return { ok: false, message: "Goal not found." };
   const allowed = goal.employeeId ? await mayEditGoalsOf(viewer, goal.employeeId) : can(viewer, P.GOALS_MANAGE);
   if (!allowed) return { ok: false, message: "You cannot update this goal." };
-  const r = await checkInGoal({ goalId, value, note: String(formData.get("note") ?? "") || null, byEmployeeId: viewer.employee?.id });
-  return r.ok ? done(PERF, r.message) : { ok: false, message: r.message };
+  const confRaw = String(formData.get("confidence") ?? "").trim();
+  const confidence = confRaw === "" ? null : Number(confRaw);
+  if (confidence !== null && !(Number.isInteger(confidence) && confidence >= 0 && confidence <= 10)) return { ok: false, message: "Confidence is a whole number from 0 to 10.", errors: { confidence: "0–10" } };
+  const r = await checkInGoal({ goalId, value, note: String(formData.get("note") ?? "") || null, byEmployeeId: viewer.employee?.id, confidence });
+  if (r.ok) await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "GoalCheckIn", entityId: goalId, summary: `Check-in on ${goal.title.slice(0, 80)}: ${value} (${r.progress}%)${confidence !== null ? `, confidence ${confidence}/10` : ""}` });
+  return r.ok ? done([...PERF, "/performance/okr"], r.message) : { ok: false, message: r.message };
 }
 
 export async function setGoalStatusAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -129,6 +141,7 @@ export async function setGoalStatusAction(_prev: ActionState, formData: FormData
   else if (op === "reopen") { await prisma.goal.update({ where: { id: goalId }, data: { status: "ON_TRACK", statusOverride: null } }); await refreshGoal(goalId); }
   else return { ok: false, message: "Unknown action." };
   if (goal.parentGoalId) await refreshGoal(goal.parentGoalId);
+  await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "Goal", entityId: goalId, summary: `${op === "cancel" ? "Cancelled" : "Reopened"} goal ${goal.title.slice(0, 80)}` });
   return done(PERF, op === "cancel" ? "Cancelled." : "Reopened.");
 }
 
@@ -194,7 +207,8 @@ export async function cycleOpAction(_prev: ActionState, formData: FormData): Pro
 const responseSchema = z.object({
   reviewId: zId(),
   reviewerType: z.enum(REVIEWER_TYPES),
-  overallRating: zRequiredNumber({ min: 1, max: 5 }),
+  // The cycle's own rating scale (up to 10 points) is checked by the service.
+  overallRating: zRequiredNumber({ min: 1, max: 10 }),
   strengths: zOptional(4000),
   improvements: zOptional(4000),
 });
@@ -271,7 +285,10 @@ export async function createPipAction(_prev: ActionState, formData: FormData): P
   if (days < 30 || days > 180) return { ok: false, message: "A plan runs between 30 and 180 days — long enough to improve, short enough to decide.", errors: { endDate: "30–180 days" } };
   const open = await prisma.improvementPlan.count({ where: { employeeId: d.employeeId, status: "ACTIVE" } });
   if (open) return { ok: false, message: "There is already an active plan for this employee." };
-  await prisma.improvementPlan.create({ data: { ...d, tenantId: viewer.tenantId, managerId: t.reportingManagerId, createdBy: viewer.user.id } });
+  const ineligible = await pipEligibilityProblems(viewer.tenantId, d.employeeId);
+  if (ineligible.length) return { ok: false, message: `Not eligible for a plan: ${ineligible.join(" ")}` };
+  const created = await prisma.improvementPlan.create({ data: { ...d, tenantId: viewer.tenantId, managerId: t.reportingManagerId, createdBy: viewer.user.id } });
+  await seedPipChecklist(viewer.tenantId, created.id, null);
   await notify({ tenantId: viewer.tenantId, userIds: [t.userId], kind: "PERFORMANCE", title: "A performance improvement plan has been set up with you", body: `It runs until ${d.endDate.toISOString().slice(0, 10)}.`, link: "/performance/plans" });
   await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "ImprovementPlan", entityId: d.employeeId, summary: `Started an improvement plan for ${t.displayName}` });
   return done(PERF, "Plan started; the employee has been told.");
@@ -289,6 +306,11 @@ export async function closePipAction(_prev: ActionState, formData: FormData): Pr
   const t = await targetOf(viewer, pip.employeeId);
   if (!t || !canAccessEmployee(viewer, t, P.PIP_MANAGE)) return { ok: false, message: "This plan is outside your scope." };
   if (pip.status !== "ACTIVE") return { ok: false, message: "This plan is already closed." };
+  if (outcome !== "EXTENDED") {
+    // Completion criteria: objectives assessed, milestones closed, a check-in held, the compliance checklist done.
+    const problems = await pipClosingProblems(viewer.tenantId, pip.id, outcome);
+    if (problems.length) return { ok: false, message: `Not ready to close: ${problems.join(" ")}` };
+  }
   if (outcome === "UNSUCCESSFUL") {
     // An unsuccessful outcome has consequences: a second PIP manager confirms it.
     if (pip.proposedOutcome) return { ok: false, message: "An outcome is already waiting for sign-off." };
@@ -419,7 +441,12 @@ export async function publishGoalsAction(input: { goals: GoalDraftInput[]; draft
       await notify({ tenantId: viewer.tenantId, userIds: [t?.userId], kind: "PERFORMANCE", title: `New goal: ${data.title}`, body: `Set by ${viewer.employee?.displayName ?? viewer.user.email}`, link: "/me/performance" });
     }
   }
+  let pending = 0;
+  if (!input.draft) for (const [k, data] of rows.entries()) {
+    if (await goalNeedsApproval(viewer, { level: String(data.level), employeeId: (data.employeeId as string | null) ?? null })) { await submitGoalForApproval(viewer, ids[k]!); pending++; }
+  }
   done(PERF, "");
+  if (pending) return { ok: true, count: ids.length, message: `${ids.length} goal(s) saved; ${pending} sent for approval and go live once approved.` };
   return { ok: true, count: ids.length, message: input.draft ? (ids.length > 1 ? `${ids.length} goals saved as drafts.` : "Goal saved as draft.") : (ids.length > 1 ? `${ids.length} goals published successfully.` : "Goal published successfully.") };
 }
 
@@ -431,6 +458,11 @@ export async function publishDraftGoalAction(_prev: ActionState, formData: FormD
   if (goal.status !== "DRAFT") return { ok: false, message: "Only a draft can be published." };
   const allowed = goal.employeeId ? await mayEditGoalsOf(viewer, goal.employeeId) : can(viewer, P.GOALS_MANAGE);
   if (!allowed) return { ok: false, message: "You cannot publish this goal." };
+  if (goal.approvalStatus === "PENDING") return { ok: false, message: "This goal is waiting for approval." };
+  if (await goalNeedsApproval(viewer, goal)) {
+    const a = await submitGoalForApproval(viewer, goal.id);
+    return a.ok ? done([...PERF, "/performance/okr"], a.message) : { ok: false, message: a.message };
+  }
   await prisma.goal.update({ where: { id: goal.id }, data: { status: "ON_TRACK" } });
   await refreshGoal(goal.id);
   await writeAudit(viewer, { module: "EMPLOYEE", action: "UPDATE", entityType: "Goal", entityId: goal.id, summary: `Published draft goal ${goal.title.slice(0, 80)}` });

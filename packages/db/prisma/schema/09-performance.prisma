@@ -151,6 +151,20 @@ model Goal {
   /// (one goal assigned to many people at once) it belongs to.
   templateId String?
   teamGoalId String?
+  // --- Insight depth (38-insight-depth) ---
+  /// A stretch target beyond targetValue.
+  stretchValue      Decimal?  @db.Decimal(18, 2)
+  /// WEEKLY | BIWEEKLY | MONTHLY (null = the OKR setting's default).
+  checkInCadence    String?
+  /// Latest owner confidence 0-10, from the last check-in.
+  confidence        Int?
+  /// PENDING | APPROVED | REJECTED when goal approval is on.
+  approvalStatus    String?
+  approvalRequestId String?
+  /// At-risk queue: the owner's recovery note and when it was last triaged.
+  riskNote          String?
+  riskReviewedAt    DateTime?
+  closedOutAt       DateTime?
 
   createdBy String?
   createdAt DateTime @default(now())
@@ -175,6 +189,8 @@ model GoalCheckIn {
   note            String?
   /// Set when progress came from an integration rather than a person.
   source          String  @default("MANUAL")
+  /// Insight depth: owner confidence 0-10 at this check-in.
+  confidence      Int?
 
   recordedBy String?
   recordedAt DateTime @default(now())
@@ -230,6 +246,8 @@ model ReviewCycle {
   maxPeers          Int     @default(3)
   /// Review-to-pay: [{ bandId, incrementPercent, bonusPercent }].
   meritMatrix       Json?
+  /// Insight depth: the rating description library scale applied.
+  ratingScaleId     String?
 
   /// Eligibility filters for who is included.
   eligibility Json?
@@ -316,6 +334,8 @@ model ReviewResponse {
   /// ACTIVE | DECLINED | EXPIRED (still open when the review was calibrated)
   status       String @default("ACTIVE")
   nominatedBy  String?
+  /// Insight depth: last completion reminder.
+  remindedAt   DateTime?
 
   /// Weight of this reviewer's input in the aggregate.
   weight        Decimal  @default(0) @db.Decimal(9, 2)
@@ -500,6 +520,15 @@ model Feedback {
   message         String
   /// Talent depth: the giver's name is hidden from the subject.
   isAnonymous     Boolean      @default(false)
+  // --- Insight depth (38-insight-depth) ---
+  topicId         String?
+  tags            String[]     @default([])
+  /// POSITIVE | NEUTRAL | NEGATIVE (lexicon classifier)
+  sentiment       String?
+  sentimentScore  Int?
+  templateId      String?
+  editedAt        DateTime?
+  deletedAt       DateTime?
   createdAt       DateTime     @default(now())
 
   @@index([tenantId, aboutEmployeeId])

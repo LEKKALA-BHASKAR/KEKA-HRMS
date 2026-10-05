@@ -41,6 +41,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   else if (file.relatedType === "ErEvidence") {
     allowed = !!file.relatedId && !!(await erCaseFor({ tenantId: viewer.tenantId, userId: viewer.user.id, employeeId: viewer.employee?.id ?? null, canManage: can(viewer, PERMISSIONS.ER_CASE_MANAGE), canApprove: can(viewer, PERMISSIONS.ER_CASE_APPROVE) }, file.relatedId));
   }
+  else if (file.relatedType === "PipEvidence") {
+    // Improvement plan evidence: the employee, their plan manager, or a PIP manager over them.
+    const pip = file.relatedId ? await prisma.improvementPlan.findFirst({ where: { id: file.relatedId, tenantId: viewer.tenantId }, include: { employee: { select: { id: true, departmentId: true, locationId: true, legalEntityId: true, businessUnitId: true, reportingManagerId: true } } } }) : null;
+    allowed = !!pip && (pip.employeeId === viewer.employee?.id || pip.managerId === viewer.employee?.id || viewer.allReportIds.has(pip.employeeId) || canAccessEmployee(viewer, pip.employee, PERMISSIONS.PIP_MANAGE));
+  }
   // A time-limited share opens one employee document to a named person.
   else if (file.relatedType === "EmployeeDocument" && file.relatedId && file.employeeId !== viewer.employee?.id && (await sharedFileAllowed(viewer.tenantId, viewer.user.id, file.relatedId))) allowed = true;
   else if (file.employeeId) {

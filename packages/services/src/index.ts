@@ -118,3 +118,5 @@ export * from "./money-workflow";
 export * from "./money-audit";
 export * from "./join-depth-math";
 export * from "./join-depth";
+export * from "./insight-math";
+export * from "./insight-depth";

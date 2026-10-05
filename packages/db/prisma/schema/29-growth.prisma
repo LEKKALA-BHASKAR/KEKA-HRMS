@@ -559,6 +559,8 @@ model PipCheckIn {
   employeeComment String?
   acknowledgedAt  DateTime?
   createdBy       String?
+  /// Insight depth: HR sign-off of the check-in (PENDING | APPROVED | REJECTED).
+  signoffStatus   String?
   createdAt       DateTime        @default(now())
 
   @@index([pipId])

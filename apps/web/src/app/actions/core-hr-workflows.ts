@@ -9,6 +9,7 @@ import {
 import { requireAuth, requireViewer, can } from "@/lib/context";
 import { REPORTS } from "@/lib/reports";
 import { savedReportFor } from "@/lib/report-builder";
+import { routeExternalSchedule } from "@/lib/insight/schedules";
 import { z, parseForm, formList, writeAudit, actionDone as done, toErrorState, type ActionState } from "@/lib/forms";
 
 const P = PERMISSIONS;
@@ -155,6 +156,8 @@ export async function scheduleReportAction(_prev: ActionState, formData: FormDat
     },
   });
   await writeAudit(viewer, { module: "REPORT", action: "CREATE", entityType: "ScheduledReport", entityId: s.id, summary: `Scheduled ${d.name} (${d.frequency.toLowerCase()}) to ${emails.length} recipient(s)` });
+  const pending = await routeExternalSchedule(viewer, s.id, d.name, emails);
+  if (pending) return done(["/reports", "/reports/builder", "/insights/reports"], pending);
   return done(["/reports", "/reports/builder"], `Scheduled. The first email goes out ${s.nextRunAt.toISOString().slice(0, 10)}.`);
 }
 

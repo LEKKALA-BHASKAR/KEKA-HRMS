@@ -37,7 +37,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   return (
     <>
       <DashboardTabs viewer={viewer} active="reports" />
-      <PageHead title="Employee Reports" subtitle="Each report shows only the people your role covers, on screen and in the download" actions={<Link className="btn" href="/reports/builder">Custom reports</Link>} />
+      <PageHead title="Employee Reports" subtitle="Each report shows only the people your role covers, on screen and in the download" actions={<span className="row gap-2"><Link className="btn" href="/insights/reports">Report operations</Link><Link className="btn" href="/reports/builder">Custom reports</Link></span>} />
       <div className="grid grid-2" style={{ gridTemplateColumns: "250px minmax(0, 1fr)", alignItems: "start" }}>
         <Card tight>
           <div className="stack" style={{ padding: 6 }}>
@@ -60,6 +60,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                 <span className="text-sm strong">{fyLabel(params.fy)}</span>
                 <Link className="btn sm" href={`/reports?${qs({ fy: params.fy + 1 })}`}>{fyLabel(params.fy + 1)} ›</Link>
                 <a className="btn sm primary" href={`/reports/export?${qs({})}`}>Download CSV</a>
+                <a className="btn sm" href={`/reports/export?${qs({ format: "xlsx" })}`}>Excel</a>
+                <a className="btn sm" href={`/reports/export?${qs({ format: "pdf" })}`}>PDF</a>
               </div>
             }>
             {report.key === "attendance-summary" ? (

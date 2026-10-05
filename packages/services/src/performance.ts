@@ -2,6 +2,7 @@ import { prisma } from "@keka/db";
 import { goalProgress, goalHealth, weightedRating, bandFor, DEFAULT_REVIEWERS, REVIEWER_LABEL, type MetricType, type ReviewerWeight, type ReviewerType } from "./performance-math";
 import { notify } from "./lifecycle";
 import { checkFormAnswers, stageWindowProblem, type FormQuestion } from "./talent-math";
+import { sectionShows } from "./insight-math";
 
 /**
  * Goals and reviews. A goal's status is derived from its progress against
@@ -37,17 +38,20 @@ export async function refreshGoal(goalId: string, today = new Date()): Promise<v
   if (g.parentGoalId) await refreshGoal(g.parentGoalId, today);
 }
 
-export async function checkInGoal(opts: { goalId: string; value: number; note?: string | null; byEmployeeId?: string | null }): Promise<{ ok: boolean; message: string; progress?: number }> {
+export async function checkInGoal(opts: { goalId: string; value: number; note?: string | null; byEmployeeId?: string | null; confidence?: number | null }): Promise<{ ok: boolean; message: string; progress?: number }> {
   const g = await prisma.goal.findUnique({ where: { id: opts.goalId }, include: { _count: { select: { childGoals: true } } } });
   if (!g) return { ok: false, message: "Goal not found." };
   if (g._count.childGoals > 0 && g.rollupMethod !== "MANUAL") return { ok: false, message: "This goal rolls up from its aligned goals; check in on those instead." };
   if (["COMPLETED", "MISSED", "CANCELLED"].includes(g.status) && !g.statusOverride) {
     return { ok: false, message: `This goal is ${g.status.toLowerCase()}. Reopen it to record more progress.` };
   }
+  if (g.status === "DRAFT" && g.approvalStatus === "PENDING") return { ok: false, message: "This goal is waiting for approval." };
+  const confidence = opts.confidence === undefined || opts.confidence === null ? null : opts.confidence;
+  if (confidence !== null && !(Number.isInteger(confidence) && confidence >= 0 && confidence <= 10)) return { ok: false, message: "Confidence is a whole number from 0 to 10." };
   const progress = goalProgress(g.metricType as MetricType, Number(g.startValue), Number(g.targetValue), opts.value);
   await prisma.$transaction([
-    prisma.goalCheckIn.create({ data: { goalId: g.id, value: opts.value, progressPercent: progress, note: opts.note ?? null, recordedBy: opts.byEmployeeId ?? null } }),
-    prisma.goal.update({ where: { id: g.id }, data: { currentValue: opts.value, ...(g.status === "DRAFT" ? { status: "ON_TRACK" } : {}) } }),
+    prisma.goalCheckIn.create({ data: { goalId: g.id, value: opts.value, progressPercent: progress, note: opts.note ?? null, recordedBy: opts.byEmployeeId ?? null, confidence } }),
+    prisma.goal.update({ where: { id: g.id }, data: { currentValue: opts.value, ...(confidence !== null ? { confidence } : {}), ...(g.status === "DRAFT" ? { status: "ON_TRACK" } : {}) } }),
   ]);
   await refreshGoal(g.id);
   const after = await prisma.goal.findUniqueOrThrow({ where: { id: g.id } });
@@ -211,7 +215,9 @@ export async function submitReviewResponse(input: ResponseInput): Promise<{ ok: 
   if (input.reviewerType !== "SELF" && input.reviewerType !== "MANAGER" && !(input.strengths || input.improvements)) {
     return { ok: false, message: "Write what they do well or what they could improve." };
   }
-  const questions: FormQuestion[] = review.cycle.formSections.flatMap((sec) => sec.questions.map((q) => ({ id: q.id, kind: q.kind, prompt: q.prompt, isRequired: q.isRequired, appliesTo: Array.isArray(q.appliesTo) ? (q.appliesTo as string[]) : null })));
+  // Conditional sections show only when the answer they depend on qualifies; hidden ones are neither asked nor stored.
+  const shown = review.cycle.formSections.filter((sec) => sectionShows({ conditionQuestionId: sec.conditionQuestionId, conditionOp: sec.conditionOp, conditionValue: sec.conditionValue === null ? null : Number(sec.conditionValue) }, input.formAnswers ?? {}));
+  const questions: FormQuestion[] = shown.flatMap((sec) => sec.questions.map((q) => ({ id: q.id, kind: q.kind, prompt: q.prompt, isRequired: q.isRequired, appliesTo: Array.isArray(q.appliesTo) ? (q.appliesTo as string[]) : null })));
   const form = checkFormAnswers(questions, input.reviewerType, input.formAnswers ?? {}, scale);
   if (!form.ok) return { ok: false, message: form.message };
 

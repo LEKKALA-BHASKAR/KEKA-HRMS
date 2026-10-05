@@ -70,6 +70,11 @@ model ReviewFormSection {
   description  String?
   displayOrder Int                  @default(0)
   questions    ReviewFormQuestion[]
+  /// Insight depth: show only when a rating question's answer meets the condition.
+  conditionQuestionId String?
+  /// LTE | GTE | EQ
+  conditionOp         String?
+  conditionValue      Decimal?             @db.Decimal(9, 2)
 
   @@index([cycleId, displayOrder])
   @@map("review_form_sections")
@@ -87,6 +92,8 @@ model ReviewFormQuestion {
   isRequired   Boolean           @default(true)
   /// Reviewer types that answer it (SELF, MANAGER, PEER…). Empty = everyone.
   appliesTo    Json?
+  /// Insight depth: weight of a competency in the weighted competency score.
+  weight       Decimal?          @db.Decimal(9, 2)
   displayOrder Int               @default(0)
 
   @@index([sectionId, displayOrder])
@@ -149,6 +156,9 @@ model FeedbackRequest {
   feedbackId      String?
   dueDate         DateTime?
   respondedAt     DateTime?
+  /// Insight depth: withdrawn by the requester, last reminder.
+  withdrawnAt     DateTime?
+  remindedAt      DateTime?
   createdAt       DateTime  @default(now())
 
   @@index([tenantId, status])
@@ -166,6 +176,8 @@ model FeedbackSetting {
   /// EVERYONE | SAME_DEPARTMENT | REPORTING_LINE
   whoCanGive     String   @default("EVERYONE")
   allowRequests  Boolean  @default(true)
+  /// Insight depth: peer answers are pooled and shown only from this many responses.
+  minAnonymousResponses Int @default(3)
   updatedAt      DateTime @updatedAt
 
   @@map("feedback_settings")

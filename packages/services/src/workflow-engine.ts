@@ -12,6 +12,8 @@ import {
 } from "./governance-core";
 import { CASES_DOCS_ROUTES, applyCasesDocsEffect } from "./cases-docs-effects";
 import { applyHireRequest, hireRequestPermission } from "./hire-depth-core";
+import { insightBuiltInRoute, applyInsightEffect } from "./insight-depth";
+import { isInsightWorkflowType } from "./insight-math";
 import {
   WORKFLOW_ENTITY_TYPES, dueAtFor, finalApprovers, nextApplicableStep, pickDefinition, stepOutcome, validateWorkflowSubmission,
   type RouteContext, type StepSpec, type ValidationRule, type WorkflowEntityType,
@@ -64,6 +66,8 @@ export function builtInRoute(entityType: WorkflowEntityType, opts: { reviewerUse
     default: {
       const r = CASES_DOCS_ROUTES[entityType as keyof typeof CASES_DOCS_ROUTES];
       if (r) return [perm(r.name, r.permission)];
+      const insight = insightBuiltInRoute(entityType, opts);
+      if (insight) return insight;
       if (isJoinWorkflowType(entityType)) return joinBuiltInRoute(entityType, opts);
       const money = moneyBuiltInRoute(entityType);
       return money ? (money as StepSpec[]) : engageBuiltInRoute(entityType, opts);
@@ -256,6 +260,7 @@ async function applyEffect(req: { id: string; tenantId: string; entityType: stri
       if (isEngageWorkflowType(req.entityType)) await applyEngageEffect(req, outcome, actorUserId);
       else if (isJoinWorkflowType(req.entityType)) await applyJoinEffect(req, outcome, actorUserId);
       else if (isMoneyWorkflowEntityType(req.entityType)) await applyMoneyEffect(req, outcome, actorUserId);
+      else if (isInsightWorkflowType(req.entityType)) await applyInsightEffect(req, outcome, actorUserId);
       else if (id) await applyCasesDocsEffect(req, outcome, actorUserId);
       return;
   }
