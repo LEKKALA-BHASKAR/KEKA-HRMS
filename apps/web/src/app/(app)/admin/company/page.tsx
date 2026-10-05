@@ -34,7 +34,7 @@ export default async function CompanySetupPage({ searchParams }: { searchParams:
   return (
     <>
       <PageHead title="Company setup" subtitle="Who the company is, its years, and how a working week runs"
-        actions={<><Link className="btn" href="/admin/settings">All settings</Link><Link className="btn" href="/admin/change-requests?category=CONFIG">Pending changes{pending ? ` (${pending})` : ""}</Link></>} />
+        actions={<><Link className="btn" href="/admin/setup">Setup health &amp; configuration</Link><a className="btn" href="/exports/core2/company-profile">Export profile</a><a className="btn" href="/exports/core2/working-rules">Export working rules</a><a className="btn" href="/exports/core2/settings">Export settings</a><Link className="btn" href="/admin/settings">All settings</Link><Link className="btn" href="/admin/change-requests?category=CONFIG">Pending changes{pending ? ` (${pending})` : ""}</Link></>} />
       <div className="tabs">
         {(Object.keys(TABS) as Tab[]).map((k) => <Link key={k} href={`/admin/company?tab=${k}`} className={`tab${tab === k ? " active" : ""}`}>{TABS[k]}</Link>)}
       </div>

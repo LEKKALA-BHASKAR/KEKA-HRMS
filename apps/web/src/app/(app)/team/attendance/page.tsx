@@ -23,7 +23,7 @@ export default async function TeamAttendancePage({ searchParams }: { searchParam
   const view = sp.view === "register" ? "register" : "requests";
   return (
     <>
-      <PageHead title="Team attendance" subtitle="Decide your team's attendance requests and see how the last two weeks went" />
+      <PageHead title="Team attendance" subtitle="Decide your team's attendance requests and see how the last two weeks went" actions={<><a className="btn" href="/exports/core2/attendance-requests">Export requests</a><Link className="btn" href="/team/roster">Roster</Link></>} />
       <div className="tabs">
         <Link href="/team/attendance" className={`tab${view === "requests" ? " active" : ""}`}>Requests to decide</Link>
         <Link href="/team/attendance?view=register" className={`tab${view === "register" ? " active" : ""}`}>Attendance register</Link>

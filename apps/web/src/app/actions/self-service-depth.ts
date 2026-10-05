@@ -126,6 +126,18 @@ export async function requestProfileChangeAction(_prev: ActionState, formData: F
       if (issue) return { ok: false, message: issue, errors: { relationship: issue } };
     }
   }
+  // A change can be dated ahead (a new address from next month): approved, it waits and applies on that day.
+  const effRaw = String(formData.get("effectiveDate") ?? "").trim();
+  let effectiveDate: Date | null = null;
+  if (effRaw) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(effRaw);
+    effectiveDate = m ? new Date(Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!)) : null;
+    const todayUtc = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
+    if (!effectiveDate || Number.isNaN(effectiveDate.getTime())) return { ok: false, message: "Enter a valid date.", errors: { effectiveDate: "Invalid date" } };
+    if (effectiveDate < todayUtc) return { ok: false, message: "A change cannot take effect in the past.", errors: { effectiveDate: "In the past" } };
+    if (effectiveDate.getTime() - todayUtc.getTime() > 366 * 86_400_000) return { ok: false, message: "Pick a date within a year.", errors: { effectiveDate: "Too far ahead" } };
+    if (effectiveDate.getTime() === todayUtc.getTime()) effectiveDate = null;
+  }
   const previous = await currentValues(target, employeeId, targetId, changes.type as string | undefined);
   // Only what actually changes goes in the request (whole rows for new records).
   if (operation === "UPDATE" && previous) {
@@ -138,7 +150,7 @@ export async function requestProfileChangeAction(_prev: ActionState, formData: F
     tenantId: viewer.tenantId, targetType: target, targetId, employeeId, operation,
     title: `${verb} ${label} — ${viewer.employee.displayName}`, changes, previous,
     reason: String(formData.get("reason") ?? "").trim().slice(0, 400) || null,
-    approverType: SELF_SERVICE_TARGETS[target as ChangeTarget] ?? "HR", requestedBy: viewer.user.id, requestedByEmployeeId: employeeId,
+    approverType: SELF_SERVICE_TARGETS[target as ChangeTarget] ?? "HR", requestedBy: viewer.user.id, requestedByEmployeeId: employeeId, effectiveDate,
   });
   if (!res.ok) return { ok: false, message: res.message };
   await writeAudit(viewer, { module: "EMPLOYEE", action: "CREATE", entityType: "ChangeRequest", entityId: res.id, summary: `Asked to ${verb.toLowerCase()} their ${label}` });
@@ -270,6 +282,11 @@ export async function issueIdCardAction(_prev: ActionState, formData: FormData):
   if (!employeeId) return { ok: false, message: "Choose whose card to issue." };
   const self = employeeId === viewer.employee?.id;
   if (!self && !(await isHrFor(viewer, employeeId))) return { ok: false, message: "You can issue your own card, or cards for people you look after." };
+  // When the company wants cards approved, employees request one instead of issuing it.
+  if (self && !(await isHrFor(viewer, employeeId))) {
+    const gate = await prisma.changeApprovalSetting.findUnique({ where: { tenantId_targetType: { tenantId: viewer.tenantId, targetType: "ID_CARD" } } });
+    if (gate?.requireApproval) return { ok: false, message: "ID cards need HR approval here. Request one instead." };
+  }
   const emp = await prisma.employee.findFirst({ where: { id: employeeId, tenantId: viewer.tenantId }, select: { employeeNumber: true, status: true, displayName: true } });
   if (!emp || emp.status === "EXITED" || emp.status === "PREBOARDING") return { ok: false, message: "Cards are for current employees." };
   const now = new Date();

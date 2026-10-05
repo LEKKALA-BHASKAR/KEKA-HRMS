@@ -9,6 +9,7 @@ import { NavProgress } from "@/components/nav-progress";
 import { EmergencyBanner } from "@/components/emergency-banner";
 import { Suspense } from "react";
 import { scopedEmployeeIds, inScope, scopedEmployeeWhere, timesheetsToApproveWhere } from "@/lib/scope";
+import { brandingForViewer, appearanceCss } from "@/lib/core2";
 
 const P = PERMISSIONS;
 
@@ -158,12 +159,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   });
 
   const name = viewer.employee?.displayName ?? viewer.user.email;
+  // The viewer's brand (by business unit or entity) and their own accessibility choices.
+  const [brand, pref] = await Promise.all([brandingForViewer(viewer), prisma.userPreference.findUnique({ where: { userId: viewer.user.id } })]);
+  const css = appearanceCss(brand, pref);
   return (
     <>
+      {css ? <style data-appearance="">{css}</style> : null}
       <Suspense fallback={null}><NavProgress /></Suspense>
       <AppShell
         sections={sections}
-        company={viewer.tenant.name}
+        company={brand?.portalTitle ?? viewer.tenant.name}
         notifications={unreadNotifications}
         actions={quickActions(viewer)}
         settingsHref={settingsLink(viewer)}

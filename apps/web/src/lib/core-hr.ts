@@ -36,7 +36,7 @@ export async function isManagerOf(viewer: Viewer, employeeId: string): Promise<b
 
 /** The permission that makes someone "HR" for a change request's category. */
 export function hrPermissionFor(category: string, targetType: string): Permission {
-  if (category === "CONFIG") return P.ORG_SETTINGS_MANAGE;
+  if (category === "CONFIG") return targetType === "ESTABLISHMENT" || targetType === "REGISTRATION_PROFILE" ? P.STATUTORY_MANAGE : P.ORG_SETTINGS_MANAGE;
   if (category === "ORG") return targetType === "LEGAL_ENTITY" ? P.ORG_ENTITY_MANAGE : P.ORG_MANAGE;
   if (targetType === "BANK") return P.EMPLOYEE_MANAGE_FINANCIALS;
   return P.EMPLOYEE_UPDATE;
@@ -131,9 +131,10 @@ export async function directoryVisibilityWhere(viewer: Viewer): Promise<Prisma.E
 export interface DirectoryParams {
   q: string; bu: string; dept: string; loc: string; cc: string; le: string;
   mgr: string; wt: string; tenure: string; skill: string; team: string; div: string; shift: string;
+  cert: string; lang: string; proj: string; avail: string; temp: string;
 }
 
-export const DIRECTORY_PARAM_KEYS: Array<keyof DirectoryParams> = ["q", "bu", "dept", "loc", "cc", "le", "mgr", "wt", "tenure", "skill", "team", "div", "shift"];
+export const DIRECTORY_PARAM_KEYS: Array<keyof DirectoryParams> = ["q", "bu", "dept", "loc", "cc", "le", "mgr", "wt", "tenure", "skill", "team", "div", "shift", "cert", "lang", "proj", "avail", "temp"];
 
 export function directoryParams(sp: Record<string, string | string[] | undefined>): DirectoryParams {
   const one = (v: string | string[] | undefined) => (typeof v === "string" ? v.trim() : "");
@@ -146,6 +147,11 @@ export async function directorySearchWhere(viewer: Viewer, p: DirectoryParams, t
   const words = p.q.split(/\s+/).filter(Boolean).slice(0, 5);
   const text = (w: string) => ({ contains: w, mode: "insensitive" as const });
   const and: Prisma.EmployeeWhereInput[] = [directoryWhere(tenantId), await directoryVisibilityWhere(viewer)];
+  // People who asked (and were approved) to be left out of the directory; HR still finds them.
+  if (!can(viewer, P.EMPLOYEE_UPDATE)) {
+    const unlisted = await prisma.employeeProfileExtra.findMany({ where: { tenantId, hideFromDirectory: true }, select: { employeeId: true } });
+    if (unlisted.length) and.push({ id: { notIn: unlisted.map((u) => u.employeeId).filter((id) => id !== viewer.employee?.id) } });
+  }
   if (p.bu) and.push({ businessUnitId: p.bu });
   if (p.dept) and.push({ departmentId: p.dept });
   if (p.loc) and.push({ locationId: p.loc });
@@ -174,6 +180,22 @@ export async function directorySearchWhere(viewer: Viewer, p: DirectoryParams, t
     const on = await prisma.shiftAssignment.findMany({ where: { shiftId: p.shift, date: day, shift: { tenantId } }, select: { employeeId: true } });
     and.push({ id: { in: on.map((s) => s.employeeId) } });
   }
+  const day = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  if (p.cert) and.push({ learningCertificates: { some: { courseId: p.cert, revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gte: day } }] } } });
+  if (p.lang) {
+    const speakers = await prisma.employeeProfileExtra.findMany({ where: { tenantId, languages: { has: p.lang } }, select: { employeeId: true } });
+    and.push({ id: { in: speakers.map((x) => x.employeeId) } });
+  }
+  if (p.proj) {
+    const on = await prisma.resourceAllocation.findMany({ where: { projectId: p.proj, project: { tenantId }, startDate: { lte: day }, OR: [{ endDate: null }, { endDate: { gte: day } }] }, select: { employeeId: true } });
+    and.push({ id: { in: on.map((a) => a.employeeId) } });
+  }
+  if (p.avail === "available" || p.avail === "away") {
+    const away = await prisma.leaveRequest.findMany({ where: { tenantId, status: "APPROVED", fromDate: { lte: day }, toDate: { gte: day } }, select: { employeeId: true } });
+    const ids = away.map((a) => a.employeeId);
+    and.push(p.avail === "away" ? { id: { in: ids } } : { id: { notIn: ids } });
+  }
+  if (p.temp === "1") and.push({ workerType: { isContingent: true } });
   for (const w of words) {
     and.push({
       OR: [

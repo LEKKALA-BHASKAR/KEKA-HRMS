@@ -66,6 +66,7 @@ export default async function StatutoryPage({
       <PageHead
         title="Statutory"
         subtitle={`Reference tables the payroll engine reads from · ${fyLabel(fyStart)}`}
+        actions={<><a className="btn" href="/exports/core2/establishments">Export establishments</a><a className="btn" href="/exports/core2/registrations">Export registrations</a></>}
       />
 
       <div className="tabs">

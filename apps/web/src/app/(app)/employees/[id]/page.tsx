@@ -94,6 +94,9 @@ export default async function EmployeePage({
   const pan = employee.identityDocs.find((d) => d.type === "PAN")?.number ?? null;
 
   const canEdit = canAccessEmployee(viewer, target, P.EMPLOYEE_UPDATE);
+  // The employee's own privacy choices: viewers who are not HR (or the person) do not see what they hid.
+  const privacy = await prisma.employeeProfileExtra.findUnique({ where: { employeeId: employee.id }, select: { hideMobile: true, hideBirthday: true } });
+  const masked = !canEdit && viewer.employee?.id !== employee.id;
   const canEditFinancials = canAccessEmployee(viewer, target, P.EMPLOYEE_MANAGE_FINANCIALS);
   const canRevise = can(viewer, P.SALARY_REVISE) && showFinancials;
   const canManageAccess = can(viewer, P.EMPLOYEE_DISABLE_LOGIN) || can(viewer, P.EMPLOYEE_INVITE);
@@ -203,6 +206,7 @@ export default async function EmployeePage({
             {canEdit && tab !== "about" ? (
               <Link className="btn" href={`/employees/${employee.id}?tab=about`}>Edit details</Link>
             ) : null}
+            {canEdit ? <Link className="btn" href={`/employees/${employee.id}/master`}>Master data</Link> : null}
           </>
         }
       />
@@ -254,8 +258,8 @@ export default async function EmployeePage({
             <KeyValue items={[
               ["Employee number", <span className="mono" key="n">{employee.employeeNumber}</span>],
               ["Work email", employee.workEmail],
-              ["Mobile", employee.mobile],
-              ["Date of birth", formatDate(employee.dateOfBirth)],
+              ["Mobile", masked && privacy?.hideMobile ? "Hidden by the employee" : employee.mobile],
+              ["Date of birth", masked && privacy?.hideBirthday ? "Hidden by the employee" : formatDate(employee.dateOfBirth)],
               ["Gender", employee.gender?.toLowerCase()],
               ["Marital status", employee.maritalStatus?.toLowerCase()],
               ["Nationality", employee.nationality],

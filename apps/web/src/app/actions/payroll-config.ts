@@ -3,6 +3,7 @@
 import { prisma } from "@keka/db";
 import { PERMISSIONS } from "@keka/rbac";
 import { validateFormula, resolveStructure, topologicalOrder } from "@keka/payroll";
+import { approvalRequired, raiseChangeRequest } from "@keka/services";
 import { requireAuth } from "@/lib/context";
 import {
   z, parseForm, toErrorState, writeAudit, actionDone as done, formList,
@@ -11,6 +12,26 @@ import {
 } from "@/lib/forms";
 
 const P = PERMISSIONS;
+
+const isoOf = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10) : v);
+
+/**
+ * Establishment registrations and registration profiles can be made to need
+ * a second person's approval (Settings › Changes that need approval), or
+ * the person saving can ask for it. Returns the result when a change
+ * request was raised instead of saving; null to save directly.
+ */
+async function proposeStatutoryChange(viewer: Awaited<ReturnType<typeof requireAuth>>, formData: FormData, targetType: "ESTABLISHMENT" | "REGISTRATION_PROFILE", targetId: string, title: string, changes: Record<string, unknown>, previous: Record<string, unknown> | null): Promise<ActionState | null> {
+  if (formData.get("propose") !== "on" && !(await approvalRequired(viewer.tenantId, targetType))) return null;
+  const plainOf = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v instanceof Date ? isoOf(v) : v !== null && typeof v === "object" && !Array.isArray(v) ? String(v) : v]));
+  const res = await raiseChangeRequest({
+    tenantId: viewer.tenantId, targetType, targetId, operation: "UPDATE", title, changes: plainOf(changes), previous: previous ? plainOf(previous) : null,
+    reason: String(formData.get("reason") ?? "").trim() || null, requestedBy: viewer.user.id, requestedByEmployeeId: viewer.employee?.id ?? null,
+  });
+  if (!res.ok) return { ok: false, message: res.message };
+  await writeAudit(viewer, { module: "PAYROLL", action: "CREATE", entityType: "ChangeRequest", entityId: res.id, summary: `Asked for approval: ${title}` });
+  return done(["/payroll/pay-groups", "/admin/change-requests"], `${res.message} It is saved once another administrator approves it.`);
+}
 
 /**
  * Payroll configuration CRUD: pay groups, their statutory filing details and
@@ -216,6 +237,8 @@ export async function saveFilingDetails(_prev: ActionState, formData: FormData):
     where: { id: payGroupId, tenantId: viewer.tenantId }, include: { filingDetail: true },
   });
   if (!group) return { ok: false, message: "Pay group not found" };
+  const proposed = await proposeStatutoryChange(viewer, formData, "REGISTRATION_PROFILE", group.id, `Update the registration profile of ${group.name}`, { payGroupId, ...data }, group.filingDetail ? { ...group.filingDetail } : null);
+  if (proposed) return proposed;
 
   try {
     await prisma.payGroupFilingDetail.upsert({
@@ -297,6 +320,9 @@ export async function savePtRegistration(_prev: ActionState, formData: FormData)
       };
     }
   }
+
+  const ptProposed = await proposeStatutoryChange(viewer, formData, "ESTABLISHMENT", `PT:${d.payGroupId}:${d.stateCode}:${d.localBodyType}`, `${d.stateCode} PT registration on ${group.name}`, { kind: "PT", ...d, locationIds }, null);
+  if (ptProposed) return ptProposed;
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -387,6 +413,8 @@ export async function saveLwfRegistration(_prev: ActionState, formData: FormData
   }
 
   const hasRule = await prisma.lwfRule.count({ where: { stateCode: d.stateCode } });
+  const lwfProposed = await proposeStatutoryChange(viewer, formData, "ESTABLISHMENT", `LWF:${d.payGroupId}:${d.stateCode}`, `${d.stateCode} LWF registration on ${group.name}`, { kind: "LWF", ...d, locationIds }, null);
+  if (lwfProposed) return lwfProposed;
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -415,7 +443,10 @@ export async function saveLwfRegistration(_prev: ActionState, formData: FormData
         });
       }
     });
-
+    await writeAudit(viewer, {
+      module: "PAYROLL", action: "UPDATE", entityType: "LwfStateRegistration", entityId: d.payGroupId,
+      summary: `Saved ${d.stateCode} LWF registration on ${group.name}, linking ${locationIds.length} location(s)`,
+    });
     return done(["/payroll/pay-groups", "/org"],
       hasRule === 0
         ? `Saved, but ${d.stateCode} has no LWF contribution rule — many states have no LWF scheme at all, in which case nothing will be deducted.`

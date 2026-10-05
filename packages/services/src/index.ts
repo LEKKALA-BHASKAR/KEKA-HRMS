@@ -116,3 +116,7 @@ export * from "./benefits";
 export * from "./comp-planning";
 export * from "./money-workflow";
 export * from "./money-audit";
+// Core HR depth, second pass: config snapshots, org/entity depth, master data, preferences, HR ops.
+export * from "./core2-math";
+export * from "./core2";
+export * from "./core2-qr";

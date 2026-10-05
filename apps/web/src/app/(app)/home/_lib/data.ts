@@ -295,18 +295,22 @@ function daysUntil(today: Today, month: number, day: number): { days: number; ye
  * date of birth is read here and reduced to "06 Oct" — the year never leaves.
  */
 export async function celebrations(viewer: Viewer, today: Today): Promise<CelebrationGroup[]> {
-  const people = await prisma.employee.findMany({
-    where: directoryWhere(viewer.tenantId),
-    select: { ...PERSON_SELECT, dateOfBirth: true, dateOfJoining: true },
-  });
+  const [people, hidden] = await Promise.all([
+    prisma.employee.findMany({ where: directoryWhere(viewer.tenantId), select: { ...PERSON_SELECT, dateOfBirth: true, dateOfJoining: true } }),
+    // People who chose to hide their birthday, or to be left out of the directory.
+    prisma.employeeProfileExtra.findMany({ where: { tenantId: viewer.tenantId, OR: [{ hideBirthday: true }, { hideFromDirectory: true }] }, select: { employeeId: true, hideBirthday: true, hideFromDirectory: true } }),
+  ]);
+  const noBirthday = new Set(hidden.map((h) => h.employeeId));
+  const unlisted = new Set(hidden.filter((h) => h.hideFromDirectory).map((h) => h.employeeId));
 
   const bToday: Celebrant[] = [], bSoon: Array<Celebrant & { d: number }> = [];
   const aToday: Celebrant[] = [], aSoon: Array<Celebrant & { d: number }> = [];
   const joinees: Array<Celebrant & { t: number }> = [], jToday: Celebrant[] = [];
 
   for (const p of people) {
+    if (unlisted.has(p.id)) continue;
     const base = { id: p.id, name: nameOf(p), photoUrl: p.photoUrl };
-    if (p.dateOfBirth) {
+    if (p.dateOfBirth && !noBirthday.has(p.id)) {
       const { days } = daysUntil(today, p.dateOfBirth.getUTCMonth(), p.dateOfBirth.getUTCDate());
       if (days === 0) bToday.push({ ...base, when: "Today" });
       else if (days <= UPCOMING_DAYS) bSoon.push({ ...base, when: upcomingLabel(today, days), d: days });

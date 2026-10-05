@@ -4,6 +4,8 @@ import type { Metadata } from "next";
 import { prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { formatDate } from "@keka/shared";
+import { dataFreshness } from "@keka/services";
+import { coworkersFor } from "@/lib/core2";
 import { requireViewer } from "@/lib/context";
 import { directoryWhere, DIRECTORY_SELECT, nameOf } from "@/lib/directory";
 import { directoryVisibilityWhere } from "@/lib/core-hr";
@@ -42,6 +44,11 @@ export default async function DirectoryProfilePage({ params }: { params: Promise
     select: DIRECTORY_SELECT,
   });
   if (!e) notFound();
+  const extra = await prisma.employeeProfileExtra.findUnique({ where: { employeeId: e.id }, select: { pronouns: true, languages: true, hideFromDirectory: true, updatedAt: true } });
+  // Someone left out of the directory is visible only to themselves and to HR.
+  if (extra?.hideFromDirectory && viewer.employee?.id !== e.id && !canAccessEmployee(viewer, { id: e.id, departmentId: e.department?.id ?? null, locationId: e.location?.id ?? null, legalEntityId: e.legalEntity?.id ?? null, businessUnitId: e.businessUnit?.id ?? null, reportingManagerId: e.reportingManagerId }, P.EMPLOYEE_UPDATE)) notFound();
+  const touched = await prisma.employee.findUnique({ where: { id: e.id }, select: { updatedAt: true } });
+  const fresh = dataFreshness(extra && touched && extra.updatedAt > touched.updatedAt ? extra.updatedAt : touched!.updatedAt);
 
   const praiseWhere = { tenantId, toEmployeeId: e.id, isPublic: true };
   const [manager, reports, praise, praiseCount] = await Promise.all([
@@ -65,6 +72,7 @@ export default async function DirectoryProfilePage({ params }: { params: Promise
     prisma.praise.count({ where: praiseWhere }),
   ]);
 
+  const suggestions = viewer.employee?.id === e.id ? await coworkersFor(tenantId, e.id) : [];
   const name = nameOf(e);
   const first = e.displayName?.split(/\s+/)[0] || e.firstName;
   const target = {
@@ -109,6 +117,7 @@ export default async function DirectoryProfilePage({ params }: { params: Promise
           <div className={s.actions}>
             {canViewRecord ? <Link href={`/employees/${e.id}`} className={s.primaryAction}>View full record</Link> : null}
             <Link href={treeHref} className={s.secondaryAction}>View in org tree</Link>
+            <a href={`/directory/${e.id}/vcard`} className={s.secondaryAction}>Save contact</a>
           </div>
         </div>
       </section>
@@ -132,6 +141,9 @@ export default async function DirectoryProfilePage({ params }: { params: Promise
               <Field label="Location">{e.location ? <>{e.location.name}{e.location.city && e.location.city !== e.location.name ? <span className={s.mutedInline}> · {e.location.city}</span> : null}</> : null}</Field>
               <Field label="Date of joining">{e.dateOfJoining ? formatDate(e.dateOfJoining) : null}</Field>
               <Field label="Employee number">{e.employeeNumber}</Field>
+              {extra?.pronouns ? <Field label="Pronouns">{extra.pronouns}</Field> : null}
+              {extra?.languages.length ? <Field label="Languages">{extra.languages.join(", ")}</Field> : null}
+              <Field label="Profile updated"><span title={formatDate(touched!.updatedAt)} data-freshness={fresh.level}>{fresh.label}</span></Field>
               <Field label="Reporting manager">
                 {manager ? <Link href={`/directory/${manager.id}`}>{nameOf(manager)}</Link> : null}
               </Field>
@@ -193,6 +205,14 @@ export default async function DirectoryProfilePage({ params }: { params: Promise
               <p className={s.muted}>No one reports to {isSelf ? "you" : first}.</p>
             )}
           </Panel>
+
+          {isSelf && suggestions.length ? (
+            <Panel title="People you may want to know" subtitle="Shared skills, teams, projects, location or manager">
+              <ul className={s.people}>
+                {suggestions.map((x) => <li key={x.person.id}><PersonRow person={x.person} /><div className={s.mutedInline}>{x.reasons.join(", ")}</div></li>)}
+              </ul>
+            </Panel>
+          ) : null}
         </aside>
       </div>
     </>

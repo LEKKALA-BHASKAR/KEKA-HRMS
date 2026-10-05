@@ -16,7 +16,7 @@ type Action = (prev: ActionState, formData: FormData) => Promise<ActionState>;
 export interface FieldSpec {
   name: string;
   label: string;
-  kind?: "text" | "email" | "date" | "number" | "select" | "multi" | "textarea" | "checkbox" | "checks" | "color";
+  kind?: "text" | "email" | "date" | "number" | "select" | "multi" | "textarea" | "checkbox" | "checks" | "color" | "file";
   options?: Array<{ value: string; label: string }>;
   defaultValue?: string | number | null;
   /** For checkboxes and check groups. */
@@ -40,6 +40,7 @@ function Input({ f, state }: { f: FieldSpec; state: ActionState }) {
       </select>
     );
   }
+  if (kind === "file") return <input id={f.name} type="file" name={f.name} className="input" required={f.required} />;
   if (kind === "textarea") return <TextArea name={f.name} state={state} defaultValue={f.defaultValue == null ? null : String(f.defaultValue)} placeholder={f.placeholder} required={f.required} rows={4} />;
   if (kind === "checks") {
     return (

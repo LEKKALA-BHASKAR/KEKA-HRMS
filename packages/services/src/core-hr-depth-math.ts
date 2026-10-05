@@ -43,6 +43,9 @@ export const CHANGE_TARGETS = {
   EDUCATION: { category: "PROFILE", label: "Education", fields: ["institution", "degree", "specialization", "fromYear", "toYear", "grade"] },
   EXPERIENCE: { category: "PROFILE", label: "Experience", fields: ["companyName", "jobTitle", "fromDate", "toDate", "description"] },
   DATA_CORRECTION: { category: "CORRECTION", label: "Data correction", fields: ["field", "currentValue", "correctValue"] },
+  // Statutory registrations (40-core2-depth): PT/LWF establishments and a pay group's filing profile.
+  ESTABLISHMENT: { category: "CONFIG", label: "Establishment registration", fields: ["kind", "payGroupId", "stateCode", "stateName", "localBodyType", "establishmentId", "registrationDate", "signatoryName", "frequency", "employerInsideCtc", "hideEmployerOnPayslip", "prorateNewJoiners", "locationIds"] },
+  REGISTRATION_PROFILE: { category: "CONFIG", label: "Registration profile", fields: ["payGroupId", "pan", "tan", "tanCircle", "citTds", "form16SignatoryName", "form16SignatoryDesignation", "form16SignatoryPan", "responsiblePersonName", "responsiblePersonDesignation", "responsiblePersonPan", "pfRegistrationNumber", "pfRegistrationDate", "pfSignatoryName", "pfWageCeiling", "pfCapAtCeiling", "pfEmployeeRate", "pfEmployerRate", "epsRate", "epsWageCeiling", "edliRate", "pfAdminRate", "esiRegistrationNumber", "esiRegistrationDate", "esiSignatoryName", "esiWageLimit", "esiEmployeeRate", "esiEmployerRate", "esiEmployerInsideCtc", "esiHideEmployerOnPayslip", "esiIncludeArrears"] },
 } as const satisfies Record<string, { category: ChangeCategory; label: string; fields: readonly string[] }>;
 export type ChangeTarget = keyof typeof CHANGE_TARGETS;
 
@@ -285,7 +288,7 @@ export function planMassUpdate(kind: MassUpdateKind, value: string, people: Arra
 // ---------------------------------------------------------------------------
 
 /** A saved search keeps only the directory's own filter keys. */
-export const DIRECTORY_KEYS = ["q", "bu", "dept", "loc", "cc", "le", "mgr", "wt", "tenure", "skill", "team", "div", "shift"] as const;
+export const DIRECTORY_KEYS = ["q", "bu", "dept", "loc", "cc", "le", "mgr", "wt", "tenure", "skill", "team", "div", "shift", "cert", "lang", "proj", "avail", "temp"] as const;
 
 export function cleanDirectoryQuery(raw: string): string {
   const p = new URLSearchParams(raw.replace(/^\?/, ""));

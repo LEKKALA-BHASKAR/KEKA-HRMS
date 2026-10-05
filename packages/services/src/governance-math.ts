@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { ENGAGE_WORKFLOW_TYPES } from "./engage-depth-math";
 import { MONEY_WORKFLOW_ENTITY_TYPES } from "./money-math";
+import { CORE2_WORKFLOW_ENTITY_TYPES } from "./core2-math";
 
 /**
  * Pure helpers for governance: workflow routing (definition matching, step
@@ -39,6 +40,7 @@ export const WORKFLOW_ENTITY_TYPES = {
   ASSET_DISPOSAL: "Asset disposal",
   HIRE_REQUEST: "Hiring requests (campaigns, career content, referral bonuses, offer revisions…)",
   ...MONEY_WORKFLOW_ENTITY_TYPES,
+  ...CORE2_WORKFLOW_ENTITY_TYPES,
 } as const;
 export type WorkflowEntityType = keyof typeof WORKFLOW_ENTITY_TYPES;
 export const isWorkflowEntityType = (v: string): v is WorkflowEntityType => v in WORKFLOW_ENTITY_TYPES;

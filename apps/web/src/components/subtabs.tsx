@@ -11,14 +11,14 @@ export interface SubTab { label: string; href: string; count?: number }
  * the URL, so links like `?tab=archive` work as well as nested paths.
  */
 export function SubTabs({ items, active }: { items: SubTab[]; active?: string }) {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
   const search = useSearchParams();
   const score = (href: string) => {
     const [p, qs] = href.split("?");
     if (!(pathname === p || pathname.startsWith(`${p}/`))) return -1;
     let s = p.length;
     for (const [k, v] of new URLSearchParams(qs ?? "")) {
-      if (search.get(k) !== v) return -1;
+      if (search?.get(k) !== v) return -1;
       s += 1000;
     }
     return s;

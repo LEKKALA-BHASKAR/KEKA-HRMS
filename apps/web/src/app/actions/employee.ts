@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma, type Prisma } from "@keka/db";
 import { PERMISSIONS, canAccessEmployee } from "@keka/rbac";
 import { selectStructureForCtc } from "@keka/payroll";
-import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision, requestJobChange, jobChangeLabel, jobChangeDue, beyondPlanWarning, employeeOnHold, fireLetterTriggers } from "@keka/services";
+import { startJourney, recomputeProfileCompletion, enrolInMandatoryCourses, startProbation, requestMandatoryDocuments, emitEvent, openApproval, applySalaryRevision, requestJobChange, jobChangeLabel, jobChangeDue, beyondPlanWarning, employeeOnHold, fireLetterTriggers, dependentRelationIssue, matchTransferRule, transferRuleIssues } from "@keka/services";
 import { requireAuth, requireViewer } from "@/lib/context";
 import { foreignReference } from "@/lib/ownership";
 import {
@@ -31,10 +31,13 @@ async function allocateEmployeeNumber(
   tx: Prisma.TransactionClient,
   tenantId: string,
   seriesId?: string | null,
+  legalEntityId?: string | null,
 ): Promise<string> {
+  // No series picked: the hiring entity's own series, then the company default.
   const series = seriesId
     ? await tx.employeeNumberSeries.findFirst({ where: { id: seriesId, tenantId, isActive: true } })
-    : await tx.employeeNumberSeries.findFirst({ where: { tenantId, isDefault: true, isActive: true } })
+    : (legalEntityId ? await tx.employeeNumberSeries.findFirst({ where: { tenantId, legalEntityId, isActive: true }, orderBy: { isDefault: "desc" } }) : null)
+      ?? await tx.employeeNumberSeries.findFirst({ where: { tenantId, isDefault: true, isActive: true } })
       ?? await tx.employeeNumberSeries.findFirst({ where: { tenantId, isActive: true } });
 
   if (!series) {
@@ -180,7 +183,7 @@ export async function createEmployee(_prev: ActionState, formData: FormData): Pr
       }
 
       const employeeNumber = d.employeeNumberOverride
-        ?? await allocateEmployeeNumber(tx, viewer.tenantId, d.numberSeriesId);
+        ?? await allocateEmployeeNumber(tx, viewer.tenantId, d.numberSeriesId, d.legalEntityId);
 
       // A login is optional at creation; an employee can be invited later.
       let userId: string | null = null;
@@ -462,6 +465,14 @@ export async function recordJobChange(_prev: ActionState, formData: FormData): P
   });
   const day = d.effectiveFrom.toISOString().slice(0, 10);
   const what = d.reason.replace(/_/g, " ").toLowerCase();
+
+  // A move to another legal entity follows the company's cross-entity transfer rule.
+  if (d.legalEntityId && before.legalEntityId && d.legalEntityId !== before.legalEntityId) {
+    const rules = await prisma.entityTransferRule.findMany({ where: { tenantId: viewer.tenantId } });
+    const now = new Date();
+    const issues = transferRuleIssues(matchTransferRule(rules, before.legalEntityId, d.legalEntityId), d.effectiveFrom, new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())));
+    if (issues.length) return { ok: false, message: issues.join(" "), errors: { effectiveFrom: "Too soon" } };
+  }
 
   try {
     const { holdUntilEffective, employeeId: _e, ...fields } = d;
@@ -871,6 +882,13 @@ export async function addDependent(_prev: ActionState, formData: FormData): Prom
   if (rest.dateOfBirth && rest.dateOfBirth > new Date()) {
     return { ok: false, message: "The date of birth is in the future.", errors: { dateOfBirth: "In the future" } };
   }
+  // The relationship must make sense against the employee and the dependents already listed.
+  const [owner, existingDeps] = await Promise.all([
+    prisma.employee.findUnique({ where: { id: employeeId }, select: { dateOfBirth: true } }),
+    prisma.dependent.findMany({ where: { employeeId }, select: { relationship: true } }),
+  ]);
+  const relationIssue = dependentRelationIssue({ relationship: rest.relationship, dateOfBirth: rest.dateOfBirth }, owner?.dateOfBirth ?? null, existingDeps);
+  if (relationIssue) return { ok: false, message: relationIssue, errors: { relationship: relationIssue } };
   try {
     const row = await prisma.dependent.create({ data: { employeeId, ...rest } });
     await recomputeCompletion(employeeId);

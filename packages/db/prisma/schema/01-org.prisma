@@ -108,6 +108,9 @@ model BusinessUnit {
   /// Derives the implicit Business Head role.
   headId      String?
   head        Employee? @relation("BusinessUnitHead", fields: [headId], references: [id], onDelete: SetNull)
+  /// Parent business unit and P&L code for the P&L hierarchy (40-core2-depth).
+  parentId    String?
+  plCode      String?
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -137,6 +140,8 @@ model Department {
   head        Employee? @relation("DepartmentHead", fields: [headId], references: [id], onDelete: SetNull)
   /// Division (32-core-hr-depth) the department sits in, if any.
   divisionId  String?
+  /// Parent department for nested levels (40-core2-depth).
+  parentId    String?
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -174,6 +179,8 @@ model Location {
   longitude       Decimal? @db.Decimal(10, 7)
   geofenceRadiusM Int?
   timezone     String  @default("Asia/Kolkata")
+  /// Parent location (campus > building) for hierarchy and inheritance (40-core2-depth).
+  parentId     String?
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -198,6 +205,9 @@ model CostCenter {
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name      String
   code      String?
+  /// Parent cost centre and owning legal entity (40-core2-depth).
+  parentId      String?
+  legalEntityId String?
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
@@ -296,6 +306,8 @@ model EmployeeNumberSeries {
   nextNumber  Int     @default(1)
   isActive    Boolean @default(true)
   isDefault   Boolean @default(false)
+  /// Used for this legal entity's new joiners (40-core2-depth); null = any.
+  legalEntityId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -13,6 +13,8 @@ export const DIRECTORY_FILTERS = [
   { key: "cc", label: "Cost Center" }, { key: "le", label: "Legal Entity" }, { key: "div", label: "Division" },
   { key: "team", label: "Team" }, { key: "mgr", label: "Manager" }, { key: "wt", label: "Employment type" },
   { key: "tenure", label: "Tenure" }, { key: "skill", label: "Skill" }, { key: "shift", label: "Shift today" },
+  { key: "cert", label: "Certification" }, { key: "lang", label: "Language" }, { key: "proj", label: "Project" },
+  { key: "avail", label: "Availability today" }, { key: "temp", label: "Workers" },
 ] as const satisfies ReadonlyArray<{ key: keyof DirectoryParams; label: string }>;
 
 /**
@@ -45,10 +47,17 @@ export async function loadDirectory(viewer: Viewer, sp: Record<string, string | 
     prisma.directorySavedSearch.findMany({ where: { tenantId: t, userId: viewer.user.id }, orderBy: { name: "asc" } }),
     prisma.directorySearchLog.findMany({ where: { tenantId: t, userId: viewer.user.id }, orderBy: { createdAt: "desc" }, take: 20 }),
   ]);
+  const [courses, langs, projects] = await Promise.all([
+    prisma.course.findMany({ where: { tenantId: t, certificates: { some: {} } }, select: { id: true, title: true }, orderBy: { title: "asc" } }),
+    prisma.employeeProfileExtra.findMany({ where: { tenantId: t, NOT: { languages: { isEmpty: true } } }, select: { languages: true } }),
+    prisma.project.findMany({ where: { tenantId: t, status: { in: ["ACTIVE", "PLANNING", "ON_HOLD"] } }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+  ]);
   const options: Record<string, Array<{ id: string; name: string }>> = {
     bu: bus, dept: depts, loc: locs, cc: ccs, le: les, div: divs, team: teams,
     mgr: managers.map((m) => ({ id: m.id, name: m.displayName ?? `${m.firstName} ${m.lastName}` })),
     wt: types, tenure: DIRECTORY_TENURE_BANDS.map((b) => ({ id: b.key, name: b.label })), skill: skills, shift: shifts,
+    cert: courses.map((c) => ({ id: c.id, name: c.title })), lang: [...new Set(langs.flatMap((l) => l.languages))].sort().map((l) => ({ id: l, name: l })),
+    proj: projects, avail: [{ id: "available", name: "Working today" }, { id: "away", name: "On leave today" }], temp: [{ id: "1", name: "Temporary and contract only" }],
   };
   const filters = DIRECTORY_FILTERS.map((f) => ({ key: f.key, label: f.label, value: p[f.key], options: options[f.key] ?? [] }));
   const query = cleanDirectoryQuery(new URLSearchParams(Object.fromEntries(DIRECTORY_PARAM_KEYS.filter((k) => p[k]).map((k) => [k, p[k]]))).toString());

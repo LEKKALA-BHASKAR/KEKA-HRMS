@@ -169,6 +169,16 @@ function PersonCard({ m, today, self }: { m: Member; today: Today; self: boolean
             <div className={s.menuList}>
               <Link href={`/directory/${m.id}`}>View profile</Link>
               {m.workEmail ? <a href={`mailto:${m.workEmail}`}>Send email</a> : null}
+              {/* HR shortcuts for a manager's own reports. */}
+              {!self ? (
+                <>
+                  <Link href={`/employees/${m.id}`} data-shortcut="record">Full record</Link>
+                  <Link href="/team/roster" data-shortcut="roster">Roster &amp; attendance</Link>
+                  <Link href="/team/insights" data-shortcut="insights">Documents, goals &amp; reviews</Link>
+                  <Link href={`/team/activity?who=${m.id}`} data-shortcut="activity">Recent changes</Link>
+                  <Link href="/team/delegation" data-shortcut="delegation">Delegate approvals</Link>
+                </>
+              ) : null}
             </div>
           </details>
           {today.chips.length > 0 ? (

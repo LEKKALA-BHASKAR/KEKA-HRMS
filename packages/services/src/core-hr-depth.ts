@@ -1,6 +1,7 @@
 import { prisma } from "@keka/db";
 import { notify } from "./lifecycle";
 import { recomputeProfileCompletion } from "./profile";
+import { applyStatutoryRegistrationChange } from "./core2";
 import {
   CHANGE_TARGETS, cleanChanges, isChangeTarget, statusOnApproval, delegationActive, fiscalYearIssues,
   type ChangeTarget,
@@ -329,6 +330,9 @@ async function applyTarget(target: ChangeTarget, r: Req): Promise<R> {
     }
     case "DATA_CORRECTION":
       return applyCorrection(r, c);
+    case "ESTABLISHMENT":
+    case "REGISTRATION_PROFILE":
+      return applyStatutoryRegistrationChange(t, target, r.changes as Record<string, unknown>);
   }
   return { ok: false, message: "Unknown kind of change." };
 }
